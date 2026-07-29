@@ -28,4 +28,8 @@ contextBridge.exposeInMainWorld('pwp', {
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
   },
+  // Scraper
+  scraper: {
+    runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
+  },
 });
