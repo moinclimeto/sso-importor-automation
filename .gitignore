@@ -1,0 +1,55 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+dist-ssr/
+release/
+out/
+
+# Vite
+*.local
+
+# Env files
+.env
+.env.*
+!.env.example
+
+# Logs
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+Desktop.ini
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+
+# Electron / electron-builder
+*.exe
+*.dmg
+*.AppImage
+*.blockmap
+*.yml.cache
+.electron-builder*
+electron-builder.yml.cache
+
+# SQLite / local DB
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Coverage / cache
+coverage/
+.cache/
+.temp/
+.tmp/
+*.tsbuildinfo
