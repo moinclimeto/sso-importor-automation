@@ -57,3 +57,7 @@ coverage/
 .temp/
 .tmp/
 *.tsbuildinfo
+
+# Scraper Data
+data/
+playwright_session/

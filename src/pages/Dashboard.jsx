@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
-import { ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee } from 'lucide-react';
+import { Play, ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee } from 'lucide-react';
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
@@ -65,9 +65,26 @@ export default function Dashboard() {
 
   return (
     <div className="space-y-6">
-      <div>
-        <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
-        <p className="text-slate-500 text-sm">Overview of your purchase & sale activity</p>
+      <div className="flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
+          <p className="text-slate-500 text-sm">Overview of your purchase & sale activity</p>
+        </div>
+        <button 
+          onClick={async () => {
+            if (window.pwp?.scraper) {
+              const res = await window.pwp.scraper.runEpr();
+              console.log("Scraper result:", res);
+              alert(res.success ? "Scraping completed!" : "Scraping failed: " + res.error);
+            } else {
+              alert("Scraper API not available. Are you running in Electron?");
+            }
+          }}
+          className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg shadow-sm hover:bg-blue-700 transition"
+        >
+          <Play size={18} />
+          Run EPR Scraper
+        </button>
       </div>
 
       {/* Stats */}
