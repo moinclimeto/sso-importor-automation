@@ -28,4 +28,10 @@ contextBridge.exposeInMainWorld('pwp', {
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
   },
+  // OCR (Gemini)
+  ocr: {
+    selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
+    selectFolder: () => ipcRenderer.invoke('ocr:select-folder'),
+    extract: (payload) => ipcRenderer.invoke('ocr:extract', payload),
+  },
 });

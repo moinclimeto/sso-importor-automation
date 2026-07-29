@@ -11,6 +11,7 @@
     "electron:build": "npm run build && electron-builder"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
     "better-sqlite3": "^13.0.2",
     "formik": "^2.4.9",

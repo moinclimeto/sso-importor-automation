@@ -1,7 +1,9 @@
 import { ipcMain } from 'electron';
 import { getDb } from './database.js';
+import { registerOcrHandlers } from './ocrHandlers.js';
 
 export function registerIpcHandlers() {
+  registerOcrHandlers();
 
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', () => {
