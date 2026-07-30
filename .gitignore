@@ -43,6 +43,7 @@ electron-builder.yml.cache
 
 # SQLite / local DB
 *.db
+*.sqlite
 *.db-journal
 *.db-wal
 *.db-shm
