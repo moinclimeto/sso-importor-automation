@@ -18,9 +18,14 @@ export function initDatabase() {
     fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
   } else {
     try {
-      db = JSON.parse(fs.readFileSync(dbPath, 'utf8'));
+      const raw = fs.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '');
+      db = JSON.parse(raw);
+      if (!Array.isArray(db.companies)) db.companies = [];
+      if (!Array.isArray(db.purchases)) db.purchases = [];
+      if (!Array.isArray(db.sales)) db.sales = [];
       if (!db.nextId) db.nextId = 1;
     } catch (e) {
+      console.error('Failed to read db.json, starting empty:', e?.message);
       db = { companies: [], purchases: [], sales: [], nextId: 1 };
     }
   }

@@ -1,4 +1,5 @@
 import { ipcMain } from 'electron';
+import { registerOcrHandlers } from './ocrHandlers.js';
 import { getDb, saveDb } from './database.js';
 import { chromium } from 'playwright';
 import path from 'path';
@@ -19,6 +20,7 @@ const { extractEprWallet } = require("../src/extractors/epr/wallet.extractor.cjs
 const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.extractor.cjs");
 
 export function registerIpcHandlers() {
+  registerOcrHandlers();
 
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', () => {

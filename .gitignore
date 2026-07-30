@@ -15,6 +15,10 @@ out/
 .env.*
 !.env.example
 
+# Google credentials
+google-service-account.json
+*-service-account.json
+
 # Logs
 logs/
 *.log

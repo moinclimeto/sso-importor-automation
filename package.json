@@ -12,6 +12,7 @@
     "db:sync": "node sync_to_sqlite.js"
   },
   "dependencies": {
+    "@google/generative-ai": "^0.24.1",
     "axios": "^1.13.2",
     "dotenv": "^17.4.2",
     "formik": "^2.4.9",
@@ -24,6 +25,7 @@
     "recharts": "^3.3.0",
     "sqlite": "^5.1.1",
     "sqlite3": "^6.0.1",
+    "xlsx": "^0.18.5",
     "yup": "^1.7.1"
   },
   "devDependencies": {
