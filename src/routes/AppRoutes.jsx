@@ -21,7 +21,7 @@ export default function AppRoutes() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<Navigate to="/dashboard" replace />} />
+        <Route path="/" element={<Navigate to="/doc-processor" replace />} />
         <Route
           path="/"
           element={

@@ -2,14 +2,14 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  LayoutDashboard, Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 
 const navLinks = [
   { to: '/companies', icon: Building2, label: 'Company Profile' },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
+  // { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
 ];
 
 const pageHeaders = {
