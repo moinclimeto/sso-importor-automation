@@ -7,18 +7,23 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5173 && cross-env NODE_ENV=development electron .\"",
-    "electron:build": "npm run build && electron-builder"
+    "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5180 && cross-env NODE_ENV=development electron .\"",
+    "electron:build": "npm run build && electron-builder",
+    "db:sync": "node sync_to_sqlite.js"
   },
   "dependencies": {
     "axios": "^1.13.2",
+    "dotenv": "^17.4.2",
     "formik": "^2.4.9",
     "lucide-react": "^0.546.0",
+    "pg": "^8.22.0",
     "playwright": "^1.62.0",
     "react": "^19.1.1",
     "react-dom": "^19.1.1",
     "react-router-dom": "^7.9.4",
     "recharts": "^3.3.0",
+    "sqlite": "^5.1.1",
+    "sqlite3": "^6.0.1",
     "yup": "^1.7.1"
   },
   "devDependencies": {

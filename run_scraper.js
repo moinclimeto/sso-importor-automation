@@ -15,6 +15,8 @@ const { extractEprProduction } = require("./src/extractors/epr/production.extrac
 const { extractEprSales } = require("./src/extractors/epr/sales.extractor.cjs");
 const { extractEprWallet } = require("./src/extractors/epr/wallet.extractor.cjs");
 const { extractEprAnnualFiling } = require("./src/extractors/epr/annual_filing.extractor.cjs");
+const { extractEprDashboard } = require("./src/extractors/epr/dashboard.extractor.cjs");
+const { extractEprPaymentHistory } = require("./src/extractors/epr/payment.extractor.cjs");
 
 async function runScraper() {
     console.log("🚀 Starting Standalone EPR scraper...");
@@ -52,8 +54,21 @@ async function runScraper() {
         await page.click("xpath=//html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[3]/app-button/div/button/p");
         await page.waitForTimeout(3000); // Give it a moment to load the next page
 
+        console.log("🖱️ Waiting for 'Select Unit' dropdown to appear...");
+        const selectUnitBtn = "xpath=//html/body/app-root/app-dashboard/div/div[2]/div[2]/app-onboard-dashboard/div/div[1]/app-breadcrumb/div/div[2]/button[1]";
+        await page.waitForSelector(selectUnitBtn, { state: 'visible', timeout: 15000 });
+        await page.click(selectUnitBtn);
+        await page.waitForTimeout(1500);
+
+        console.log("🖱️ Waiting for the specific unit card...");
+        const unitCard = "xpath=//html/body/app-root/app-dashboard/div/div[1]/app-dashboard-topbar/app-common-modal/div/div[2]/div/div/div[2]/div/ul/li";
+        await page.waitForSelector(unitCard, { state: 'visible', timeout: 10000 });
+        await page.click(unitCard);
+        await page.waitForTimeout(3000); // Wait for the dashboard to refresh with the selected unit's data
+
     } catch (e) {
-        console.log("Timeout waiting for dashboard URL or clicking buttons. Let's try running extractors anyway...");
+        console.error("❌ Error during login or post-login clicks:", e.message);
+        console.log("Let's try running extractors anyway...");
     }
 
     const allData = {};
@@ -67,6 +82,10 @@ async function runScraper() {
     };
 
     console.log("Running Extractors...");
+    
+    allData.dashboard = await extractEprDashboard(page);
+    saveJson('epr_dashboard.json', allData.dashboard);
+
     allData.profile = await extractEprProfile(page);
     saveJson('epr_profile.json', allData.profile);
 
@@ -87,6 +106,9 @@ async function runScraper() {
 
     allData.annualFiling = await extractEprAnnualFiling(page);
     saveJson('epr_annual_filing.json', allData.annualFiling);
+
+    allData.payment = await extractEprPaymentHistory(page);
+    saveJson('epr_payment.json', allData.payment);
 
     saveJson('scraped_data_latest.json', allData);
 
