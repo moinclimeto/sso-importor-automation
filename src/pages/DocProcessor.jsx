@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ArrowRight } from 'lucide-react';
+import { Package, ArrowRight, Upload } from 'lucide-react';
 
 const categories = [
   {
@@ -87,23 +87,33 @@ export default function DocProcessor() {
                   <p className="text-xs text-slate-400">Extracted</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-slate-900">0</p>
-                  <p className="text-xs text-slate-400">Cached</p>
+                  <p className="text-lg font-bold text-slate-900">—</p>
+                  <p className="text-xs text-slate-400">Multi-OCR</p>
                 </div>
                 <div>
-                  <p className="text-lg font-bold text-slate-900">0</p>
-                  <p className="text-xs text-slate-400">Failed</p>
+                  <p className="text-lg font-bold text-slate-900">QR</p>
+                  <p className="text-xs text-slate-400">Priority</p>
                 </div>
               </div>
 
-              <button
-                type="button"
-                onClick={() => navigate('/doc-table', { state: { type: cat.type } })}
-                className="mt-4 inline-flex items-center gap-1.5 text-sm font-medium text-green-600 hover:text-green-700"
-              >
-                View table
-                <ArrowRight size={14} />
-              </button>
+              <div className="mt-4 flex flex-wrap items-center gap-3">
+                <button
+                  type="button"
+                  onClick={() => navigate('/doc-upload', { state: { type: cat.type } })}
+                  className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2"
+                >
+                  <Upload size={14} />
+                  Upload invoices
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/doc-table', { state: { type: cat.type } })}
+                  className="inline-flex items-center gap-1.5 text-sm font-medium text-green-600 hover:text-green-700"
+                >
+                  View table
+                  <ArrowRight size={14} />
+                </button>
+              </div>
             </div>
           );
         })}

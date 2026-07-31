@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html>
+  <body>
+    <img id="img" />
+    <script type="module">
+      import { BarcodeDetectorPolyfill } from '../node_modules/@undecaf/barcode-detector-polyfill/dist/main.js';
+      window.BarcodeDetector = BarcodeDetectorPolyfill;
+      window.decodeQr = async (dataUrl) => {
+        const img = document.getElementById('img');
+        img.src = dataUrl;
+        await img.decode();
+        const det = new BarcodeDetector({ formats: ['qr_code'] });
+        const codes = await det.detect(img);
+        return codes.map((c) => c.rawValue);
+      };
+      window.ready = true;
+    </script>
+  </body>
+</html>

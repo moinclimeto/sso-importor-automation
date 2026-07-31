@@ -34,11 +34,18 @@ contextBridge.exposeInMainWorld('pwp', {
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
   },
-  // OCR (Gemini)
+  // OCR (Gemini + local QR)
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
     selectFolder: () => ipcRenderer.invoke('ocr:select-folder'),
+    inspectPaths: (filePaths) => ipcRenderer.invoke('ocr:inspect-paths', filePaths),
     extract: (payload) => ipcRenderer.invoke('ocr:extract', payload),
+    extractBatch: (payload) => ipcRenderer.invoke('ocr:extract-batch', payload),
+    onProgress: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('ocr:progress', handler);
+      return () => ipcRenderer.removeListener('ocr:progress', handler);
+    },
   },
   // Scraper
   scraper: {
@@ -51,5 +58,18 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
     getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
     getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
+    openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
+    checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
+    waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),
+    fillProcurementBulk: (payload) => ipcRenderer.invoke('scraper:fillProcurementBulk', payload),
+    fillSalesBulk: (payload) => ipcRenderer.invoke('scraper:fillSalesBulk', payload),
+    startCpcbKeepAlive: () => ipcRenderer.invoke('scraper:startCpcbKeepAlive'),
+    stopCpcbKeepAlive: () => ipcRenderer.invoke('scraper:stopCpcbKeepAlive'),
+    pingCpcbSession: () => ipcRenderer.invoke('scraper:pingCpcbSession'),
+    onLog: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('scraper:log', handler);
+      return () => ipcRenderer.removeListener('scraper:log', handler);
+    },
   },
 });

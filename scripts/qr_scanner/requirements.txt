@@ -1,0 +1,6 @@
+opencv-python-headless
+pyzbar
+pdf2image
+numpy
+zxing-cpp
+pytesseract

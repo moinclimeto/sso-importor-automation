@@ -3,10 +3,27 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
+import { scanQrFromDocument } from './qrScan.js';
+import {
+  buildExtractionPrompt,
+  mapPurchaseFromOcr,
+  mapSaleFromOcr,
+  applyQrPriority,
+  fileBaseName,
+} from './ocrExtract.js';
+import { createLogger, createTrackId } from './logger.js';
+import { runExtractQueue } from './extractQueue.js';
+import {
+  getPdfPageCount,
+  expandFilesToPageJobs,
+  renderPdfPageToPng,
+  writeTempPng,
+  safeUnlink,
+  pageInvoiceFileName,
+} from './pdfPages.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-
 function loadEnvFile() {
   const candidates = [
     path.join(process.cwd(), '.env'),
@@ -32,7 +49,6 @@ function loadEnvFile() {
     }
   }
 }
-
 function mimeFromPath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.pdf') return 'application/pdf';
@@ -41,115 +57,246 @@ function mimeFromPath(filePath) {
   if (ext === '.webp') return 'image/webp';
   return 'application/octet-stream';
 }
+async function extractOneInvoice({
+  filePath,
+  type,
+  financialYear,
+  sNo,
+  trackId,
+  log: parentLog,
+  pageNumber = 1,
+  pageCount = null,
+  invoiceFileName = null,
+  displayName = null,
+}) {
+  loadEnvFile();
+  const log = parentLog || createLogger(trackId || createTrackId('ocr'));
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) {
+    log.error('GEMINI_API_KEY missing');
+    return {
+      success: false,
+      message:
+        'GEMINI_API_KEY not found. Add it to project root .env file and restart the app.',
+      trackId: log.trackId,
+    };
+  }
+  if (!filePath || !fs.existsSync(filePath)) {
+    log.error('File not found', { filePath });
+    return { success: false, message: 'File not found.', trackId: log.trackId };
+  }
 
-function buildPrompt(type) {
-  const isPurchase = type === 'purchase';
-  return `You are an Indian GST invoice OCR extractor.
-Read the attached invoice document and return ONLY valid JSON (no markdown).
+  const ext = path.extname(filePath).toLowerCase();
+  const isPdf = ext === '.pdf';
+  let resolvedPageCount = pageCount;
+  if (resolvedPageCount == null) {
+    try {
+      resolvedPageCount = isPdf ? await getPdfPageCount(filePath) : 1;
+    } catch {
+      resolvedPageCount = 1;
+    }
+  }
+  const pageNo = Math.min(Math.max(1, Number(pageNumber) || 1), resolvedPageCount);
+  const sourceName = fileBaseName(filePath);
+  const outFileName =
+    invoiceFileName || pageInvoiceFileName(sourceName, pageNo, resolvedPageCount);
 
-Extract for a ${isPurchase ? 'PURCHASE (vendor)' : 'SALE (customer)'} invoice with these keys:
-{
-  "invoice_no": "",
-  "invoice_date": "YYYY-MM-DD",
-  "${isPurchase ? 'vendor_name' : 'customer_name'}": "",
-  "${isPurchase ? 'vendor_gstin' : 'customer_gstin'}": "",
-  "item_name": "",
-  "hsn_code": "",
-  "quantity": 0,
-  "unit": "PCS",
-  "rate": 0,
-  "taxable_amount": 0,
-  "cgst_rate": 0,
-  "sgst_rate": 0,
-  "igst_rate": 0,
-  "cgst_amount": 0,
-  "sgst_amount": 0,
-  "igst_amount": 0,
-  "total_amount": 0,
-  "notes": ""
+  let mimeType = mimeFromPath(filePath);
+  let base64;
+  let qrTargetPath = filePath;
+  let tempPng = null;
+
+  try {
+    // Multi-page PDF: render ONE page → PNG for Gemini + QR (1 page = 1 invoice)
+    if (isPdf) {
+      log.info('Rendering PDF page for extract', {
+        sourceName,
+        pageNo,
+        pageCount: resolvedPageCount,
+      });
+      const pngBuf = await renderPdfPageToPng(filePath, pageNo, 2.2);
+      base64 = pngBuf.toString('base64');
+      mimeType = 'image/png';
+      tempPng = writeTempPng(pngBuf, `p${pageNo}`);
+      qrTargetPath = tempPng;
+    } else {
+      if (mimeType === 'application/octet-stream') {
+        return { success: false, message: 'Unsupported file type.', trackId: log.trackId };
+      }
+      base64 = fs.readFileSync(filePath).toString('base64');
+    }
+
+    const invoiceType = type === 'sale' ? 'sale' : 'purchase';
+    const qrPromise = scanQrFromDocument(qrTargetPath);
+
+    const genAI = new GoogleGenerativeAI(apiKey);
+    const envModel = process.env.GEMINI_MODEL?.trim();
+    const envCandidates = (process.env.GEMINI_MODEL_CANDIDATES || '')
+      .split(',')
+      .map((m) => m.trim())
+      .filter(Boolean);
+    const defaultModels = [
+      'gemini-flash-lite-latest',
+      'gemini-flash-latest',
+      'gemini-2.0-flash',
+    ];
+    const modelNames = [
+      ...new Set([...(envModel ? [envModel] : []), ...envCandidates, ...defaultModels]),
+    ];
+    const prompt = buildExtractionPrompt(invoiceType, financialYear);
+    let parsed = null;
+    let lastError = null;
+    let usedModel = null;
+
+    for (const modelName of modelNames) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
+          },
+        });
+        const result = await model.generateContent([
+          { text: prompt },
+          { inlineData: { mimeType, data: base64 } },
+        ]);
+        const text = result.response
+          .text()
+          .trim()
+          .replace(/```json\n?/g, '')
+          .replace(/```\n?/g, '')
+          .trim();
+        parsed = JSON.parse(text);
+        usedModel = modelName;
+        break;
+      } catch (err) {
+        lastError = err;
+        log.warn('Gemini model failed', { modelName, message: err?.message });
+      }
+    }
+
+    if (!parsed) {
+      log.error('Gemini extraction failed for all models', {
+        fileName: outFileName,
+        message: lastError?.message,
+      });
+      return {
+        success: false,
+        message: lastError?.message || 'Gemini extraction failed for all models.',
+        fileName: outFileName,
+        trackId: log.trackId,
+      };
+    }
+
+    const qrResult = await qrPromise;
+    let row =
+      invoiceType === 'purchase'
+        ? mapPurchaseFromOcr(parsed, outFileName)
+        : mapSaleFromOcr(parsed, outFileName, sNo);
+
+    // Ensure filename fields point at page-specific name
+    if (invoiceType === 'purchase') {
+      row.invoice_filename = outFileName;
+    } else {
+      row.invoice_file_name = outFileName;
+    }
+    row._page = {
+      pageNumber: pageNo,
+      pageCount: resolvedPageCount,
+      sourceFileName: sourceName,
+      displayName: displayName || outFileName,
+    };
+
+    const qrData = qrResult?.success ? qrResult.data || null : null;
+    if (qrData) {
+      row = applyQrPriority(row, qrData, invoiceType);
+      if (invoiceType === 'purchase') row.invoice_filename = outFileName;
+      else row.invoice_file_name = outFileName;
+      log.info('QR priority merge applied', {
+        fileName: outFileName,
+        pageNo,
+      });
+    } else if (qrResult && !qrResult.success) {
+      log.warn('QR scan empty', { fileName: outFileName, message: qrResult.message });
+    }
+
+    // Always expose both parties for company-profile routing (purchase vs sale)
+    const sellerGst = String(
+      row._qr?.SellerGstin ||
+        qrData?.SellerGstin ||
+        qrData?.sellerGstin ||
+        row.seller_gst ||
+        row.supplier_gst_number ||
+        row.vendor_gstin ||
+        ''
+    )
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const buyerGst = String(
+      row._qr?.BuyerGstin ||
+        qrData?.BuyerGstin ||
+        qrData?.buyerGstin ||
+        row.buyer_gst ||
+        row.customer_gstin ||
+        ''
+    )
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    row.seller_gst = sellerGst || row.seller_gst || '';
+    row.buyer_gst = buyerGst || row.buyer_gst || '';
+    row.seller_name =
+      row.seller_name ||
+      String(qrData?.SellerNm || qrData?.SellerName || '').trim() ||
+      row.supplier_name ||
+      row.vendor_name ||
+      '';
+    row.buyer_name =
+      row.buyer_name ||
+      String(qrData?.BuyerNm || qrData?.BuyerName || '').trim() ||
+      row.entity_name ||
+      row.customer_name ||
+      '';
+
+    for (const key of Object.keys(row)) {
+      if (key.startsWith('_')) continue;
+      if (!row._source_fields[key] && row[key] !== '' && row[key] !== 0) {
+        row._source_fields[key] = 'ocr';
+      }
+    }
+
+    return {
+      success: true,
+      data: row,
+      fileName: outFileName,
+      displayName: displayName || outFileName,
+      pageNumber: pageNo,
+      pageCount: resolvedPageCount,
+      trackId: log.trackId,
+      qr: qrResult?.success
+        ? {
+            data: qrData,
+            payload: qrResult.payload,
+            json: qrResult.parsed?.json ?? null,
+            meta: qrResult.meta,
+            priorityApplied: Boolean(qrData),
+          }
+        : { success: false, message: qrResult?.message },
+      meta: {
+        model: usedModel,
+        qrUsed: Boolean(qrData),
+        trackId: log.trackId,
+        pageNumber: pageNo,
+        pageCount: resolvedPageCount,
+      },
+    };
+  } finally {
+    safeUnlink(tempPng);
+  }
 }
-
-Rules:
-- Use the first/main line item if multiple items exist.
-- Convert dates to YYYY-MM-DD.
-- Numbers must be numeric (not strings with currency symbols).
-- If a field is missing, use empty string or 0.
-- Prefer IGST when IGST is present; otherwise CGST+SGST.`;
-}
-
-function normalizeExtracted(raw, type) {
-  const isPurchase = type === 'purchase';
-  const num = (v) => {
-    if (v === null || v === undefined || v === '') return 0;
-    if (typeof v === 'number') return v;
-    const cleaned = String(v).replace(/[^0-9.-]/g, '');
-    const n = parseFloat(cleaned);
-    return Number.isFinite(n) ? n : 0;
-  };
-  const str = (v) => (v === null || v === undefined ? '' : String(v).trim());
-
-  const partyName = isPurchase
-    ? str(raw.vendor_name || raw.supplier_name || raw.seller_name)
-    : str(raw.customer_name || raw.buyer_name || raw.bill_to_name);
-  const partyGstin = isPurchase
-    ? str(raw.vendor_gstin || raw.supplier_gstin || raw.seller_gstin)
-    : str(raw.customer_gstin || raw.buyer_gstin);
-
-  let invoiceDate = str(raw.invoice_date || raw.date);
-  // Accept DD/MM/YYYY or DD-MM-YYYY
-  const m = invoiceDate.match(/^(\d{1,2})[/-](\d{1,2})[/-](\d{4})$/);
-  if (m) {
-    invoiceDate = `${m[3]}-${m[2].padStart(2, '0')}-${m[1].padStart(2, '0')}`;
-  }
-
-  const data = {
-    invoice_no: str(raw.invoice_no || raw.invoice_number),
-    invoice_date: invoiceDate,
-    item_name: str(raw.item_name || raw.description || raw.product_name),
-    hsn_code: str(raw.hsn_code || raw.hsn),
-    quantity: num(raw.quantity || raw.qty),
-    unit: str(raw.unit) || 'PCS',
-    rate: num(raw.rate || raw.unit_price),
-    taxable_amount: num(raw.taxable_amount || raw.taxable),
-    cgst_rate: num(raw.cgst_rate),
-    sgst_rate: num(raw.sgst_rate),
-    igst_rate: num(raw.igst_rate),
-    cgst_amount: num(raw.cgst_amount),
-    sgst_amount: num(raw.sgst_amount),
-    igst_amount: num(raw.igst_amount),
-    total_amount: num(raw.total_amount || raw.grand_total || raw.total),
-    notes: str(raw.notes),
-  };
-
-  if (isPurchase) {
-    data.vendor_name = partyName;
-    data.vendor_gstin = partyGstin;
-  } else {
-    data.customer_name = partyName;
-    data.customer_gstin = partyGstin;
-  }
-
-  // Derive taxable/total if missing
-  if (!data.taxable_amount && data.quantity && data.rate) {
-    data.taxable_amount = Number((data.quantity * data.rate).toFixed(2));
-  }
-  if (!data.total_amount) {
-    data.total_amount = Number(
-      (data.taxable_amount + data.cgst_amount + data.sgst_amount + data.igst_amount).toFixed(2)
-    );
-  }
-
-  // stringify numeric fields for form inputs
-  for (const key of Object.keys(data)) {
-    if (typeof data[key] === 'number') data[key] = String(data[key]);
-  }
-
-  return data;
-}
-
 export function registerOcrHandlers() {
   loadEnvFile();
-
   ipcMain.handle('ocr:select-files', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Select invoice documents',
@@ -161,18 +308,15 @@ export function registerOcrHandlers() {
     if (result.canceled) return [];
     return result.filePaths || [];
   });
-
   ipcMain.handle('ocr:select-folder', async () => {
     const result = await dialog.showOpenDialog({
       title: 'Select folder with invoice documents',
       properties: ['openDirectory'],
     });
     if (result.canceled || !result.filePaths?.[0]) return [];
-
     const folder = result.filePaths[0];
     const allowed = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp']);
     const collected = [];
-
     const walk = (dir, depth = 0) => {
       if (depth > 3 || collected.length >= 200) return;
       let entries = [];
@@ -192,98 +336,105 @@ export function registerOcrHandlers() {
         if (collected.length >= 200) break;
       }
     };
-
     walk(folder);
     return collected;
   });
 
-  ipcMain.handle('ocr:extract', async (_, { filePath, type }) => {
+  /** Count pages per file — UI shows total pages (not just file count). */
+  ipcMain.handle('ocr:inspect-paths', async (_, filePaths) => {
     try {
-      loadEnvFile();
-      const apiKey = process.env.GEMINI_API_KEY;
-      if (!apiKey) {
-        return {
-          success: false,
-          message:
-            'GEMINI_API_KEY not found. Add it to project root .env file and restart the app.',
-        };
-      }
-      if (!filePath || !fs.existsSync(filePath)) {
-        return { success: false, message: 'File not found.' };
-      }
-
-      const mimeType = mimeFromPath(filePath);
-      if (mimeType === 'application/octet-stream') {
-        return { success: false, message: 'Unsupported file type.' };
-      }
-
-      const buffer = fs.readFileSync(filePath);
-      const base64 = buffer.toString('base64');
-      const invoiceType = type === 'sale' ? 'sale' : 'purchase';
-
-      const genAI = new GoogleGenerativeAI(apiKey);
-      const envModel = process.env.GEMINI_MODEL?.trim();
-      const envCandidates = (process.env.GEMINI_MODEL_CANDIDATES || '')
-        .split(',')
-        .map((m) => m.trim())
-        .filter(Boolean);
-      const defaultModels = ['gemini-2.0-flash', 'gemini-1.5-flash', 'gemini-2.5-flash'];
-      const modelNames = [...new Set([
-        ...(envModel ? [envModel] : []),
-        ...envCandidates,
-        ...defaultModels,
-      ])];
-
-      let parsed = null;
-      let lastError = null;
-
-      for (const modelName of modelNames) {
-        try {
-          const model = genAI.getGenerativeModel({
-            model: modelName,
-            generationConfig: {
-              responseMimeType: 'application/json',
-              temperature: 0.1,
-            },
-          });
-
-          const result = await model.generateContent([
-            { text: buildPrompt(invoiceType) },
-            {
-              inlineData: {
-                mimeType,
-                data: base64,
-              },
-            },
-          ]);
-
-          const text = result.response.text().trim()
-            .replace(/```json\n?/g, '')
-            .replace(/```\n?/g, '')
-            .trim();
-
-          parsed = JSON.parse(text);
-          break;
-        } catch (err) {
-          lastError = err;
-          console.warn(`Gemini model ${modelName} failed:`, err?.message);
-        }
-      }
-
-      if (!parsed) {
-        return {
-          success: false,
-          message: lastError?.message || 'Gemini extraction failed for all models.',
-        };
-      }
-
+      const paths = Array.isArray(filePaths) ? filePaths : [];
+      const expanded = await expandFilesToPageJobs(paths);
       return {
         success: true,
-        data: normalizeExtracted(parsed, invoiceType),
+        fileCount: expanded.fileCount,
+        totalPages: expanded.totalPages,
+        files: expanded.files.map((f) => ({
+          path: f.filePath,
+          name: f.name,
+          pageCount: f.pageCount,
+        })),
+        jobs: expanded.jobs.map((j) => ({
+          displayName: j.displayName,
+          invoiceFileName: j.invoiceFileName,
+          pageNumber: j.pageNumber,
+          pageCount: j.pageCount,
+          sourceFileName: j.sourceFileName,
+          filePath: j.filePath,
+        })),
       };
+    } catch (err) {
+      return {
+        success: false,
+        message: err?.message || 'Failed to inspect PDF pages',
+        fileCount: 0,
+        totalPages: 0,
+        files: [],
+        jobs: [],
+      };
+    }
+  });
+
+  ipcMain.handle('ocr:extract', async (_, payload) => {
+    try {
+      return await extractOneInvoice(payload || {});
     } catch (err) {
       console.error('ocr:extract error', err);
       return { success: false, message: err?.message || 'Extraction failed' };
+    }
+  });
+  /**
+   * Multi-invoice queue: duplicate skip + progress + trackId logging.
+   * payload: { filePaths: string[], type, financialYear, trackId? }
+   */
+  ipcMain.handle('ocr:extract-batch', async (event, payload) => {
+    const filePaths = Array.isArray(payload?.filePaths) ? payload.filePaths : [];
+    const type = payload?.type === 'sale' ? 'sale' : 'purchase';
+    const financialYear = payload?.financialYear || 'all';
+    const trackId = payload?.trackId || createTrackId('batch');
+
+    const send = (msg) => {
+      try {
+        event.sender.send('ocr:progress', msg);
+      } catch {
+        /* window closed */
+      }
+    };
+
+    try {
+      return await runExtractQueue({
+        filePaths,
+        type,
+        financialYear,
+        trackId,
+        onProgress: send,
+        extractFn: (args) => extractOneInvoice(args),
+      });
+    } catch (err) {
+      const log = createLogger(trackId);
+      log.error('Batch queue crashed', { message: err?.message });
+      send({
+        trackId,
+        stage: 'complete',
+        total: 0,
+        processed: 0,
+        current: 0,
+        successCount: 0,
+        failedCount: 1,
+        skippedCount: 0,
+        message: err?.message || 'Batch failed',
+        currentFile: '',
+      });
+      return {
+        success: false,
+        trackId,
+        message: err?.message || 'Batch failed',
+        results: [],
+        successCount: 0,
+        failedCount: 1,
+        skippedCount: 0,
+        total: 0,
+      };
     }
   });
 }
