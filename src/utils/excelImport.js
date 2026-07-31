@@ -1,5 +1,19 @@
 import * as XLSX from 'xlsx';
 
+/** Shared plastic category options (Purchase + Sale) */
+export const PLASTIC_CATEGORIES = ['Cat-I', 'Cat-II', 'Cat-III'];
+
+export function normalizePlasticCategory(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const compact = raw.replace(/\s+/g, '').toLowerCase();
+  if (['cat-i', 'cati', 'categoryi', 'category-i', 'cat1', 'i'].includes(compact)) return 'Cat-I';
+  if (['cat-ii', 'catii', 'categoryii', 'category-ii', 'cat2', 'ii'].includes(compact)) return 'Cat-II';
+  if (['cat-iii', 'catiii', 'categoryiii', 'category-iii', 'cat3', 'iii'].includes(compact)) return 'Cat-III';
+  if (PLASTIC_CATEGORIES.includes(raw)) return raw;
+  return raw;
+}
+
 /** Exact Excel column labels for Procurement (Purchases) */
 export const PURCHASE_EXCEL_HEADERS = [
   'Category of Plastic',
@@ -8,32 +22,38 @@ export const PURCHASE_EXCEL_HEADERS = [
   'Address Line 2',
   'State',
   'City',
-  'Pin Code',
+  'PIN Code',
+  'Buyer GST',
   'Is Supplier GST Available (Yes/No)',
   'Supplier GST Number',
-  'Supplier Mobile Number',
-  'Procurement Date (YYYY-MM-DD)',
-  'Quantity (MT)',
-  'Invoice Number',
   'HSN Code',
+  'Invoice No./GST E-Invoice Number',
+  'IRN No.',
+  'Qty. of Waste Plastic (MT)',
+  'Qty. of Waste Plastic (Kg)',
+  'Date of Entry (YYYY-MM-DD)',
+  'Procurement date (YYYY-MM-DD)',
   'Invoice Filename',
 ];
 
 export const PURCHASE_TABLE_COLUMNS = [
-  { key: 'category_of_plastic', label: 'Category of Plastic' },
+  { key: 'category_of_plastic', label: 'Categories of Plastic' },
   { key: 'supplier_name', label: 'Name of Supplier' },
   { key: 'address_line_1', label: 'Address Line 1' },
   { key: 'address_line_2', label: 'Address Line 2' },
   { key: 'state', label: 'State' },
   { key: 'city', label: 'City' },
-  { key: 'pin_code', label: 'Pin Code' },
-  { key: 'is_supplier_gst_available', label: 'Is Supplier GST Available (Yes/No)' },
-  { key: 'supplier_gst_number', label: 'Supplier GST Number' },
-  { key: 'supplier_mobile_number', label: 'Supplier Mobile Number' },
-  { key: 'procurement_date', label: 'Procurement Date (YYYY-MM-DD)' },
-  { key: 'quantity_mt', label: 'Quantity (MT)' },
-  { key: 'invoice_number', label: 'Invoice Number' },
+  { key: 'pin_code', label: 'PIN Code' },
+  { key: 'buyer_gst', label: 'Buyer GST' },
+  { key: 'is_supplier_gst_available', label: 'Is Supplier GST Available?' },
+  { key: 'supplier_gst_number', label: 'Supplier GST' },
   { key: 'hsn_code', label: 'HSN Code' },
+  { key: 'invoice_number', label: 'Invoice No./GST E-Invoice Number' },
+  { key: 'irn_no', label: 'IRN No.' },
+  { key: 'quantity_mt', label: 'Qty. of Waste Plastic (MT)' },
+  { key: 'quantity_kg', label: 'Qty. of Waste Plastic (Kg)' },
+  { key: 'date_of_entry', label: 'Date of Entry' },
+  { key: 'procurement_date', label: 'Procurement date' },
   { key: 'invoice_filename', label: 'Invoice Filename' },
 ];
 
@@ -47,19 +67,29 @@ const PURCHASE_HEADER_TO_KEY = {
   city: 'city',
   pin_code: 'pin_code',
   pincode: 'pin_code',
-  is_supplier_gst_available_yesno: 'is_supplier_gst_available',
+  buyer_gst: 'buyer_gst',
   is_supplier_gst_available: 'is_supplier_gst_available',
+  is_supplier_gst_available_yesno: 'is_supplier_gst_available',
+  is_supplier_gst_available_yes_no: 'is_supplier_gst_available',
   supplier_gst_number: 'supplier_gst_number',
   supplier_gstin: 'supplier_gst_number',
-  supplier_mobile_number: 'supplier_mobile_number',
-  supplier_mobile_number_mobile_number_is_required_if_gst_number_is_unavailable: 'supplier_mobile_number',
-  procurement_date_yyyymmdd: 'procurement_date',
-  procurement_date: 'procurement_date',
-  quantity_mt: 'quantity_mt',
-  invoice_number: 'invoice_number',
-  invoice_no: 'invoice_number',
+  supplier_gst: 'supplier_gst_number',
   hsn_code: 'hsn_code',
   hsn: 'hsn_code',
+  invoice_nogst_einvoice_number: 'invoice_number',
+  invoice_number: 'invoice_number',
+  invoice_no: 'invoice_number',
+  irn_no: 'irn_no',
+  qty_of_waste_plastic_mt: 'quantity_mt',
+  quantity_mt: 'quantity_mt',
+  qty_of_waste_plastic_kg: 'quantity_kg',
+  quantity_kg: 'quantity_kg',
+  // legacy / collided header before unit was preserved
+  qty_of_waste_plastic: 'quantity_mt',
+  date_of_entry: 'date_of_entry',
+  date_of_entry_yyyymmdd: 'date_of_entry',
+  procurement_date: 'procurement_date',
+  procurement_date_yyyymmdd: 'procurement_date',
   invoice_filename: 'invoice_filename',
   invoice_file_name: 'invoice_filename',
 };
@@ -122,7 +152,9 @@ const SALE_HEADER_TO_KEY = {
   percent_of_recycled_plastic_in_product: 'recycled_plastic_percent',
   conversion_factor: 'conversion_factor',
   available_quantity_mt: 'available_quantity_mt',
+  available_quantity: 'available_quantity_mt',
   quantity_sold_mt: 'quantity_sold_mt',
+  quantity_sold: 'quantity_sold_mt',
   registration_type: 'registration_type',
   name_of_the_entity: 'entity_name',
   entity_name: 'entity_name',
@@ -138,26 +170,29 @@ const SALE_HEADER_TO_KEY = {
 };
 
 const PURCHASE_SAMPLE = {
-  'Category of Plastic': 'Category I',
+  'Category of Plastic': 'Cat-I',
   'Name of Supplier': 'Green Plastics India',
   'Address Line 1': 'Plot 12, MIDC',
   'Address Line 2': 'Near Truck Terminal',
-  State: 'Maharashtra',
-  City: 'Pune',
-  'Pin Code': '411019',
+  State: 'Haryana',
+  City: 'Gurugram',
+  'PIN Code': '122001',
+  'Buyer GST': '06AABCC1234D1Z5',
   'Is Supplier GST Available (Yes/No)': 'Yes',
-  'Supplier GST Number': '27AABCG1111H1Z8',
-  'Supplier Mobile Number': '9876543210',
-  'Procurement Date (YYYY-MM-DD)': '2025-05-12',
-  'Quantity (MT)': 12,
-  'Invoice Number': 'PO-2025-001',
+  'Supplier GST Number': '06AABCG1111H1Z8',
   'HSN Code': '3915',
+  'Invoice No./GST E-Invoice Number': 'PO-2025-001',
+  'IRN No.': '',
+  'Qty. of Waste Plastic (MT)': 12,
+  'Qty. of Waste Plastic (Kg)': 12000,
+  'Date of Entry (YYYY-MM-DD)': '2025-07-30',
+  'Procurement date (YYYY-MM-DD)': '2025-07-28',
   'Invoice Filename': 'invoice_PO_2025_001.pdf',
 };
 
 const SALE_SAMPLE = {
   'S-No.': 1,
-  'Category of Plastic': 'Category I',
+  'Category of Plastic': 'Cat-I',
   'Process Code': 'PC-01',
   'Plastic Type': 'PET',
   'Product Type': 'Granules',
@@ -182,7 +217,16 @@ function normalizeHeader(h) {
     .trim()
     .toLowerCase()
     .replace(/%/g, 'percent')
-    .replace(/\([^)]*\)/g, ' ')
+    // Keep unit/format tokens from parentheses (MT/Kg); drop Yes/No and date-format hints
+    .replace(/\(([^)]*)\)/g, (_, inner) => {
+      const token = String(inner)
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '_')
+        .replace(/^_|_$/g, '');
+      if (!token || token === 'yes_no' || token === 'yesno') return ' ';
+      if (token === 'yyyy_mm_dd' || token === 'yyyymmdd') return ' ';
+      return `_${token}`;
+    })
     .replace(/\s+/g, '_')
     .replace(/[^a-z0-9_]/g, '')
     .replace(/_+/g, '_')
@@ -261,7 +305,7 @@ function mapSaleRow(mapped, rowNum, errors) {
     company_id: null,
     record_type: 'sale_epr',
     s_no: str(flat.s_no || get('S-No.')) || String(rowNum - 1),
-    category_of_plastic: str(flat.category_of_plastic || get('Category of Plastic')),
+    category_of_plastic: normalizePlasticCategory(flat.category_of_plastic || get('Category of Plastic')),
     process_code: str(flat.process_code || get('Process Code')),
     plastic_type: str(flat.plastic_type || get('Plastic Type')),
     product_type: str(flat.product_type || get('Product Type')),
@@ -300,7 +344,10 @@ function mapPurchaseRow(mapped, rowNum, errors) {
   const invoice_number = str(flat.invoice_number);
   const procurement_date = excelDateToIso(flat.procurement_date);
   const invoice_filename = str(flat.invoice_filename);
-  const quantity_mt = num(flat.quantity_mt);
+  let quantity_mt = num(flat.quantity_mt);
+  let quantity_kg = num(flat.quantity_kg);
+  if (!quantity_kg && quantity_mt) quantity_kg = Number((quantity_mt * 1000).toFixed(3));
+  if (!quantity_mt && quantity_kg) quantity_mt = Number((quantity_kg / 1000).toFixed(6));
 
   if (!supplier_name && !invoice_number && !invoice_filename && !quantity_mt) {
     return null;
@@ -327,48 +374,41 @@ function mapPurchaseRow(mapped, rowNum, errors) {
   if (is_gst === 'y' || is_gst === 'true' || is_gst === '1') is_gst = 'Yes';
   if (is_gst === 'n' || is_gst === 'false' || is_gst === '0') is_gst = 'No';
   if (is_gst !== 'Yes' && is_gst !== 'No') {
-    // Infer from GST number presence
     is_gst = str(flat.supplier_gst_number) ? 'Yes' : 'No';
   }
 
   const supplier_gst_number = str(flat.supplier_gst_number).toUpperCase();
-  const supplier_mobile_number = str(flat.supplier_mobile_number);
-
   if (is_gst === 'Yes' && !supplier_gst_number) {
     errors.push(`Row ${rowNum}: Supplier GST Number is required when GST Available is Yes`);
-    return null;
-  }
-  if (is_gst === 'No' && !supplier_mobile_number) {
-    errors.push(
-      `Row ${rowNum}: Supplier Mobile Number is required when GST number is unavailable`
-    );
     return null;
   }
 
   return {
     company_id: null,
     record_type: 'purchase_epr',
-    category_of_plastic: str(flat.category_of_plastic),
+    category_of_plastic: normalizePlasticCategory(flat.category_of_plastic),
     supplier_name,
     address_line_1: str(flat.address_line_1),
     address_line_2: str(flat.address_line_2),
     state: str(flat.state),
     city: str(flat.city),
     pin_code: str(flat.pin_code),
+    buyer_gst: str(flat.buyer_gst).toUpperCase(),
     is_supplier_gst_available: is_gst,
     supplier_gst_number,
-    supplier_mobile_number,
-    procurement_date,
-    quantity_mt,
-    invoice_number,
     hsn_code: str(flat.hsn_code),
+    invoice_number,
+    irn_no: str(flat.irn_no),
+    quantity_mt,
+    quantity_kg,
+    date_of_entry: excelDateToIso(flat.date_of_entry) || new Date().toISOString().slice(0, 10),
+    procurement_date,
     invoice_filename,
-    // Compat fields
     vendor_name: supplier_name,
     vendor_gstin: supplier_gst_number,
     invoice_no: invoice_number,
     invoice_date: procurement_date,
-    item_name: str(flat.category_of_plastic) || 'Plastic',
+    item_name: normalizePlasticCategory(flat.category_of_plastic) || 'Plastic',
     quantity: quantity_mt,
     unit: 'MT',
     total_amount: 0,
@@ -377,6 +417,14 @@ function mapPurchaseRow(mapped, rowNum, errors) {
 
 export function downloadExcelTemplate(type) {
   const isPurchase = type !== 'sale';
+  const wb = XLSX.utils.book_new();
+
+  const lookupWs = XLSX.utils.aoa_to_sheet([
+    ['Category of Plastic (use exactly)'],
+    ...PLASTIC_CATEGORIES.map((c) => [c]),
+  ]);
+  lookupWs['!cols'] = [{ wch: 32 }];
+  XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookups');
 
   if (isPurchase) {
     const ws = XLSX.utils.json_to_sheet([PURCHASE_SAMPLE], {
@@ -385,7 +433,6 @@ export function downloadExcelTemplate(type) {
     ws['!cols'] = PURCHASE_EXCEL_HEADERS.map((h) => ({
       wch: Math.min(40, Math.max(16, h.length + 2)),
     }));
-    const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Procurement');
     XLSX.writeFile(wb, 'procurement_template.xlsx');
     return;
@@ -395,7 +442,6 @@ export function downloadExcelTemplate(type) {
   ws['!cols'] = SALE_EXCEL_HEADERS.map((h) => ({
     wch: Math.min(36, Math.max(16, h.length + 2)),
   }));
-  const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'PostConsumer');
   XLSX.writeFile(wb, 'post_consumer_template.xlsx');
 }

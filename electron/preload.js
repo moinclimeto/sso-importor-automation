@@ -37,5 +37,18 @@ contextBridge.exposeInMainWorld('pwp', {
   // Scraper
   scraper: {
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
+    openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
+    checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
+    waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),
+    fillProcurementBulk: (payload) => ipcRenderer.invoke('scraper:fillProcurementBulk', payload),
+    fillSalesBulk: (payload) => ipcRenderer.invoke('scraper:fillSalesBulk', payload),
+    startCpcbKeepAlive: () => ipcRenderer.invoke('scraper:startCpcbKeepAlive'),
+    stopCpcbKeepAlive: () => ipcRenderer.invoke('scraper:stopCpcbKeepAlive'),
+    pingCpcbSession: () => ipcRenderer.invoke('scraper:pingCpcbSession'),
+    onLog: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('scraper:log', handler);
+      return () => ipcRenderer.removeListener('scraper:log', handler);
+    },
   },
 });

@@ -36,8 +36,8 @@
     "wait-on": "^9.0.3"
   },
   "build": {
-    "appId": "com.pwp.app",
-    "productName": "PWP",
+    "appId": "com.climeto.pwp",
+    "productName": "Climeto PWP",
     "directories": {
       "output": "release",
       "buildResources": "assets"
@@ -53,13 +53,16 @@
       }
     ],
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "assets/icon.png"
     },
     "mac": {
-      "target": "dmg"
+      "target": "dmg",
+      "icon": "assets/icon.png"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "assets/icon.png"
     }
   }
 }

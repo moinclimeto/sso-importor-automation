@@ -1,4 +1,4 @@
-import { app, BrowserWindow } from 'electron';
+import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { initDatabase } from './database.js';
@@ -7,12 +7,16 @@ import { registerIpcHandlers } from './ipcHandlers.js';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const APP_ICON_PATH = path.join(__dirname, 'icon.png');
+
 function createWindow() {
+  const icon = nativeImage.createFromPath(APP_ICON_PATH);
   const win = new BrowserWindow({
     width: 1280,
     height: 800,
     minWidth: 1024,
     minHeight: 600,
+    icon: icon.isEmpty() ? undefined : icon,
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
@@ -20,6 +24,7 @@ function createWindow() {
     },
     titleBarStyle: 'default',
     show: false,
+    title: 'Climeto PWP',
   });
 
   win.once('ready-to-show', () => win.show());
@@ -33,6 +38,10 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
+  // Windows taskbar grouping / custom icon
+  if (process.platform === 'win32') {
+    app.setAppUserModelId('com.climeto.pwp');
+  }
   initDatabase();
   registerIpcHandlers();
   createWindow();
