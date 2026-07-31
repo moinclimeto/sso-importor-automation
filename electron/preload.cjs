@@ -27,7 +27,14 @@ contextBridge.exposeInMainWorld('pwp', {
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
     selectFolder: () => ipcRenderer.invoke('ocr:select-folder'),
+    inspectPaths: (filePaths) => ipcRenderer.invoke('ocr:inspect-paths', filePaths),
     extract: (payload) => ipcRenderer.invoke('ocr:extract', payload),
+    extractBatch: (payload) => ipcRenderer.invoke('ocr:extract-batch', payload),
+    onProgress: (callback) => {
+      const handler = (_event, data) => callback(data);
+      ipcRenderer.on('ocr:progress', handler);
+      return () => ipcRenderer.removeListener('ocr:progress', handler);
+    },
   },
   scraper: {
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),

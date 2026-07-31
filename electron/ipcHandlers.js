@@ -1,5 +1,6 @@
 import { app, ipcMain } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
+import { warmupQrScanner } from './qrScan.js';
 import { getDb, saveDb } from './database.js';
 import { chromium } from 'playwright';
 import path from 'path';
@@ -29,6 +30,7 @@ const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.
 
 export function registerIpcHandlers() {
   registerOcrHandlers();
+  warmupQrScanner().catch(() => {});
 
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', () => {

@@ -12,6 +12,9 @@ import {
 } from '../utils/excelImport.js';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
+import InvoiceDetailsModal, {
+  ViewInvoiceButton,
+} from '../components/InvoiceDetailsModal.jsx';
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n || 0);
@@ -365,9 +368,14 @@ function CpcbUploadModal({ type, title, onClose }) {
             {busy || checkingSession ? <Loader2 size={16} className="animate-spin" /> : <Globe size={16} />}
             {primaryLabel}
           </button>
-        </div>      </div>
+        </div>
+      </div>
     </div>
   );
+}
+
+function rowLineCount(r) {
+  return Array.isArray(r?.lineItems) ? r.lineItems.length : 0;
 }
 
 function renderWideTable(rows, columns, onDelete, extras = {}) {
@@ -381,6 +389,7 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
                 {col.label}
               </th>
             ))}
+            <th className="th whitespace-nowrap">Lines</th>
             <th className="th" />
           </tr>
         </thead>
@@ -402,14 +411,22 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
                   </td>
                 );
               })}
+              <td className="td text-center tabular-nums">{rowLineCount(r) || '—'}</td>
               <td className="td text-right sticky right-0 bg-white">
-                <button
-                  type="button"
-                  onClick={() => onDelete(r.id)}
-                  className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-                >
-                  <Trash2 size={15} />
-                </button>
+                <div className="inline-flex items-center gap-1.5">
+                  <ViewInvoiceButton
+                    onClick={() => extras.onView?.(r)}
+                    disabled={!rowLineCount(r)}
+                    title={rowLineCount(r) ? 'View line items' : 'No line items'}
+                  />
+                  <button
+                    type="button"
+                    onClick={() => onDelete(r.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
               </td>
             </tr>
           ))}
@@ -434,6 +451,7 @@ export default function DocTable() {
   const [error, setError] = useState('');
   const [cpcbOpen, setCpcbOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
+  const [detailRow, setDetailRow] = useState(null);
 
   const load = async () => {
     setLoading(true);
@@ -537,6 +555,13 @@ export default function DocTable() {
           </button>
           <button
             type="button"
+            onClick={() => navigate('/doc-upload', { state: { type } })}
+            className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2 transition-colors"
+          >
+            Upload invoices
+          </button>
+          <button
+            type="button"
             onClick={handleDownloadTemplate}
             className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-3 py-2 transition-colors"
           >
@@ -549,7 +574,11 @@ export default function DocTable() {
             disabled={importing}
             className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2 transition-colors disabled:opacity-60"
           >
-            {importing ? <Loader2 size={16} className="animate-spin" /> : <FileSpreadsheet size={16} />}
+            {importing ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <FileSpreadsheet size={16} />
+            )}
             {importing ? 'Importing…' : 'Import Excel'}
           </button>
           <button
@@ -587,12 +616,11 @@ export default function DocTable() {
         ) : rows.length === 0 ? (
           <div className="p-10 text-center text-sm text-slate-500 space-y-3">
             <p>No records yet.</p>
-            <p className="text-xs text-slate-400">
-              Download the Excel template, fill rows, then use Import Excel.
-            </p>
+            <p className="text-xs text-slate-400">Upload invoices or import Excel to add rows.</p>
           </div>
         ) : isPurchase ? (
           renderWideTable(rows, PURCHASE_TABLE_COLUMNS, handleDelete, {
+            onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
             getValue: (r, col, _idx, value) => {
               if (col.key === 'supplier_name' && !value) return r.vendor_name;
               if (col.key === 'invoice_number' && !value) return r.invoice_no;
@@ -616,6 +644,7 @@ export default function DocTable() {
           })
         ) : (
           renderWideTable(rows, SALE_TABLE_COLUMNS, handleDelete, {
+            onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
             getValue: (r, col, idx, value) => {
               if (col.key === 's_no' && (value === undefined || value === '')) return idx + 1;
               if (col.key === 'entity_name' && !value) return r.customer_name;
@@ -656,6 +685,13 @@ export default function DocTable() {
           }}
         />
       )}
+
+      <InvoiceDetailsModal
+        open={Boolean(detailRow)}
+        invoice={detailRow}
+        docType={type}
+        onClose={() => setDetailRow(null)}
+      />
     </div>
   );
 }
