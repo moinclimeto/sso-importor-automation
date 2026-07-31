@@ -6,9 +6,18 @@ async function extractEprSales(page) {
     const pageData = {};
 
     try {
-        // Go directly to the Sales Details page
-        console.log("🖱️ Navigating to Sales Details URL...");
-        await page.goto("https://epr.cpcb.gov.in/onboarding/sales-details", { waitUntil: 'networkidle' });
+        // Go back to the dashboard first so we can click the View button
+        console.log("🖱️ Clicking 'Dashboard' in sidebar to reset view...");
+        const dashboardLink = page.locator('app-dashboard-sidebar').getByText('Dashboard').first();
+        await dashboardLink.click();
+        await page.waitForTimeout(3000);
+
+        // Now we are on the Dashboard. Click the 'View' button next to Sales Details.
+        console.log("🖱️ Clicking 'View' button for Sales Details on the dashboard card...");
+        const viewBtn = page.locator("xpath=//*[contains(text(), 'Sales Details')]/following::button[contains(., 'View')][1]");
+        await viewBtn.waitFor({ state: 'visible', timeout: 8000 });
+        await viewBtn.click();
+        await page.waitForTimeout(3000);
         await page.waitForTimeout(2000); 
 
         const dataDir = path.join(__dirname, '..', '..', '..', 'data');
@@ -20,83 +29,93 @@ async function extractEprSales(page) {
             console.log(`\n🔄 Processing Sales Year: ${year}`);
             
             try {
-                // Try to click the first year dropdown
-                console.log(`🖱️ Selecting From Year: ${year}...`);
-                // Wait for the dropdowns to render
-                await page.waitForSelector('mat-select, select', { state: 'attached', timeout: 10000 }).catch(() => null);
-                
-                // Try finding either mat-select or native select
-                let dropdowns = page.locator('mat-select');
-                if (await dropdowns.count() < 3) {
-                    dropdowns = page.locator('select');
-                }
-                
-                if (await dropdowns.count() >= 3) {
-                    // Click From Year
-                    await dropdowns.nth(1).click();
-                    await page.waitForTimeout(500);
-                    // Native select vs mat-select handling
-                    if (await page.locator('mat-option').count() > 0) {
-                        await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    } else {
-                        await dropdowns.nth(1).selectOption({ label: year }).catch(() => null);
-                    }
-                    await page.waitForTimeout(500);
+                // Intercept and force the API request to use the correct year dates (Fail-safe)
+                await page.route('**/api/v1/pwp/sales-details/**', async route => {
+                    const requestUrl = new URL(route.request().url());
+                    requestUrl.searchParams.set('fromDate', `01-01-${year}`);
+                    requestUrl.searchParams.set('toDate', `31-12-${year}`);
+                    await route.continue({ url: requestUrl.toString() });
+                });
 
-                    // Click To Year
-                    console.log(`🖱️ Selecting To Year: ${year}...`);
-                    await dropdowns.nth(2).click();
-                    await page.waitForTimeout(500);
-                    if (await page.locator('mat-option').count() > 0) {
-                        await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    } else {
-                        await dropdowns.nth(2).selectOption({ label: year }).catch(() => null);
+                // Visually change the year in the dropdown so the user can see it
+                try {
+                    console.log(`🖱️ Attempting to visually select Year ${year} in UI...`);
+                    // There are 3 dropdowns: 1. Interval Type (Year), 2. From Year, 3. To Year
+                    const selects = page.locator('select');
+                    const count = await selects.count();
+                    
+                    if (count >= 3) {
+                        try { await selects.nth(0).selectOption({ label: 'Year' }); } catch (e) {}
+                        await page.waitForTimeout(500);
+                        
+                        await selects.nth(1).selectOption(year);
+                        await page.waitForTimeout(500);
+                        
+                        await selects.nth(2).selectOption(year);
+                        await page.waitForTimeout(500);
+                    } else if (count === 2) {
+                        await selects.nth(0).selectOption(year);
+                        await selects.nth(1).selectOption(year);
                     }
-                    await page.waitForTimeout(500);
-                } else {
-                    console.log("⚠️ Could not find enough dropdowns. Count:", await dropdowns.count());
+                } catch(e) {
+                    console.log(`⚠️ Could not select year in UI.`);
                 }
 
-                // Click Fetch Data button first to load the table
+                // Debug listener to see what's actually being called when clicking the underlined data
+                const debugListener = (response) => {
+                    if (response.url().includes('/api/v1/')) {
+                        console.log(`[Network Debug] Saw API call: ${response.url()} (Status: ${response.status()})`);
+                    }
+                };
+                page.on('response', debugListener);
+
                 console.log("🖱️ Clicking 'Fetch Data' button...");
-                const fetchBtn = page.getByRole('button', { name: /Fetch Data/i }).first();
+                const fetchBtn = page.locator('button').filter({ hasText: /Fetch Data/i }).first();
                 await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
-                await fetchBtn.click();
-                
-                // Wait for table to load
+                await fetchBtn.click({ force: true });
                 await page.waitForTimeout(3000);
 
-                // Setup API listener BEFORE clicking the table button
-                // Listening for /api/v1/pwp/sales/categoryDetails
+                // Setup API listener
                 const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('/api/v1/pwp/sales/categoryDetails') && response.status() === 200,
+                    response => response.url().includes('categoryDetails') && response.request().method() !== 'OPTIONS',
                     { timeout: 15000 }
                 ).catch(() => null);
 
-                // Click the specific table button provided by the user
-                const tableButtonXpath = "xpath=//html/body/app-root/app-dashboard/div/div[2]/div[2]/app-sales-details/div/div[2]/div[5]/app-table/div/div/table/tbody/tr[3]/td[2]/div/button";
-                console.log("🖱️ Clicking the Table Button (tr[3]/td[2])...");
-                await page.waitForSelector(tableButtonXpath, { state: 'visible', timeout: 5000 });
-                await page.click(tableButtonXpath);
+                // Click the table underlined data to trigger API
+                console.log("🖱️ Clicking the underlined data in the table...");
+                try {
+                    // It could be an 'a', 'button', or something with an 'underline' class/style inside the table
+                    const tableLink = page.locator('td').locator('a, button, [style*="underline"], [class*="underline"], u').first();
+                    await tableLink.waitFor({ state: 'visible', timeout: 8000 });
+                    await tableLink.click({ force: true });
 
-                // Wait for the API response
-                console.log("⏳ Waiting for API response...");
-                const apiResponse = await apiResponsePromise;
-                if (apiResponse) {
-                    const apiJson = await apiResponse.json();
-                    console.log(`✅ API Response captured for ${year}!`);
-                    fs.writeFileSync(path.join(dataDir, `sales_data_${year}.json`), JSON.stringify(apiJson, null, 2));
-                    console.log(`📂 Saved data/sales_data_${year}.json`);
-                } else {
-                    console.log(`⚠️ No API response caught for ${year} after clicking the table button.`);
+                    // Wait for the API response
+                    console.log("⏳ Waiting for API response...");
+                    const apiResponse = await apiResponsePromise;
+                    if (apiResponse) {
+                        const apiJson = await apiResponse.json();
+                        console.log(`✅ API Response captured for ${year}!`);
+                        fs.writeFileSync(path.join(dataDir, `sales_${year}.json`), JSON.stringify(apiJson, null, 2));
+                        console.log(`📂 Saved data/sales_${year}.json`);
+                    } else {
+                        console.log(`⚠️ No API response caught for ${year} after clicking table button.`);
+                    }
+                    
+                    // Close the modal
+                    await page.keyboard.press('Escape');
+                    await page.waitForTimeout(1000);
+
+                } catch (e) {
+                    console.log(`⏭️ No data/buttons found in table for year ${year}. Skipping...`);
                 }
                 
-                // Close the modal
-                await page.keyboard.press('Escape');
-                await page.waitForTimeout(1000);
+                // Remove listener here inside try block where debugListener is in scope
+                page.removeListener('response', debugListener);
 
             } catch (err) {
-                console.error(`❌ Failed processing year ${year}:`, err.message);
+                console.error(`❌ Error processing year ${year}:`, err);
+            } finally {
+                await page.unroute('**/api/v1/pwp/sales-details**').catch(() => null);
             }
         }
 

@@ -16,6 +16,12 @@ contextBridge.exposeInMainWorld('pwp', {
     delete: (id) => ipcRenderer.invoke('purchases:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('purchases:getSummary', filters),
   },
+  // EPR Scraped Data (SQLite)
+  eprData: {
+    getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
+    getSales: () => ipcRenderer.invoke('eprData:getSales'),
+  },
+
   // Sales
   sales: {
     getAll: (filters) => ipcRenderer.invoke('sales:getAll', filters),
@@ -37,5 +43,13 @@ contextBridge.exposeInMainWorld('pwp', {
   // Scraper
   scraper: {
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
+    getProfile: () => ipcRenderer.invoke('scraper:getProfile'),
+    getDashboardCards: () => ipcRenderer.invoke('scraper:getDashboardCards'),
+    getPayments: () => ipcRenderer.invoke('scraper:getPayments'),
+    getWallet: () => ipcRenderer.invoke('scraper:getWallet'),
+    getWalletHistory: () => ipcRenderer.invoke('scraper:getWalletHistory'),
+    getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
+    getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
+    getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
   },
 });

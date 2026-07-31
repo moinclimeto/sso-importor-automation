@@ -2,19 +2,23 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 
 const navLinks = [
+  { to: '/cpcb-dashboard', icon: LayoutDashboard, label: 'CPCB Dashboard' },
+  { to: '/epr-sales', icon: Database, label: 'EPR Sales Data' },
+  { to: '/epr-procurement', icon: Database, label: 'EPR Procurement Data' },
   { to: '/companies', icon: Building2, label: 'Company Profile' },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  // { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
 ];
 
 const pageHeaders = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Overview of your purchase & sale activity' },
+  '/cpcb-dashboard': { title: 'CPCB Dashboard', subtitle: 'Dashboard stats from the CPCB portal' },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
+  '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal' },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',

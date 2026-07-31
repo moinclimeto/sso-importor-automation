@@ -95,8 +95,8 @@ async function runScraper() {
     allData.material = await extractEprMaterial(page);
     saveJson('epr_material.json', allData.material);
 
-    allData.production = await extractEprProduction(page);
-    saveJson('epr_production.json', allData.production);
+    // allData.production = await extractEprProduction(page);
+    // saveJson('epr_production.json', allData.production);
 
     allData.sales = await extractEprSales(page);
     saveJson('epr_sales.json', allData.sales);

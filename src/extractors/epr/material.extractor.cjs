@@ -6,16 +6,14 @@ async function extractEprMaterial(page) {
     const pageData = {};
 
     try {
-        // 1. Click on the "View" button on the dashboard for Procurement Details
-        const viewBtnXpath = "xpath=//html/body/app-root/app-dashboard/div/div[2]/div[2]/app-onboard-dashboard/div/div[3]/app-onboard-dashboard-summary/div/div[2]/div[1]/app-operations-card/div/div[2]/div[1]/div/app-custom-button/button";
+        // We are on the Dashboard. Click the 'View' button next to Procurement Details.
+        console.log("🖱️ Clicking 'View' button for Procurement Details on the dashboard card...");
         
-        console.log("🖱️ Clicking 'View' Procurement Details on Dashboard...");
-        await page.waitForSelector(viewBtnXpath, { state: 'visible', timeout: 15000 });
-        await page.click(viewBtnXpath);
-
-        // Wait for page navigation to procurement details
-        await page.waitForURL('**/onboarding/procurement-details*', { timeout: 15000 });
-        console.log("✅ Reached Procurement Details page.");
+        // Find the 'View' button that immediately follows the 'Procurement Details' text in the DOM
+        const viewBtn = page.locator("xpath=//*[contains(text(), 'Procurement Details')]/following::button[contains(., 'View')][1]");
+        await viewBtn.waitFor({ state: 'visible', timeout: 8000 });
+        await viewBtn.click();
+        await page.waitForTimeout(3000);
         await page.waitForTimeout(2000); 
 
         const dataDir = path.join(__dirname, '..', '..', '..', 'data');
@@ -29,65 +27,78 @@ async function extractEprMaterial(page) {
             console.log(`\n🔄 Processing Year: ${year}`);
             
             try {
-                // Try to click the first year dropdown (index 1 assuming index 0 is "Year" filter type)
-                console.log(`🖱️ Selecting From Year: ${year}...`);
-                const dropdowns = page.locator('mat-select');
-                
-                if (await dropdowns.count() >= 3) {
-                    // Click From Year
-                    await dropdowns.nth(1).click();
-                    await page.waitForTimeout(500);
-                    await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    await page.waitForTimeout(500);
+                // Intercept and force the API request to use the correct year dates (Fail-safe)
+                await page.route('**/api/v1/pwp/procurement-details/**', async route => {
+                    const requestUrl = new URL(route.request().url());
+                    requestUrl.searchParams.set('fromDate', `01-01-${year}`);
+                    requestUrl.searchParams.set('toDate', `31-12-${year}`);
+                    await route.continue({ url: requestUrl.toString() });
+                });
 
-                    // Click To Year
-                    console.log(`🖱️ Selecting To Year: ${year}...`);
-                    await dropdowns.nth(2).click();
-                    await page.waitForTimeout(500);
-                    await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    await page.waitForTimeout(500);
-                } else {
-                    console.log("⚠️ Could not find mat-select dropdowns. Ensure UI is fully loaded.");
+                // Visually change the year in the dropdown so the user can see it
+                try {
+                    console.log(`🖱️ Attempting to visually select Year ${year} in UI...`);
+                    const selects = page.locator('select.filter-year-select');
+                    if (await selects.count() >= 2) {
+                        // Playwright's native selectOption is perfect for standard <select> tags
+                        await selects.nth(0).selectOption(year);
+                        await page.waitForTimeout(500);
+                        
+                        await selects.nth(1).selectOption(year);
+                        await page.waitForTimeout(500);
+                    }
+                } catch(e) {
+                    console.log(`⚠️ Could not select year in UI, but API interceptor will still force ${year} in background.`);
                 }
 
-                // Setup API listener BEFORE clicking the table button
-                const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('api/v1/pwp/procurement-details/') && response.status() === 200,
-                    { timeout: 15000 }
-                ).catch(() => null);
-
-                // Click Fetch Data
+                // Click Fetch Data (this triggers a UI refresh, but our route overrides the dates)
                 console.log("🖱️ Clicking 'Fetch Data' button...");
-                await page.waitForSelector(fetchBtnXpath, { state: 'visible', timeout: 5000 });
-                await page.click(fetchBtnXpath);
+                const fetchBtn = page.locator('button').filter({ hasText: /Fetch Data/i }).first();
+                await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
+                await fetchBtn.click();
                 
                 // Wait for table to load
                 await page.waitForTimeout(3000);
 
-                // Click the specific table button provided by the user
-                console.log("🖱️ Clicking the Table Button (tr[5]/td[3])...");
-                await page.waitForSelector(tableButtonXpath, { state: 'visible', timeout: 5000 });
-                await page.click(tableButtonXpath);
+                // Setup API listener AFTER Fetch Data (to catch the modal popup API, not the initial table API)
+                const apiResponsePromise = page.waitForResponse(
+                    response => response.url().includes('procurement-details/summary-details') && response.status() === 200,
+                    { timeout: 15000 }
+                ).catch(() => null);
 
-                // Wait for the API response that fires after clicking the table button
-                console.log("⏳ Waiting for API response...");
-                const apiResponse = await apiResponsePromise;
-                if (apiResponse) {
-                    const apiJson = await apiResponse.json();
-                    console.log(`✅ API Response captured for ${year}!`);
-                    fs.writeFileSync(path.join(dataDir, `purchase_${year}.json`), JSON.stringify(apiJson, null, 2));
-                    console.log(`📂 Saved data/purchase_${year}.json`);
-                } else {
-                    console.log(`⚠️ No API response caught for ${year} after clicking table button.`);
+                // Click the specific table button in the Total row
+                console.log("🖱️ Clicking the table-link button in the Total row...");
+                
+                try {
+                    // Find the row containing 'Total' in the first column, then get its button
+                    const tableButton = page.locator('tr').filter({ has: page.locator('td', { hasText: 'Total' }) }).locator('button.table-link:visible').first();
+                    await tableButton.waitFor({ state: 'visible', timeout: 8000 });
+                    await tableButton.click();
+
+                    // Wait for the API response that fires after clicking the table button
+                    console.log("⏳ Waiting for API response...");
+                    const apiResponse = await apiResponsePromise;
+                    if (apiResponse) {
+                        const apiJson = await apiResponse.json();
+                        console.log(`✅ API Response captured for ${year}!`);
+                        fs.writeFileSync(path.join(dataDir, `purchase_${year}.json`), JSON.stringify(apiJson, null, 2));
+                        console.log(`📂 Saved data/purchase_${year}.json`);
+                    } else {
+                        console.log(`⚠️ No API response caught for ${year} after clicking table button.`);
+                    }
+
+                    // Close any modal that might have opened
+                    await page.keyboard.press('Escape');
+                    await page.waitForTimeout(1000);
+
+                } catch (e) {
+                    console.log(`⏭️ No data/buttons found in table for year ${year}. Skipping...`);
                 }
 
-                // Close any modal that might have opened from clicking the table button
-                // Pressing escape is usually a safe way to close modals
-                await page.keyboard.press('Escape');
-                await page.waitForTimeout(1000);
-
             } catch (err) {
-                console.error(`❌ Failed processing year ${year}:`, err.message);
+                console.error(`❌ Error processing year ${year}:`, err);
+            } finally {
+                await page.unroute('**/api/v1/pwp/procurement-details/summary-details*').catch(() => null);
             }
         }
 

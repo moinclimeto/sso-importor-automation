@@ -10,6 +10,10 @@ import Summary from '../pages/Summary.jsx';
 import DocProcessor from '../pages/DocProcessor.jsx';
 import DocUpload from '../pages/DocUpload.jsx';
 import DocTable from '../pages/DocTable.jsx';
+import EprData from '../pages/EprData.jsx';
+import EprSalesData from '../pages/EprSalesData.jsx';
+import EprProcurementData from '../pages/EprProcurementData.jsx';
+import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -35,6 +39,10 @@ export default function AppRoutes() {
           <Route path="purchases" element={<Purchases />} />
           <Route path="sales" element={<Sales />} />
           <Route path="summary" element={<Summary />} />
+          <Route path="epr-data" element={<EprData />} />
+          <Route path="epr-sales" element={<EprSalesData />} />
+          <Route path="epr-procurement" element={<EprProcurementData />} />
+          <Route path="cpcb-dashboard" element={<CpcbDashboard />} />
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />
           <Route path="doc-table" element={<DocTable />} />

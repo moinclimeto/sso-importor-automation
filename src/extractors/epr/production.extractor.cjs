@@ -6,9 +6,18 @@ async function extractEprProduction(page) {
     const pageData = {};
 
     try {
-        // Go directly to the Production Details page
-        console.log("🖱️ Navigating to Production Details URL...");
-        await page.goto("https://epr.cpcb.gov.in/onboarding/production-details", { waitUntil: 'networkidle' });
+        // Go back to the dashboard first so we can click the View button
+        console.log("🖱️ Clicking 'Dashboard' in sidebar to reset view...");
+        const dashboardLink = page.locator('app-dashboard-sidebar').getByText('Dashboard').first();
+        await dashboardLink.click();
+        await page.waitForTimeout(3000);
+
+        // Now we are on the Dashboard. Click the 'View' button next to Production Details.
+        console.log("🖱️ Clicking 'View' button for Production Details on the dashboard card...");
+        const viewBtn = page.locator("xpath=//*[contains(text(), 'Production Details')]/following::button[contains(., 'View')][1]");
+        await viewBtn.waitFor({ state: 'visible', timeout: 8000 });
+        await viewBtn.click();
+        await page.waitForTimeout(3000);
         await page.waitForTimeout(2000); 
 
         const dataDir = path.join(__dirname, '..', '..', '..', 'data');
@@ -20,54 +29,72 @@ async function extractEprProduction(page) {
             console.log(`\n🔄 Processing Production Year: ${year}`);
             
             try {
-                // Try to click the first year dropdown
-                console.log(`🖱️ Selecting From Year: ${year}...`);
-                const dropdowns = page.locator('mat-select');
-                
-                if (await dropdowns.count() >= 3) {
-                    // Click From Year
-                    await dropdowns.nth(1).click();
-                    await page.waitForTimeout(500);
-                    await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    await page.waitForTimeout(500);
-
-                    // Click To Year
-                    console.log(`🖱️ Selecting To Year: ${year}...`);
-                    await dropdowns.nth(2).click();
-                    await page.waitForTimeout(500);
-                    await page.locator('mat-option').filter({ hasText: year }).first().click();
-                    await page.waitForTimeout(500);
-                } else {
-                    console.log("⚠️ Could not find mat-select dropdowns. Ensure UI is fully loaded.");
+                // Visually change the year in the dropdown so the user can see it
+                try {
+                    console.log(`🖱️ Attempting to visually select Year ${year} in UI...`);
+                    // There are 3 dropdowns: 1. Interval Type (Year), 2. From Year, 3. To Year
+                    const selects = page.locator('select');
+                    const count = await selects.count();
+                    
+                    if (count >= 3) {
+                        // Ensure first dropdown is set to 'Year' (if it has that option)
+                        try { await selects.nth(0).selectOption({ label: 'Year' }); } catch (e) {}
+                        await page.waitForTimeout(500);
+                        
+                        // Set From Year
+                        await selects.nth(1).selectOption(year);
+                        await page.waitForTimeout(500);
+                        
+                        // Set To Year
+                        await selects.nth(2).selectOption(year);
+                        await page.waitForTimeout(500);
+                    } else if (count === 2) {
+                        // Fallback if there's only 2
+                        await selects.nth(0).selectOption(year);
+                        await selects.nth(1).selectOption(year);
+                    }
+                } catch(e) {
+                    console.log(`⚠️ Could not select year in UI.`);
                 }
 
+                // Debug listener to see what's actually being called when Fetch Data is clicked
+                const debugListener = (response) => {
+                    if (response.url().includes('/api/v1/')) {
+                        console.log(`[Network Debug] Saw API call: ${response.url()} (Status: ${response.status()})`);
+                    }
+                };
+                page.on('response', debugListener);
+
                 // Setup API listener BEFORE clicking Fetch Data
-                // Listening for /api/v1/production/category-details
                 const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('/api/v1/production/category-details') && response.status() === 200,
+                    response => response.url().includes('get-dashboard') && response.request().method() !== 'OPTIONS',
                     { timeout: 15000 }
                 ).catch(() => null);
 
-                // Click Fetch Data button (using generic text locator to be robust)
                 console.log("🖱️ Clicking 'Fetch Data' button...");
                 const fetchBtn = page.getByRole('button', { name: /Fetch Data/i }).first();
                 await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
-                await fetchBtn.click();
+                await fetchBtn.click({ force: true });
                 
                 // Wait for the API response
                 console.log("⏳ Waiting for API response...");
                 const apiResponse = await apiResponsePromise;
+                
+                page.removeListener('response', debugListener);
+
                 if (apiResponse) {
                     const apiJson = await apiResponse.json();
                     console.log(`✅ API Response captured for ${year}!`);
-                    fs.writeFileSync(path.join(dataDir, `production_data_${year}.json`), JSON.stringify(apiJson, null, 2));
-                    console.log(`📂 Saved data/production_data_${year}.json`);
+                    fs.writeFileSync(path.join(dataDir, `production_${year}.json`), JSON.stringify(apiJson, null, 2));
+                    console.log(`📂 Saved data/production_${year}.json`);
                 } else {
                     console.log(`⚠️ No API response caught for ${year} after clicking Fetch Data.`);
                 }
+                
+                await page.waitForTimeout(2000);
 
             } catch (err) {
-                console.error(`❌ Failed processing year ${year}:`, err.message);
+                console.error(`❌ Error processing year ${year}:`, err);
             }
         }
 

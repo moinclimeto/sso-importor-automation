@@ -18,7 +18,13 @@ function getSqliteType(value) {
     return 'TEXT'; // For arrays or nested objects (we store as JSON string)
 }
 
+let createdTables = new Set();
+
 async function createTableFromObject(db, tableName, sampleObj) {
+    if (createdTables.has(tableName)) {
+        return; // Already created during this sync run
+    }
+
     console.log(`[Schema] Generating table schema for '${tableName}'...`);
     const columns = [];
     
@@ -37,6 +43,7 @@ async function createTableFromObject(db, tableName, sampleObj) {
     
     const createQuery = `CREATE TABLE "${tableName}" (\n  ${columns.join(',\n  ')}\n);`;
     await db.exec(createQuery);
+    createdTables.add(tableName);
     console.log(`[Schema] Table '${tableName}' created successfully!`);
 }
 
@@ -45,9 +52,21 @@ async function insertData(db, tableName, dataArray) {
     
     console.log(`[Data] Inserting ${dataArray.length} rows into '${tableName}'...`);
     
-    const keys = Object.keys(dataArray[0]);
-    const safeKeys = keys.map(k => `"${k.toLowerCase().replace(/[^a-z0-9_]/g, '_')}"`);
-    const placeholders = keys.map(() => '?').join(', ');
+    // Collect all possible keys across all objects in dataArray to ensure no columns are missing
+    const allKeysSet = new Set();
+    for (const obj of dataArray) {
+        for (const key of Object.keys(obj)) {
+            allKeysSet.add(key);
+        }
+    }
+    const allKeys = Array.from(allKeysSet);
+    const safeKeys = allKeys.map(k => `"${k.toLowerCase().replace(/[^a-z0-9_]/g, '_')}"`);
+    const placeholders = allKeys.map(() => '?').join(', ');
+    
+    // Dynamically ensure all columns exist
+    for (const safeKey of safeKeys) {
+        await db.exec(`ALTER TABLE "${tableName}" ADD COLUMN ${safeKey} TEXT;`).catch(() => {});
+    }
     
     const insertQuery = `INSERT INTO "${tableName}" (${safeKeys.join(', ')}) VALUES (${placeholders})`;
     
@@ -57,12 +76,10 @@ async function insertData(db, tableName, dataArray) {
     try {
         const stmt = await db.prepare(insertQuery);
         for (const obj of dataArray) {
-            const rowValues = keys.map(key => {
-                let val = obj[key];
-                if (typeof val === 'boolean') return val ? 1 : 0;
-                if (typeof val === 'object' && val !== null) {
-                    return JSON.stringify(val); // Convert nested objects/arrays to JSON string
-                }
+            const rowValues = allKeys.map(key => {
+                const val = obj[key];
+                if (val === undefined || val === null) return null;
+                if (typeof val === 'object') return JSON.stringify(val);
                 return val;
             });
             await stmt.run(rowValues);
@@ -110,22 +127,96 @@ async function syncToSqlite() {
         let targetData = [];
         let tableName = file.replace('.json', '');
 
+        // Extract year from filename if present (e.g. sales_2025.json -> 2025)
+        const yearMatch = file.match(/_(\d{4})\.json$/);
+        const dataYear = yearMatch ? yearMatch[1] : null;
+
+        // Recursive function to flatten deeply nested JSON objects
+        function flattenObject(ob) {
+            var toReturn = {};
+            for (var i in ob) {
+                if (!ob.hasOwnProperty(i)) continue;
+                if ((typeof ob[i]) == 'object' && ob[i] !== null && !Array.isArray(ob[i])) {
+                    var flatObject = flattenObject(ob[i]);
+                    for (var x in flatObject) {
+                        if (!flatObject.hasOwnProperty(x)) continue;
+                        toReturn[i + '_' + x] = flatObject[x];
+                    }
+                } else {
+                    toReturn[i] = ob[i];
+                }
+            }
+            return toReturn;
+        }
+
         // 1. Procurement APIs (purchase_2026.json)
-        if (file.startsWith('purchase_') && jsonData.data && jsonData.data.procurementDetails) {
-            targetData = jsonData.data.procurementDetails;
-            tableName = `procurement_${file.split('_')[1].split('.')[0]}`; // e.g. procurement_2026
+        if (file.startsWith('purchase_')) {
+            if (jsonData.data && jsonData.data.list) {
+                targetData = jsonData.data.list;
+            } else if (jsonData.data && !Array.isArray(jsonData.data) && jsonData.data.procurementDetails) {
+                targetData = jsonData.data.procurementDetails;
+            } else if (jsonData.data && Array.isArray(jsonData.data)) {
+                targetData = jsonData.data;
+            } else if (Array.isArray(jsonData)) {
+                targetData = jsonData;
+            }
+            tableName = `procurement_details`;
         }
         // 2. Production APIs
-        else if (file.startsWith('production_') && jsonData.data) {
-            if (Array.isArray(jsonData.data)) targetData = jsonData.data;
-            else if (jsonData.data.productionDetails) targetData = jsonData.data.productionDetails;
-            else targetData = [jsonData.data]; 
+        else if (file.startsWith('production_')) {
+            if (jsonData.data) {
+                if (Array.isArray(jsonData.data)) targetData = jsonData.data;
+                else if (jsonData.data.productionDetails) targetData = jsonData.data.productionDetails;
+                else if (jsonData.data.tableData) targetData = jsonData.data.tableData;
+                else targetData = [jsonData.data]; 
+            } else if (Array.isArray(jsonData)) {
+                targetData = jsonData;
+            }
+            tableName = `production_details`;
         }
         // 3. Sales APIs
-        else if (file.startsWith('sales_') && jsonData.data) {
-            if (Array.isArray(jsonData.data)) targetData = jsonData.data;
-            else if (jsonData.data.salesDetails) targetData = jsonData.data.salesDetails;
-            else targetData = [jsonData.data];
+        else if (file.startsWith('sales_')) {
+            if (jsonData.data) {
+                if (Array.isArray(jsonData.data)) targetData = jsonData.data;
+                else if (jsonData.data.salesDetails) targetData = jsonData.data.salesDetails;
+                else if (jsonData.data.data && Array.isArray(jsonData.data.data)) targetData = jsonData.data.data;
+                else targetData = [jsonData.data];
+            } else if (Array.isArray(jsonData)) {
+                targetData = jsonData;
+            }
+            tableName = `sales_details`;
+            
+            // For Sales, productionId is a dictionary keyed by ID. We need to expand it into an array of rows.
+            let expandedSales = [];
+            targetData.forEach(row => {
+                let mappedRow = { ...row };
+                if (mappedRow.registerType === 2) {
+                    mappedRow.registration_type_mapped = 'Un-Registered';
+                    mappedRow.entity_type_mapped = '-';
+                } else if (mappedRow.registerType === 1) {
+                    mappedRow.registration_type_mapped = 'Registered';
+                    mappedRow.entity_type_mapped = 'Producer';
+                }
+
+                if (mappedRow.productionId && typeof mappedRow.productionId === 'object' && !Array.isArray(mappedRow.productionId)) {
+                    for (const key in mappedRow.productionId) {
+                        let newRow = { ...mappedRow, productionId: mappedRow.productionId[key] };
+                        expandedSales.push(newRow);
+                    }
+                } else {
+                    expandedSales.push(mappedRow);
+                }
+            });
+            targetData = expandedSales;
+        }
+        
+        // Final pass: Flatten all nested objects into separate columns, and inject the year
+        if (['procurement_details', 'production_details', 'sales_details'].includes(tableName)) {
+            targetData = targetData.map(row => {
+                let flatRow = flattenObject(row);
+                if (dataYear) flatRow.year = dataYear;
+                return flatRow;
+            });
         }
         // 4. Wallet APIs (e.g. wallet_certificate-transaction.json)
         else if (file.startsWith('wallet_') && file !== 'epr_wallet.json') {
@@ -137,13 +228,81 @@ async function syncToSqlite() {
                 targetData = [jsonData]; // Dump as single row
             }
         } 
-        // 5. Generic Fallback for standard tables
-        else if (jsonData.tables && jsonData.tables.length > 0) {
-            targetData = [{
-                file_source: file,
-                raw_text: jsonData.rawText || "",
-                tables_dump: JSON.stringify(jsonData.tables)
-            }];
+        // 5. EPR Dashboard
+        else if (file === 'epr_dashboard.json') {
+            let parsed = { file_source: file };
+            
+            if (jsonData.cards) {
+                for (const card of jsonData.cards) {
+                    const lines = card.split('\n').map(l => l.trim()).filter(l => l && l !== '!' && l !== 'View Details');
+                    const title = lines[0];
+
+                    if (title === 'Annual Filings') {
+                        for (let i = 1; i < lines.length; i++) {
+                            if (lines[i] === 'AR Window Status') parsed.ar_window_status = lines[i+1];
+                            if (lines[i] === 'Due Date') parsed.ar_due_date = lines[i+1];
+                            if (lines[i] === 'AR Filing Status') parsed.ar_filing_status = lines[i+1];
+                        }
+                    }
+                    else if (title === 'Wallet') {
+                        for (let i = 1; i < lines.length; i++) {
+                            if (lines[i] === 'Total Available Potential (in MT)') parsed.wallet_available_potential_mt = parseFloat(lines[i+1]) || 0;
+                            if (lines[i] === 'Consolidated Certificates Value (in MT)') parsed.wallet_consolidated_certificates_mt = parseFloat(lines[i+1]) || 0;
+                        }
+                    }
+                    else if (title === 'Trade') {
+                        for (let i = 1; i < lines.length; i++) {
+                            if (lines[i] === 'Total certificates available for trade') parsed.trade_available_certificates = parseFloat(lines[i+1]) || 0;
+                            if (lines[i] === 'Total certificate value hold for trading (MT)') parsed.trade_hold_certificates_mt = parseFloat(lines[i+1]) || 0;
+                        }
+                    }
+                    else if (title === 'Environment Compensation') {
+                        for (let i = 1; i < lines.length; i++) {
+                            if (lines[i] === 'Total Environment Composition Levied') parsed.ec_levied = lines[i+1];
+                            if (lines[i] === 'Paid') parsed.ec_paid = lines[i+1];
+                            if (lines[i] === 'Pending') parsed.ec_pending = lines[i+1];
+                        }
+                    }
+                    else if (title === 'Grievance Raised') {
+                        for (let i = 1; i < lines.length; i++) {
+                            if (lines[i] === 'Total Grievance Raised (in Number)') parsed.grievance_raised = parseInt(lines[i+1]) || 0;
+                            if (lines[i] === 'Pending') parsed.grievance_pending = parseInt(lines[i+1]) || 0;
+                            if (lines[i] === 'Resolved') parsed.grievance_resolved = parseInt(lines[i+1]) || 0;
+                        }
+                    }
+                }
+            }
+
+            if (jsonData.rawText) {
+                const lines = jsonData.rawText.split('\n').map(l => l.trim()).filter(l => l);
+                const cpcbIdx = lines.findIndex(l => l.includes('Central Pollution Control Board'));
+                if (cpcbIdx !== -1 && lines.length > cpcbIdx + 1) {
+                    parsed.company_name = lines[cpcbIdx + 1];
+                }
+            }
+            
+            // Keep the tables_dump just in case we still want the Category Potentials table
+            parsed.tables_dump = JSON.stringify(jsonData.tables_dump || jsonData.tables || []);
+            
+            targetData = [parsed];
+        }
+        // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
+        else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
+            const headers = jsonData.tables[0][0].map(h => {
+                // Convert header string to valid sqlite column name
+                return h.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
+            });
+            
+            const rows = jsonData.tables[0].slice(1);
+            targetData = rows.map(row => {
+                let obj = { file_source: file };
+                headers.forEach((header, i) => {
+                    if (header && header !== 'action') {
+                        obj[header] = row[i] || "";
+                    }
+                });
+                return obj;
+            });
         }
         
         if (targetData.length === 0) {
