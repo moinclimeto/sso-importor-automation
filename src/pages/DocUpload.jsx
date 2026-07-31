@@ -12,13 +12,11 @@ import {
   AlertCircle,
   XCircle,
 } from 'lucide-react';
-import {
-  SALE_TABLE_COLUMNS,
-  PURCHASE_TABLE_COLUMNS,
-} from '../utils/excelImport.js';
 import InvoiceDetailsModal, {
   ViewInvoiceButton,
 } from '../components/InvoiceDetailsModal.jsx';
+import { getApi } from '../utils/pwpApi.js';
+import { applyCompanyRoutingToResults } from '../utils/companyInvoiceMatch.js';
 function getFyOptions() {
   const now = new Date();
   const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
@@ -143,50 +141,60 @@ function ProgressPanel({ progress }) {
     </div>
   );
 }
-function emptyPurchase() {
-  return {
-    category_of_plastic: '',
-    supplier_name: '',
-    address_line_1: '',
-    address_line_2: '',
-    state: '',
-    city: '',
-    pin_code: '',
-    is_supplier_gst_available: 'No',
-    supplier_gst_number: '',
-    supplier_mobile_number: '',
-    procurement_date: '',
-    quantity_mt: '',
-    invoice_number: '',
-    hsn_code: '',
-    invoice_filename: '',
-  };
-}
-function emptySale() {
-  return {
-    s_no: '1',
-    category_of_plastic: '',
-    process_code: '',
-    plastic_type: '',
-    product_type: '',
-    recycled_plastic_percent: '',
-    conversion_factor: '',
-    available_quantity_mt: '',
-    quantity_sold_mt: '',
-    registration_type: '',
-    entity_name: '',
-    address: '',
-    state: '',
-    district: '',
-    account_number: '',
-    ifsc_code: '',
-    gst_other_charges: '',
-    invoice_file_name: '',
-    application_number: '',
-  };
-}
 function lineCount(row) {
   return Array.isArray(row?.data?.lineItems) ? row.data.lineItems.length : 0;
+}
+
+function resultOutcome(r) {
+  if (r?.skipped) return 'skipped';
+  if (!r?.ok) return 'failed';
+  if (r?.rejected) return 'rejected';
+  if (r?.saveError) return 'save_failed';
+  if (r?.saved) return 'saved';
+  if (r?.decidedType) return 'matched';
+  return 'unknown';
+}
+
+function outcomeReason(r) {
+  const outcome = resultOutcome(r);
+  if (outcome === 'skipped') return r.message || 'Skipped (duplicate / already extracted)';
+  if (outcome === 'failed') return r.message || 'OCR failed';
+  if (outcome === 'rejected') return r.routing?.reason || 'Not matched to Company Profile';
+  if (outcome === 'save_failed') return r.saveError || 'Save failed';
+  if (outcome === 'saved') {
+    const route = r.decidedType === 'purchase' ? 'Purchase' : 'Sale';
+    const co = r.routing?.companyName ? ` · ${r.routing.companyName}` : '';
+    return `Auto-saved to ${route}${co}`;
+  }
+  if (outcome === 'matched') return r.routing?.reason || 'Matched';
+  return '—';
+}
+
+function outcomeBadge(outcome) {
+  switch (outcome) {
+    case 'saved':
+      return 'bg-emerald-50 text-emerald-700 border-emerald-200';
+    case 'rejected':
+      return 'bg-amber-50 text-amber-800 border-amber-200';
+    case 'failed':
+    case 'save_failed':
+      return 'bg-red-50 text-red-700 border-red-200';
+    case 'skipped':
+      return 'bg-slate-100 text-slate-600 border-slate-200';
+    default:
+      return 'bg-slate-50 text-slate-600 border-slate-200';
+  }
+}
+
+function outcomeLabel(outcome, r) {
+  if (outcome === 'saved') {
+    return r?.decidedType === 'purchase' ? 'Saved · Purchase' : 'Saved · Sale';
+  }
+  if (outcome === 'save_failed') return 'Save failed';
+  if (outcome === 'rejected') return 'Rejected';
+  if (outcome === 'failed') return 'Failed';
+  if (outcome === 'skipped') return 'Skipped';
+  return outcome;
 }
 export default function DocUpload() {
   const navigate = useNavigate();
@@ -196,7 +204,6 @@ export default function DocUpload() {
   const fyOptions = useMemo(() => getFyOptions(), []);
   const [docType] = useState(location.state?.type === 'sale' ? 'sale' : 'purchase');
   const isPurchase = docType === 'purchase';
-  const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
   const [financialYear, setFinancialYear] = useState('all');
   const [files, setFiles] = useState([]);
   const [fileStatus, setFileStatus] = useState({});
@@ -204,8 +211,6 @@ export default function DocUpload() {
   const [error, setError] = useState('');
   const [progress, setProgress] = useState(null);
   const [results, setResults] = useState([]);
-  const [activeIdx, setActiveIdx] = useState(0);
-  const [form, setForm] = useState(isPurchase ? emptyPurchase() : emptySale());
   const [savedCount, setSavedCount] = useState(0);
   const [saving, setSaving] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
@@ -369,34 +374,169 @@ export default function DocUpload() {
     e.preventDefault();
     addBrowserFiles(e.dataTransfer.files);
   };
-  const loadFormFromResult = (row) => {
-    if (!row?.data) {
-      setForm(isPurchase ? emptyPurchase() : emptySale());
-      return;
+
+  const buildSavePayload = (data, sourceRow) => {
+    const lineItems = sourceRow?.data?.lineItems || data.lineItems || [];
+    const extraction = sourceRow?.data?.extraction || data.extraction || null;
+    const decided =
+      sourceRow?.decidedType ||
+      sourceRow?.routing?.decidedType ||
+      (isPurchase ? 'purchase' : 'sale');
+    const companyId =
+      sourceRow?.data?.company_id ?? sourceRow?.routing?.companyId ?? null;
+    const companyName =
+      sourceRow?.data?.company_name || sourceRow?.routing?.companyName || '';
+    const parties = sourceRow?.data?._parties || data._parties || {};
+
+    if (decided === 'purchase') {
+      const gst = String(
+        data.supplier_gst_number || data.vendor_gstin || parties.sellerGst || ''
+      )
+        .trim()
+        .toUpperCase();
+      const isGst =
+        data.is_supplier_gst_available === 'Yes' || data.is_supplier_gst_available === 'No'
+          ? data.is_supplier_gst_available
+          : gst
+            ? 'Yes'
+            : 'No';
+      const supplierName =
+        data.supplier_name || data.vendor_name || parties.sellerName || '';
+      return {
+        ...data,
+        company_id: companyId,
+        company_name: companyName,
+        record_type: 'purchase_epr',
+        is_supplier_gst_available: isGst,
+        supplier_gst_number: gst,
+        supplier_name: supplierName,
+        buyer_gst: String(data.buyer_gst || parties.buyerGst || '').toUpperCase(),
+        quantity_mt: parseFloat(data.quantity_mt) || 0,
+        vendor_name: supplierName,
+        vendor_gstin: gst,
+        invoice_no: data.invoice_number || data.invoice_no,
+        invoice_number: data.invoice_number || data.invoice_no,
+        invoice_date: data.procurement_date || data.invoice_date,
+        procurement_date: data.procurement_date || data.invoice_date,
+        invoice_filename:
+          data.invoice_filename || data.invoice_file_name || sourceRow?.fileName,
+        quantity: parseFloat(data.quantity_mt) || 0,
+        unit: 'MT',
+        total_amount: sourceRow?.data?.total_amount || 0,
+        lineItems,
+        extraction,
+        _routing: sourceRow?.routing || data._routing,
+      };
     }
-    const d = row.data;
-    if (isPurchase) {
-      setForm({
-        ...emptyPurchase(),
-        ...Object.fromEntries(
-          PURCHASE_TABLE_COLUMNS.map((c) => [
-            c.key,
-            d[c.key] === undefined || d[c.key] === null ? '' : String(d[c.key]),
-          ])
-        ),
-      });
-    } else {
-      setForm({
-        ...emptySale(),
-        ...Object.fromEntries(
-          SALE_TABLE_COLUMNS.map((c) => [
-            c.key,
-            d[c.key] === undefined || d[c.key] === null ? '' : String(d[c.key]),
-          ])
-        ),
-      });
-    }
+
+    const entityName =
+      data.entity_name || data.customer_name || parties.buyerName || '';
+    return {
+      ...data,
+      company_id: companyId,
+      company_name: companyName,
+      record_type: 'sale_epr',
+      entity_name: entityName,
+      customer_name: entityName,
+      customer_gstin: String(data.customer_gstin || parties.buyerGst || '').toUpperCase(),
+      recycled_plastic_percent: parseFloat(data.recycled_plastic_percent) || 0,
+      conversion_factor: parseFloat(data.conversion_factor) || 0,
+      available_quantity_mt: parseFloat(data.available_quantity_mt) || 0,
+      quantity_sold_mt: parseFloat(data.quantity_sold_mt || data.quantity_mt) || 0,
+      gst_other_charges: parseFloat(data.gst_other_charges) || 0,
+      invoice_no:
+        data.application_number ||
+        data.invoice_number ||
+        data.invoice_no ||
+        data.invoice_file_name,
+      application_number:
+        data.application_number || data.invoice_number || data.invoice_no,
+      invoice_file_name:
+        data.invoice_file_name || data.invoice_filename || sourceRow?.fileName,
+      quantity: parseFloat(data.quantity_sold_mt || data.quantity_mt) || 0,
+      unit: 'MT',
+      total_amount: parseFloat(data.gst_other_charges || data.total_amount) || 0,
+      lineItems,
+      extraction,
+      _routing: sourceRow?.routing || data._routing,
+    };
   };
+
+  const validateRow = (data, sourceRow) => {
+    const decided =
+      sourceRow?.decidedType ||
+      sourceRow?.routing?.decidedType ||
+      (isPurchase ? 'purchase' : 'sale');
+    if (sourceRow?.rejected) {
+      return sourceRow?.routing?.reason || 'Invoice rejected — company not matched.';
+    }
+    if (decided === 'purchase') {
+      if (!String(data.supplier_name || data.vendor_name || '').trim()) {
+        return 'Name of Supplier is required.';
+      }
+      if (!String(data.invoice_number || data.invoice_no || '').trim()) {
+        return 'Invoice Number is required.';
+      }
+      if (!(data.procurement_date || data.invoice_date)) {
+        return 'Procurement Date is required.';
+      }
+      if (
+        !String(
+          data.invoice_filename || data.invoice_file_name || sourceRow?.fileName || ''
+        ).trim()
+      ) {
+        return 'Invoice Filename is required.';
+      }
+    } else if (
+      !String(
+        data.invoice_file_name || data.invoice_filename || sourceRow?.fileName || ''
+      ).trim()
+    ) {
+      return 'Invoice File Name is required.';
+    }
+    return '';
+  };
+
+  const autoSaveMatched = async (routed) => {
+    const out = [];
+    let savedPurchase = 0;
+    let savedSale = 0;
+    let saveFailed = 0;
+    for (const r of routed) {
+      if (!r?.ok || r.skipped || r.rejected) {
+        out.push(r);
+        continue;
+      }
+      const data = r.data || {};
+      const v = validateRow(data, r);
+      if (v) {
+        saveFailed += 1;
+        out.push({ ...r, saved: false, saveError: v });
+        continue;
+      }
+      try {
+        const payload = buildSavePayload(data, r);
+        const decided = r.decidedType || (isPurchase ? 'purchase' : 'sale');
+        if (decided === 'purchase') {
+          await window.pwp.purchases.add(payload);
+          savedPurchase += 1;
+        } else {
+          await window.pwp.sales.add(payload);
+          savedSale += 1;
+        }
+        out.push({ ...r, saved: true, saveError: '' });
+      } catch (err) {
+        saveFailed += 1;
+        out.push({
+          ...r,
+          saved: false,
+          saveError: err?.message || 'Save failed',
+        });
+      }
+    }
+    return { results: out, savedPurchase, savedSale, saveFailed };
+  };
+
   const handleExtract = async () => {
     if (!files.length) {
       setError('Please upload at least one document.');
@@ -416,6 +556,7 @@ export default function DocUpload() {
     setSavedCount(0);
     setResults([]);
     setDetailRow(null);
+    setSaving(false);
     setProgress({
       stage: 'start',
       total: totalPages || targets.length,
@@ -431,7 +572,6 @@ export default function DocUpload() {
       fileCount: targets.length,
     });
     const statusMap = {};
-    // Seed status for every page job (not just files)
     const jobs =
       pageJobs.length > 0
         ? pageJobs
@@ -465,7 +605,6 @@ export default function DocUpload() {
                 tone: p.fileStatus.tone || 'run',
               },
             };
-            // Also roll up status onto source PDF name
             const src = p.fileStatus.sourceFileName || p.pageInfo?.sourceFileName;
             if (src && src !== p.fileStatus.fileName) {
               next[src] = {
@@ -504,25 +643,89 @@ export default function DocUpload() {
           };
         }
       }
-      setFileStatus(nextStatus);
-      const okRows = (batch.results || []).filter((r) => r.ok && !r.skipped);
-      setResults(batch.results || []);
-      setActiveIdx(0);
-      if (okRows[0]) loadFormFromResult(okRows[0]);
-      setStage('results');
-      if (batch.trackId) {
-        setProgress((prev) => ({ ...(prev || {}), trackId: batch.trackId, stage: 'complete' }));
+      const rawResults = batch.results || [];
+      let companies = [];
+      try {
+        companies = (await getApi().companies.getAll()) || [];
+      } catch {
+        companies = [];
       }
-      if (!okRows.length) {
-        const skipped = Number(batch.skippedCount || 0);
+      const routed = applyCompanyRoutingToResults(rawResults, companies);
+
+      setProgress((prev) => ({
+        ...(prev || {}),
+        trackId: batch.trackId || prev?.trackId,
+        stage: 'saving',
+        message: 'Matching company & auto-saving…',
+      }));
+      setSaving(true);
+      const {
+        results: finalResults,
+        savedPurchase,
+        savedSale,
+        saveFailed,
+      } = await autoSaveMatched(routed);
+      setSaving(false);
+
+      for (const r of finalResults) {
+        const outcome = resultOutcome(r);
+        if (outcome === 'saved') {
+          nextStatus[r.fileName] = {
+            label: outcomeReason(r),
+            tone: 'ok',
+          };
+        } else if (outcome === 'rejected') {
+          nextStatus[r.fileName] = {
+            label: `Rejected · ${outcomeReason(r)}`,
+            tone: 'fail',
+          };
+        } else if (outcome === 'save_failed') {
+          nextStatus[r.fileName] = {
+            label: `Save failed · ${outcomeReason(r)}`,
+            tone: 'fail',
+          };
+        } else if (outcome === 'failed') {
+          nextStatus[r.fileName] = {
+            label: `Failed · ${outcomeReason(r)}`,
+            tone: 'fail',
+          };
+        } else if (outcome === 'skipped') {
+          nextStatus[r.fileName] = {
+            label: outcomeReason(r),
+            tone: 'skip',
+          };
+        }
+      }
+      setFileStatus(nextStatus);
+      setResults(finalResults);
+      setSavedCount(savedPurchase + savedSale);
+      setStage('results');
+      setProgress((prev) => ({
+        ...(prev || {}),
+        trackId: batch.trackId || prev?.trackId,
+        stage: 'complete',
+        message: `Done · Saved ${savedPurchase + savedSale} · Purchase ${savedPurchase} · Sale ${savedSale}${
+          saveFailed ? ` · Save failed ${saveFailed}` : ''
+        }`,
+      }));
+
+      if (!companies.length) {
         setError(
-          skipped
-            ? `No new invoices extracted · ${skipped} duplicate/already-extracted skipped. trackId: ${batch.trackId || '—'}`
-            : `No invoices extracted. trackId: ${batch.trackId || '—'} · check Gemini key / QR scanner.`
+          'No companies in Company Profile. Add company (GST / PAN / name) so invoices can be matched.'
         );
+      } else if (
+        !finalResults.some((r) => r.ok && !r.skipped) &&
+        !finalResults.some((r) => r.skipped)
+      ) {
+        setError(
+          `No invoices extracted. trackId: ${batch.trackId || '—'} · check Gemini key / QR scanner.`
+        );
+      } else {
+        setError('');
       }
     } catch (err) {
       setStage('upload');
+      setSaving(false);
       setError(err?.message || 'Batch extraction failed');
     } finally {
       if (typeof unsubRef.current === 'function') {
@@ -531,136 +734,15 @@ export default function DocUpload() {
       }
     }
   };
-  const okResults = results.filter((r) => r.ok && !r.skipped);
-  const failResults = results.filter((r) => !r.ok && !r.skipped);
-  const skippedResults = results.filter((r) => r.skipped);
-  const selectResult = (idxInOk) => {
-    setActiveIdx(idxInOk);
-    loadFormFromResult(okResults[idxInOk]);
-  };
-  const handleChange = (e) => setForm({ ...form, [e.target.name]: e.target.value });
-  const buildSavePayload = (data, sourceRow) => {
-    const lineItems = sourceRow?.data?.lineItems || data.lineItems || [];
-    const extraction = sourceRow?.data?.extraction || data.extraction || null;
-    if (isPurchase) {
-      const gst = String(data.supplier_gst_number || '').trim().toUpperCase();
-      const isGst =
-        data.is_supplier_gst_available === 'Yes' || data.is_supplier_gst_available === 'No'
-          ? data.is_supplier_gst_available
-          : gst
-            ? 'Yes'
-            : 'No';
-      return {
-        ...data,
-        company_id: null,
-        record_type: 'purchase_epr',
-        is_supplier_gst_available: isGst,
-        supplier_gst_number: gst,
-        quantity_mt: parseFloat(data.quantity_mt) || 0,
-        vendor_name: data.supplier_name,
-        vendor_gstin: gst,
-        invoice_no: data.invoice_number,
-        invoice_date: data.procurement_date,
-        quantity: parseFloat(data.quantity_mt) || 0,
-        unit: 'MT',
-        total_amount: sourceRow?.data?.total_amount || 0,
-        lineItems,
-        extraction,
-      };
-    }
-    return {
-      ...data,
-      company_id: null,
-      record_type: 'sale_epr',
-      recycled_plastic_percent: parseFloat(data.recycled_plastic_percent) || 0,
-      conversion_factor: parseFloat(data.conversion_factor) || 0,
-      available_quantity_mt: parseFloat(data.available_quantity_mt) || 0,
-      quantity_sold_mt: parseFloat(data.quantity_sold_mt) || 0,
-      gst_other_charges: parseFloat(data.gst_other_charges) || 0,
-      customer_name: data.entity_name,
-      invoice_no: data.application_number || data.invoice_file_name,
-      quantity: parseFloat(data.quantity_sold_mt) || 0,
-      unit: 'MT',
-      total_amount: parseFloat(data.gst_other_charges) || 0,
-      lineItems,
-      extraction,
-    };
-  };
-  const validateForm = (data) => {
-    if (isPurchase) {
-      if (!data.supplier_name?.trim()) return 'Name of Supplier is required.';
-      if (!data.invoice_number?.trim()) return 'Invoice Number is required.';
-      if (!data.procurement_date) return 'Procurement Date is required.';
-      if (!data.invoice_filename?.trim()) return 'Invoice Filename is required.';
-      const isGst = data.is_supplier_gst_available === 'Yes' ? 'Yes' : 'No';
-      if (isGst === 'Yes' && !data.supplier_gst_number?.trim()) {
-        return 'Supplier GST Number is required when GST Available is Yes.';
-      }
-      if (isGst === 'No' && !data.supplier_mobile_number?.trim()) {
-        return 'Supplier Mobile is required when GST is unavailable.';
-      }
-    } else if (!data.entity_name?.trim()) {
-      return 'Name of the Entity is required.';
-    } else if (!data.invoice_file_name?.trim()) {
-      return 'Invoice File Name is required.';
-    }
-    return '';
-  };
-  const handleSaveCurrent = async () => {
-    setError('');
-    const v = validateForm(form);
-    if (v) return setError(v);
-    setSaving(true);
-    try {
-      const payload = buildSavePayload(form, okResults[activeIdx]);
-      if (isPurchase) await window.pwp.purchases.add(payload);
-      else await window.pwp.sales.add(payload);
-      setSavedCount((c) => c + 1);
-      if (activeIdx < okResults.length - 1) selectResult(activeIdx + 1);
-    } catch (err) {
-      setError(err?.message || 'Save failed');
-    } finally {
-      setSaving(false);
-    }
-  };
-  const handleSaveAll = async () => {
-    setError('');
-    setSaving(true);
-    let saved = 0;
-    try {
-      for (let i = 0; i < okResults.length; i += 1) {
-        const data =
-          i === activeIdx
-            ? form
-            : Object.fromEntries(
-                columns.map((c) => [
-                  c.key,
-                  okResults[i].data?.[c.key] === undefined || okResults[i].data?.[c.key] === null
-                    ? ''
-                    : String(okResults[i].data[c.key]),
-                ])
-              );
-        const v = validateForm(data);
-        if (v) {
-          setActiveIdx(i);
-          loadFormFromResult(okResults[i]);
-          setError(`File ${okResults[i].fileName}: ${v}`);
-          setSaving(false);
-          return;
-        }
-        const payload = buildSavePayload(data, okResults[i]);
-        if (isPurchase) await window.pwp.purchases.add(payload);
-        else await window.pwp.sales.add(payload);
-        saved += 1;
-      }
-      setSavedCount(saved);
-      setTimeout(() => navigate('/doc-table', { state: { type: docType } }), 800);
-    } catch (err) {
-      setError(err?.message || 'Save all failed');
-    } finally {
-      setSaving(false);
-    }
-  };
+
+  const savedResults = results.filter((r) => resultOutcome(r) === 'saved');
+  const failResults = results.filter((r) => resultOutcome(r) === 'failed');
+  const skippedResults = results.filter((r) => resultOutcome(r) === 'skipped');
+  const rejectedResults = results.filter((r) => resultOutcome(r) === 'rejected');
+  const saveFailedResults = results.filter((r) => resultOutcome(r) === 'save_failed');
+  const purchaseSaved = savedResults.filter((r) => r.decidedType === 'purchase').length;
+  const saleSaved = savedResults.filter((r) => r.decidedType === 'sale').length;
+
   return (
     <div className="space-y-5 max-w-6xl">
       <div className="flex items-center justify-between gap-3">
@@ -669,7 +751,7 @@ export default function DocUpload() {
             {isPurchase ? 'Procurement' : 'Post Consumer'} · multi-invoice
           </p>
           <p className="text-sm text-slate-500 mt-0.5">
-            Compact Gemini · line items · QR overrides OCR when present
+            Auto-save matched invoices · reject others · listing only
           </p>
         </div>
         <button
@@ -686,10 +768,14 @@ export default function DocUpload() {
           <span>{error}</span>
         </div>
       )}
-      {savedCount > 0 && (
+      {savedCount > 0 && stage === 'results' && (
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700 flex items-center gap-2">
           <CheckCircle2 size={16} />
-          Saved {savedCount} record(s).
+          Auto-saved {savedCount} record(s) to table
+          {purchaseSaved || saleSaved
+            ? ` (Purchase ${purchaseSaved} · Sale ${saleSaved})`
+            : ''}
+          .
         </div>
       )}
       {(stage === 'upload' || stage === 'processing') && (
@@ -732,7 +818,7 @@ export default function DocUpload() {
                     Drag &amp; drop multiple invoices
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    PDF / JPG / PNG · batch extract with live progress
+                    PDF / JPG / PNG · match company → auto-save Purchase / Sale
                   </p>
                 </div>
               </div>
@@ -806,8 +892,11 @@ export default function DocUpload() {
                 </div>
               )}
               {stage === 'processing' && (
-                <div className="flex justify-center pt-4">
+                <div className="flex flex-col items-center gap-2 pt-4">
                   <Loader2 className="animate-spin text-green-600" size={28} />
+                  {saving && (
+                    <p className="text-xs text-slate-500">Auto-saving matched invoices…</p>
+                  )}
                 </div>
               )}
             </div>
@@ -817,14 +906,58 @@ export default function DocUpload() {
       {stage === 'results' && (
         <div className="space-y-4">
           <ProgressPanel progress={progress} />
+          <div className="grid grid-cols-2 sm:grid-cols-5 gap-3">
+            <div className="rounded-xl border border-emerald-200 bg-emerald-50/60 px-3 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-emerald-700 font-semibold">
+                Processed
+              </p>
+              <p className="text-2xl font-semibold text-emerald-800 tabular-nums mt-1">
+                {savedResults.length}
+              </p>
+              <p className="text-[11px] text-emerald-700 mt-0.5">
+                P {purchaseSaved} · S {saleSaved}
+              </p>
+            </div>
+            <div className="rounded-xl border border-amber-200 bg-amber-50/60 px-3 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-amber-800 font-semibold">
+                Rejected
+              </p>
+              <p className="text-2xl font-semibold text-amber-900 tabular-nums mt-1">
+                {rejectedResults.length}
+              </p>
+            </div>
+            <div className="rounded-xl border border-red-200 bg-red-50/60 px-3 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-red-700 font-semibold">
+                Failed
+              </p>
+              <p className="text-2xl font-semibold text-red-800 tabular-nums mt-1">
+                {failResults.length + saveFailedResults.length}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 px-3 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-slate-600 font-semibold">
+                Skipped
+              </p>
+              <p className="text-2xl font-semibold text-slate-800 tabular-nums mt-1">
+                {skippedResults.length}
+              </p>
+            </div>
+            <div className="rounded-xl border border-slate-200 bg-white px-3 py-3">
+              <p className="text-[10px] uppercase tracking-wide text-slate-600 font-semibold">
+                Total
+              </p>
+              <p className="text-2xl font-semibold text-slate-800 tabular-nums mt-1">
+                {results.length}
+              </p>
+            </div>
+          </div>
+
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
             <div className="flex flex-wrap items-center justify-between gap-3 px-5 py-4 border-b border-slate-100">
               <div>
-                <h2 className="text-base font-semibold text-slate-800">Extracted invoices</h2>
+                <h2 className="text-base font-semibold text-slate-800">Processing summary</h2>
                 <p className="text-sm text-slate-500 mt-0.5">
-                  {okResults.length} ready · {failResults.length} failed
-                  {skippedResults.length ? ` · ${skippedResults.length} skipped` : ''}
-                  {' '}· use View for line items
+                  Matched invoices auto-saved · others listed with reason
                   {progress?.trackId ? (
                     <span className="block text-[10px] font-mono text-slate-400 mt-1">
                       trackId: {progress.trackId}
@@ -840,6 +973,8 @@ export default function DocUpload() {
                     setStage('upload');
                     setResults([]);
                     setProgress(null);
+                    setSavedCount(0);
+                    setError('');
                   }}
                 >
                   New batch
@@ -847,65 +982,52 @@ export default function DocUpload() {
                 <button
                   type="button"
                   className="btn-primary"
-                  disabled={saving || !okResults.length}
-                  onClick={handleSaveAll}
+                  onClick={() => navigate('/doc-table', { state: { type: docType } })}
                 >
-                  {saving ? 'Saving…' : `Save all (${okResults.length})`}
+                  Open table
                 </button>
               </div>
             </div>
             <div className="overflow-x-auto">
-              <table className="w-full text-sm min-w-[720px]">
+              <table className="w-full text-sm min-w-[780px]">
                 <thead className="bg-slate-50 border-b border-slate-200">
                   <tr>
                     <th className="th">#</th>
                     <th className="th">File</th>
-                    <th className="th">Invoice / App No</th>
-                    <th className="th">Party</th>
-                    <th className="th">Date</th>
-                    <th className="th text-right">Lines</th>
-                    <th className="th">Source</th>
+                    <th className="th">Invoice</th>
+                    <th className="th">Status</th>
+                    <th className="th">Reason</th>
                     <th className="th text-right">Actions</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {okResults.map((r, i) => {
+                  {results.map((r, i) => {
                     const d = r.data || {};
-                    const invNo = isPurchase
-                      ? d.invoice_number || d.invoice_no
-                      : d.application_number || d.invoice_no;
-                    const party = isPurchase
-                      ? d.supplier_name || d.vendor_name
-                      : d.entity_name || d.customer_name;
-                    const date = d.procurement_date || d.invoice_date;
+                    const invNo =
+                      d.invoice_number || d.invoice_no || d.application_number;
+                    const outcome = resultOutcome(r);
                     return (
                       <tr
                         key={`${r.fileName}-${i}`}
-                        className={`border-b border-slate-100 hover:bg-slate-50/60 ${
-                          i === activeIdx ? 'bg-green-50/40' : ''
-                        }`}
+                        className="border-b border-slate-100 hover:bg-slate-50/60"
                       >
                         <td className="td">{i + 1}</td>
-                        <td className="td max-w-[180px] truncate" title={r.fileName}>
+                        <td className="td max-w-[200px] truncate" title={r.fileName}>
                           {r.fileName}
                         </td>
                         <td className="td font-mono text-xs">{invNo || '—'}</td>
-                        <td className="td max-w-[160px] truncate">{party || '—'}</td>
-                        <td className="td whitespace-nowrap">{date || '—'}</td>
-                        <td className="td text-right tabular-nums">{lineCount(r)}</td>
                         <td className="td">
                           <span
-                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium ${
-                              r.qr?.priorityApplied
-                                ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                                : 'bg-slate-100 text-slate-600'
-                            }`}
+                            className={`inline-flex rounded-full px-2 py-0.5 text-[10px] font-medium border ${outcomeBadge(outcome)}`}
                           >
-                            {r.qr?.priorityApplied ? 'QR + OCR' : 'OCR'}
+                            {outcomeLabel(outcome, r)}
                           </span>
                         </td>
+                        <td className="td text-xs text-slate-600 max-w-[320px]">
+                          <span title={outcomeReason(r)}>{outcomeReason(r)}</span>
+                        </td>
                         <td className="td text-right">
-                          <div className="inline-flex items-center gap-1.5">
+                          {r.ok && !r.skipped ? (
                             <ViewInvoiceButton
                               onClick={() => setDetailRow(r)}
                               disabled={!lineCount(r)}
@@ -915,133 +1037,30 @@ export default function DocUpload() {
                                   : 'No line items'
                               }
                             />
-                            <button
-                              type="button"
-                              onClick={() => selectResult(i)}
-                              className="rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:bg-slate-50"
-                            >
-                              Edit
-                            </button>
-                          </div>
+                          ) : (
+                            <span className="text-slate-300 text-xs">—</span>
+                          )}
                         </td>
                       </tr>
                     );
                   })}
-                  {!okResults.length && (
+                  {!results.length && (
                     <tr>
-                      <td colSpan={8} className="td text-center text-slate-500 py-8">
-                        No successful extractions
+                      <td colSpan={6} className="td text-center text-slate-500 py-8">
+                        No results
                       </td>
                     </tr>
                   )}
                 </tbody>
               </table>
             </div>
-            {failResults.length > 0 && (
-              <div className="px-5 py-3 border-t border-slate-100 space-y-1 bg-red-50/40">
-                {failResults.map((r) => (
-                  <p key={r.fileName} className="text-xs text-red-700 flex items-center gap-1.5">
-                    <XCircle size={12} />
-                    {r.fileName}: {r.message}
-                    {r.trackId ? ` · ${r.trackId}` : ''}
-                  </p>
-                ))}
-              </div>
-            )}
-            {skippedResults.length > 0 && (
-              <div className="px-5 py-3 border-t border-slate-100 space-y-1 bg-slate-50">
-                {skippedResults.map((r) => (
-                  <p key={`skip-${r.fileName}`} className="text-xs text-slate-600">
-                    Skipped · {r.fileName}: {r.message}
-                  </p>
-                ))}
-              </div>
-            )}
           </div>
-          {okResults.length > 0 && (
-            <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-4">
-              <div className="flex items-center justify-between gap-3">
-                <div>
-                  <h3 className="text-sm font-semibold text-slate-800">
-                    Edit · {okResults[activeIdx]?.fileName || 'invoice'}
-                  </h3>
-                  <p className="text-xs text-slate-500 mt-0.5">
-                    {lineCount(okResults[activeIdx])} line item(s) · fields marked “from QR” win
-                    over OCR
-                  </p>
-                </div>
-                <ViewInvoiceButton
-                  onClick={() => setDetailRow(okResults[activeIdx])}
-                  disabled={!lineCount(okResults[activeIdx])}
-                />
-              </div>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                {columns.map((col) => (
-                  <div
-                    key={col.key}
-                    className={
-                      col.key === 'address' || col.key === 'address_line_1' ? 'sm:col-span-2' : ''
-                    }
-                  >
-                    <label className="label">{col.label}</label>
-                    {col.key === 'is_supplier_gst_available' ? (
-                      <select
-                        name={col.key}
-                        value={form[col.key] || 'No'}
-                        onChange={handleChange}
-                        className="input"
-                      >
-                        <option value="Yes">Yes</option>
-                        <option value="No">No</option>
-                      </select>
-                    ) : col.key === 'procurement_date' ? (
-                      <input
-                        type="date"
-                        name={col.key}
-                        value={form[col.key] || ''}
-                        onChange={handleChange}
-                        className="input"
-                      />
-                    ) : (
-                      <input
-                        name={col.key}
-                        value={form[col.key] || ''}
-                        onChange={handleChange}
-                        className="input"
-                      />
-                    )}
-                    {okResults[activeIdx]?.data?._source_fields?.[col.key] === 'qr' && (
-                      <p className="text-[10px] text-green-600 mt-0.5">from QR</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-              <div className="flex justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  className="btn-secondary"
-                  disabled={saving}
-                  onClick={handleSaveCurrent}
-                >
-                  Save this invoice
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  disabled={saving}
-                  onClick={handleSaveAll}
-                >
-                  Save all
-                </button>
-              </div>
-            </div>
-          )}
         </div>
       )}
       <InvoiceDetailsModal
         open={Boolean(detailRow)}
         invoice={detailRow}
-        docType={docType}
+        docType={detailRow?.decidedType || docType}
         onClose={() => setDetailRow(null)}
       />
     </div>

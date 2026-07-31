@@ -222,6 +222,43 @@ async function extractOneInvoice({
       log.warn('QR scan empty', { fileName: outFileName, message: qrResult.message });
     }
 
+    // Always expose both parties for company-profile routing (purchase vs sale)
+    const sellerGst = String(
+      row._qr?.SellerGstin ||
+        qrData?.SellerGstin ||
+        qrData?.sellerGstin ||
+        row.seller_gst ||
+        row.supplier_gst_number ||
+        row.vendor_gstin ||
+        ''
+    )
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    const buyerGst = String(
+      row._qr?.BuyerGstin ||
+        qrData?.BuyerGstin ||
+        qrData?.buyerGstin ||
+        row.buyer_gst ||
+        row.customer_gstin ||
+        ''
+    )
+      .toUpperCase()
+      .replace(/[^A-Z0-9]/g, '');
+    row.seller_gst = sellerGst || row.seller_gst || '';
+    row.buyer_gst = buyerGst || row.buyer_gst || '';
+    row.seller_name =
+      row.seller_name ||
+      String(qrData?.SellerNm || qrData?.SellerName || '').trim() ||
+      row.supplier_name ||
+      row.vendor_name ||
+      '';
+    row.buyer_name =
+      row.buyer_name ||
+      String(qrData?.BuyerNm || qrData?.BuyerName || '').trim() ||
+      row.entity_name ||
+      row.customer_name ||
+      '';
+
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;
       if (!row._source_fields[key] && row[key] !== '' && row[key] !== 0) {
