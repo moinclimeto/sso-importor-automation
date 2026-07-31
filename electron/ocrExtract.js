@@ -122,13 +122,13 @@ export function buildExtractionPrompt(type, financialYear = 'all') {
 
     return `OCR PURCHASE. JSON only minified.
 
-MODE:SELLER only.Ignore buyer.
+Counterparty=SELLER (supplier).Also extract buyer GST+name for company match.
 
 ${fy}
 
-{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/a*/city/st/pin/mob=seller.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.m only if printed else "".${productsHint}`;
+RULES:name/gst/a*/city/st/pin/mob=seller(supplier).sg/sn=seller GST/name.bg/bn=buyer GST/name.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.m only if printed else "".${productsHint}`;
 
   }
 
@@ -136,13 +136,13 @@ RULES:name/gst/a*/city/st/pin/mob=seller.dt=issue date.tot=grand total.GSTIN 15c
 
   return `OCR SALE. JSON only minified.
 
-MODE:BUYER(Bill To) for party.Seller bank only for bank fields.
+Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Seller bank for bank fields.
 
 ${fy}
 
-{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/addr/st/dist=buyer.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.m/c/rp/pc/reg only if printed else "".${productsHint}`;
+RULES:name/gst/addr/st/dist=buyer.sg/sn=seller GST/name.bg/bn=buyer GST/name.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.m/c/rp/pc/reg only if printed else "".${productsHint}`;
 
 }
 
@@ -198,6 +198,15 @@ export function expandRawExtraction(raw = {}) {
 
 
 
+  const sellerGst = nf(
+    raw.sg ?? raw.sellerGst ?? raw.sellerGstin ?? raw.SellerGstin ?? raw.supplierGstin
+  ).toUpperCase();
+  const buyerGst = nf(
+    raw.bg ?? raw.buyerGst ?? raw.buyerGstin ?? raw.BuyerGstin ?? raw.customerGstin
+  ).toUpperCase();
+  const sellerName = nf(raw.sn ?? raw.sellerName ?? raw.SellerNm ?? raw.supplierName);
+  const buyerName = nf(raw.bn ?? raw.buyerName ?? raw.BuyerNm ?? raw.customerName);
+
   return {
 
     invoiceNumber: nf(raw.inv ?? raw.invoiceNumber ?? raw.invoice_no ?? raw.invoice_number),
@@ -207,6 +216,11 @@ export function expandRawExtraction(raw = {}) {
     companyName: nf(raw.name ?? raw.supplierName ?? raw.entityName ?? raw.companyName),
 
     gstNumber: nf(raw.gst ?? raw.supplierGstin ?? raw.buyerGstin ?? raw.gstNumber).toUpperCase(),
+
+    sellerGst,
+    buyerGst,
+    sellerName,
+    buyerName,
 
     addressLine1: nf(raw.a1 ?? raw.addressLine1 ?? raw.addr ?? raw.address ?? raw.partyAddress),
 
@@ -310,7 +324,8 @@ export function mapPurchaseFromOcr(raw, fileName) {
 
   const qty = sumMtFromLines(lineItems) || qtyToMt(raw.quantityMt);
 
-  const gst = x.gstNumber;
+  const gst = x.sellerGst || x.gstNumber;
+  const sellerName = x.sellerName || x.companyName;
 
 
 
@@ -322,7 +337,7 @@ export function mapPurchaseFromOcr(raw, fileName) {
 
     category_of_plastic: nf(first?.plasticCategory || raw.plasticCategory),
 
-    supplier_name: x.companyName,
+    supplier_name: sellerName,
 
     address_line_1: x.addressLine1,
 
@@ -350,9 +365,14 @@ export function mapPurchaseFromOcr(raw, fileName) {
 
     invoice_filename: fileName || '',
 
-    vendor_name: x.companyName,
+    vendor_name: sellerName,
 
     vendor_gstin: gst,
+
+    seller_gst: gst,
+    buyer_gst: x.buyerGst,
+    seller_name: sellerName,
+    buyer_name: x.buyerName,
 
     invoice_no: x.invoiceNumber,
 
@@ -418,7 +438,7 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
     registration_type: x.registrationType,
 
-    entity_name: x.companyName,
+    entity_name: x.buyerName || x.companyName,
 
     address: x.addressLine1,
 
@@ -436,9 +456,14 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
     application_number: x.invoiceNumber,
 
-    customer_name: x.companyName,
+    customer_name: x.buyerName || x.companyName,
 
-    customer_gstin: x.gstNumber,
+    customer_gstin: x.buyerGst || x.gstNumber,
+
+    seller_gst: x.sellerGst || '',
+    buyer_gst: x.buyerGst || x.gstNumber,
+    seller_name: x.sellerName || '',
+    buyer_name: x.buyerName || x.companyName,
 
     invoice_no: x.invoiceNumber,
 
