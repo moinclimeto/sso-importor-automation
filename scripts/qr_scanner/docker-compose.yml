@@ -1,0 +1,9 @@
+services:
+  qr-scanner:
+    build: .
+    image: pwp-qr-scanner:latest
+    environment:
+      POPPLER_PATH: /usr/bin
+      QR_SCAN_DPI: "300"
+    # Example:
+    # docker compose run --rm -v "C:/Users/PC/Downloads:/input:ro" qr-scanner /input/invoice.pdf
