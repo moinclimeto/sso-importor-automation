@@ -8,6 +8,7 @@ import logo from '../assets/ClimetoTransparentLogo.png';
 
 const navLinks = [
   { to: '/cpcb-dashboard', icon: LayoutDashboard, label: 'CPCB Dashboard' },
+  { to: '/epr-production', icon: Database, label: 'EPR Production Data' },
   { to: '/epr-sales', icon: Database, label: 'EPR Sales Data' },
   { to: '/epr-procurement', icon: Database, label: 'EPR Procurement Data' },
   { to: '/companies', icon: Building2, label: 'Company Profile' },

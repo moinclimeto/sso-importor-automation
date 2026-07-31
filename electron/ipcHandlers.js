@@ -74,6 +74,25 @@ export function registerIpcHandlers() {
     return [];
   });
 
+  ipcMain.handle('eprData:getProduction', async () => {
+    const sqliteDb = getSqliteDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+    
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='production_details'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM production_details ORDER BY year DESC`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching production_details:", err);
+    }
+    return [];
+  });
+
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', () => {
     const db = getDb();
@@ -863,8 +882,8 @@ export function registerIpcHandlers() {
       allData.material = await extractEprMaterial(page);
       saveJson('epr_material.json', allData.material);
 
-      // allData.production = await extractEprProduction(page);
-      // await saveJson('epr_production.json', allData.production);
+      allData.production = await extractEprProduction(page);
+      await saveJson('epr_production.json', allData.production);
 
       allData.sales = await extractEprSales(page);
       saveJson('epr_sales.json', allData.sales);

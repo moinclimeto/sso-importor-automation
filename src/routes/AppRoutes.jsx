@@ -13,6 +13,7 @@ import DocTable from '../pages/DocTable.jsx';
 import EprData from '../pages/EprData.jsx';
 import EprSalesData from '../pages/EprSalesData.jsx';
 import EprProcurementData from '../pages/EprProcurementData.jsx';
+import EprProductionData from '../pages/EprProductionData.jsx';
 import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 
 function ProtectedRoute({ children }) {
@@ -42,6 +43,7 @@ export default function AppRoutes() {
           <Route path="epr-data" element={<EprData />} />
           <Route path="epr-sales" element={<EprSalesData />} />
           <Route path="epr-procurement" element={<EprProcurementData />} />
+          <Route path="epr-production" element={<EprProductionData />} />
           <Route path="cpcb-dashboard" element={<CpcbDashboard />} />
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />

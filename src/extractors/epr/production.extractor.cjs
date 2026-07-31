@@ -65,33 +65,94 @@ async function extractEprProduction(page) {
                 };
                 page.on('response', debugListener);
 
-                // Setup API listener BEFORE clicking Fetch Data
-                const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('get-dashboard') && response.request().method() !== 'OPTIONS',
-                    { timeout: 15000 }
-                ).catch(() => null);
-
                 console.log("🖱️ Clicking 'Fetch Data' button...");
                 const fetchBtn = page.getByRole('button', { name: /Fetch Data/i }).first();
                 await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
                 await fetchBtn.click({ force: true });
-                
-                // Wait for the API response
-                console.log("⏳ Waiting for API response...");
-                const apiResponse = await apiResponsePromise;
-                
-                page.removeListener('response', debugListener);
+                await page.waitForTimeout(3000); // wait for table to load
 
-                if (apiResponse) {
-                    const apiJson = await apiResponse.json();
-                    console.log(`✅ API Response captured for ${year}!`);
-                    fs.writeFileSync(path.join(dataDir, `production_${year}.json`), JSON.stringify(apiJson, null, 2));
-                    console.log(`📂 Saved data/production_${year}.json`);
-                } else {
-                    console.log(`⚠️ No API response caught for ${year} after clicking Fetch Data.`);
+                // Setup API listener
+                const apiResponsePromise = page.waitForResponse(
+                    response => response.url().includes('category-details') && response.request().method() !== 'OPTIONS',
+                    { timeout: 15000 }
+                ).catch(() => null);
+
+                // Click the table underlined data to trigger API
+                console.log("🖱️ Clicking the underlined data in the table...");
+                try {
+                    // Find the total amount link/button in the table and click it
+                    const tableLink = page.locator('td').locator('a, button, [style*="underline"], [class*="underline"], u').first();
+                    await tableLink.waitFor({ state: 'visible', timeout: 8000 });
+                    await tableLink.click({ force: true });
+
+                    // Wait for the modal table to load
+                    console.log("⏳ Extracting data directly from modal table (Frontend UI)...");
+                    await page.waitForTimeout(3000); // wait for modal table to populate
+
+                    const extractedData = [];
+                    let hasNextPage = true;
+
+                    while (hasNextPage) {
+                        // Extract current page table
+                        const pageData = await page.evaluate(() => {
+                            // Find the active modal/dialog container
+                            const modal = document.querySelector('.modal-content, .cdk-overlay-pane, mat-dialog-container, p-dialog') || document;
+                            const tables = modal.querySelectorAll('table');
+                            // Usually the last table is the one in the modal
+                            const table = tables[tables.length - 1]; 
+                            if (!table) return [];
+                            
+                            const data = [];
+                            // Get headers
+                            const headers = [];
+                            table.querySelectorAll('thead th').forEach(th => headers.push(th.innerText.trim()));
+
+                            const trs = table.querySelectorAll('tbody tr');
+                            trs.forEach(tr => {
+                                const row = {};
+                                const tds = tr.querySelectorAll('td');
+                                tds.forEach((td, index) => {
+                                    const key = headers[index] || `col_${index}`;
+                                    row[key] = td.innerText.trim();
+                                });
+                                if (Object.keys(row).length > 0) data.push(row);
+                            });
+                            return data;
+                        });
+
+                        extractedData.push(...pageData);
+
+                        // Try to find the Next page button in the paginator
+                        const nextBtn = page.locator('.modal-content, .cdk-overlay-pane, mat-dialog-container, p-dialog, .p-dialog').locator('button.p-paginator-next, button[aria-label*="Next"], button.mat-paginator-navigation-next, .pagination-next').first();
+                        
+                        if (await nextBtn.count() > 0) {
+                            const isDisabled = await nextBtn.isDisabled() || await nextBtn.getAttribute('aria-disabled') === 'true' || await nextBtn.evaluate(b => b.classList.contains('p-disabled') || b.classList.contains('disabled'));
+                            if (!isDisabled) {
+                                console.log("🖱️ Clicking next page in modal...");
+                                await nextBtn.click();
+                                await page.waitForTimeout(2000); // wait for next page to load
+                            } else {
+                                hasNextPage = false;
+                            }
+                        } else {
+                            hasNextPage = false;
+                        }
+                    }
+
+                    console.log(`✅ Scraped ${extractedData.length} rows from UI for ${year}!`);
+                    fs.writeFileSync(path.join(dataDir, `production_${year}.json`), JSON.stringify(extractedData, null, 2));
+                    console.log(`📂 Saved data/production_${year}.json (from Frontend UI)`);
+                    
+                    // Close the modal
+                    await page.keyboard.press('Escape');
+                    await page.waitForTimeout(1000);
+
+                } catch (e) {
+                    console.log(`⏭️ No data/buttons found in table for year ${year}. Skipping...`);
                 }
                 
-                await page.waitForTimeout(2000);
+                // Remove listener here inside try block where debugListener is in scope
+                page.removeListener('response', debugListener);
 
             } catch (err) {
                 console.error(`❌ Error processing year ${year}:`, err);
