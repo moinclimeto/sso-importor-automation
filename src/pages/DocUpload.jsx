@@ -840,6 +840,17 @@ export default function DocUpload() {
                   <FolderOpen size={15} />
                   Browse folder
                 </button>
+                {stage === 'upload' && (
+                  <button
+                    type="button"
+                    onClick={handleExtract}
+                    disabled={inspecting || !totalPages}
+                    className="btn-primary inline-flex items-center gap-2 disabled:opacity-60"
+                  >
+                    <Sparkles size={16} />
+                    Start extraction ({totalPages} page{totalPages === 1 ? '' : 's'})
+                  </button>
+                )}
               </div>
             </div>
             <input
@@ -878,19 +889,6 @@ export default function DocUpload() {
                   }
                 />
               ))}
-              {stage === 'upload' && (
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={handleExtract}
-                    disabled={inspecting || !totalPages}
-                    className="btn-primary inline-flex items-center gap-2 disabled:opacity-60"
-                  >
-                    <Sparkles size={16} />
-                    Start extraction ({totalPages} page{totalPages === 1 ? '' : 's'})
-                  </button>
-                </div>
-              )}
               {stage === 'processing' && (
                 <div className="flex flex-col items-center gap-2 pt-4">
                   <Loader2 className="animate-spin text-green-600" size={28} />

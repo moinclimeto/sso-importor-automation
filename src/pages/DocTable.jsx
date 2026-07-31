@@ -7,6 +7,7 @@ import {
   downloadExcelTemplate,
   parseExcelFile,
   importExcelRows,
+  exportExcelData,
   SALE_TABLE_COLUMNS,
   PURCHASE_TABLE_COLUMNS,
 } from '../utils/excelImport.js';
@@ -580,6 +581,15 @@ export default function DocTable() {
               <FileSpreadsheet size={16} />
             )}
             {importing ? 'Importing…' : 'Import Excel'}
+          </button>
+          <button
+            type="button"
+            onClick={() => exportExcelData(type, rows)}
+            disabled={!rows.length}
+            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-3 py-2 transition-colors disabled:opacity-60"
+          >
+            <FileSpreadsheet size={16} />
+            Export Excel
           </button>
           <button
             type="button"

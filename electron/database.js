@@ -1,43 +1,89 @@
 import path from 'path';
 import { app } from 'electron';
-import fs from 'fs';
+import sqlite3 from 'sqlite3';
+import { open } from 'sqlite';
+import fs from 'fs'; // Import fs
+import { fileURLToPath } from 'url'; // Added
+
+const currentModuleUrl = import.meta.url;
+const __dirname = fileURLToPath(new URL('.', currentModuleUrl));
 
 let db = null;
-let dbPath = '';
+let dbFilePath = '';
+export let dbJsonPath = '';
 
-export function initDatabase() {
+// Path to the database file
+function getDbFilePath() {
   const userDataPath = app.getPath('userData');
   const dbDir = path.join(userDataPath, 'pwp-db');
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
+  return path.join(dbDir, 'app.db'); // Changed to .db
+}
 
-  dbPath = path.join(dbDir, 'db.json');
-  if (!fs.existsSync(dbPath)) {
-    db = { companies: [], purchases: [], sales: [], nextId: 1 };
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  } else {
-    try {
-      const raw = fs.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '');
-      db = JSON.parse(raw);
-      if (!Array.isArray(db.companies)) db.companies = [];
-      if (!Array.isArray(db.purchases)) db.purchases = [];
-      if (!Array.isArray(db.sales)) db.sales = [];
-      if (!db.nextId) db.nextId = 1;
-    } catch (e) {
-      console.error('Failed to read db.json, starting empty:', e?.message);
-      db = { companies: [], purchases: [], sales: [], nextId: 1 };
+// Initialize database connection
+export async function initDatabase(onDbReadyCallback) {
+  dbFilePath = getDbFilePath();
+  dbJsonPath = path.join(path.dirname(dbFilePath), 'db.json');
+  db = await open({
+    filename: dbFilePath,
+    driver: sqlite3.Database,
+  });
+
+  // Enable foreign keys
+  await db.exec('PRAGMA foreign_keys = ON;');
+
+  // Run migrations
+  await runMigrations();
+
+  if (onDbReadyCallback) {
+    await onDbReadyCallback(db);
+  }
+}
+
+// Get database instance
+export function getDb() {
+  if (!db) {
+    throw new Error('Database not initialized. Call initDatabase() first.');
+  }
+  return db;
+}
+
+// --- Migrations System ---
+const migrationsDir = path.join(__dirname, 'migrations'); // Assuming migrations are in electron/migrations
+
+async function runMigrations() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const appliedMigrations = new Set(
+    (await db.all('SELECT name FROM _migrations')).map((row) => row.name)
+  );
+
+  const migrationFiles = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.js'))
+    .sort();
+
+  for (const file of migrationFiles) {
+    if (!appliedMigrations.has(file)) {
+      const migration = await import('file:///' + path.join(migrationsDir, file)); // Use file:/// for dynamic import
+      console.log(`Applying migration: ${file}`);
+      await db.exec(migration.up); // Each migration file should export an 'up' string
+      await db.run('INSERT INTO _migrations (name) VALUES (?)', file);
     }
   }
-  return db;
 }
 
-export function getDb() {
-  return db;
-}
-
-export function saveDb() {
-  if (db && dbPath) {
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  }
+// We will also need a saveDb function for fileHashes in case we still need to store them in database directly, this is a placeholder.
+export async function saveDb() {
+  // In a SQLite context, changes are saved via explicit INSERT/UPDATE/DELETE. No global saveDb needed.
+  // This function might be removed or adapted depending on final data access patterns.
+  // For now, let's keep a placeholder if it's called elsewhere and expects to exist.
 }
