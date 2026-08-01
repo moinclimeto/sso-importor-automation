@@ -1,6 +1,10 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('pwp', {
+  // webUtils
+  webUtils: {
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+  },
   // Companies
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),

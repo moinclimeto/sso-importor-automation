@@ -1,9 +1,9 @@
 import path from 'path';
 import { app } from 'electron';
 import fs from 'fs';
+import Database from 'better-sqlite3';
 
 let db = null;
-let dbPath = '';
 
 export function initDatabase() {
   const userDataPath = app.getPath('userData');
@@ -12,23 +12,43 @@ export function initDatabase() {
     fs.mkdirSync(dbDir, { recursive: true });
   }
 
-  dbPath = path.join(dbDir, 'db.json');
-  if (!fs.existsSync(dbPath)) {
-    db = { companies: [], purchases: [], sales: [], nextId: 1 };
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  } else {
-    try {
-      const raw = fs.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '');
-      db = JSON.parse(raw);
-      if (!Array.isArray(db.companies)) db.companies = [];
-      if (!Array.isArray(db.purchases)) db.purchases = [];
-      if (!Array.isArray(db.sales)) db.sales = [];
-      if (!db.nextId) db.nextId = 1;
-    } catch (e) {
-      console.error('Failed to read db.json, starting empty:', e?.message);
-      db = { companies: [], purchases: [], sales: [], nextId: 1 };
-    }
-  }
+  const dbPath = path.join(dbDir, 'pwp.sqlite');
+  
+  db = new Database(dbPath, { verbose: null });
+  
+  // Enable WAL mode for high concurrency
+  db.pragma('journal_mode = WAL');
+
+  // Initialize tables
+  db.exec(`
+        CREATE TABLE IF NOT EXISTS companies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      gstin TEXT,
+      state TEXT,
+      address TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER,
+      invoice_no TEXT,
+      invoice_date TEXT,
+      data TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER,
+      invoice_no TEXT,
+      invoice_date TEXT,
+      data TEXT,
+      created_at TEXT
+    );
+  `);
+
   return db;
 }
 
@@ -37,7 +57,5 @@ export function getDb() {
 }
 
 export function saveDb() {
-  if (db && dbPath) {
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  }
+  // no-op, handled by SQLite
 }

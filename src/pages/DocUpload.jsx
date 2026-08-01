@@ -285,12 +285,22 @@ export default function DocUpload() {
           name.endsWith('.webp')
         );
       })
-      .map((f) => ({
-        name: f.name,
-        path: f.path || null,
-        size: f.size,
-        file: f,
-      }));
+      .map((f) => {
+        let realPath = f.path;
+        if ((!realPath || realPath === '') && window.pwp?.webUtils?.getPathForFile) {
+          try {
+            realPath = window.pwp.webUtils.getPathForFile(f);
+          } catch (e) {
+            console.warn('Failed to get path via webUtils', e);
+          }
+        }
+        return {
+          name: f.name,
+          path: realPath || null,
+          size: f.size,
+          file: f,
+        };
+      });
     if (!next.length) {
       setError('Please select PDF, JPG, or PNG files.');
       return;
@@ -780,28 +790,42 @@ export default function DocUpload() {
       )}
       {(stage === 'upload' || stage === 'processing') && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
-          <div className="sm:w-52">
-            <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
-              Target Financial Year
-            </label>
-            <div className="relative">
-              <Calendar
-                size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-              />
-              <select
-                value={financialYear}
-                onChange={(e) => setFinancialYear(e.target.value)}
-                disabled={stage === 'processing'}
-                className="input pl-9"
-              >
-                {fyOptions.map((o) => (
-                  <option key={o.value} value={o.value}>
-                    {o.label}
-                  </option>
-                ))}
-              </select>
+          <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
+            <div className="sm:w-52">
+              <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
+                Target Financial Year
+              </label>
+              <div className="relative">
+                <Calendar
+                  size={16}
+                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                />
+                <select
+                  value={financialYear}
+                  onChange={(e) => setFinancialYear(e.target.value)}
+                  disabled={stage === 'processing'}
+                  className="input pl-9"
+                >
+                  {fyOptions.map((o) => (
+                    <option key={o.value} value={o.value}>
+                      {o.label}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
+            
+            {stage === 'upload' && files.length > 0 && (
+              <button
+                type="button"
+                onClick={handleExtract}
+                disabled={inspecting || !totalPages}
+                className="btn-primary inline-flex items-center gap-2 disabled:opacity-60 h-10 px-6"
+              >
+                <Sparkles size={16} />
+                Start extraction ({totalPages} page{totalPages === 1 ? '' : 's'})
+              </button>
+            )}
           </div>
           <div
             onDragOver={(e) => e.preventDefault()}
@@ -878,19 +902,7 @@ export default function DocUpload() {
                   }
                 />
               ))}
-              {stage === 'upload' && (
-                <div className="flex justify-end pt-2">
-                  <button
-                    type="button"
-                    onClick={handleExtract}
-                    disabled={inspecting || !totalPages}
-                    className="btn-primary inline-flex items-center gap-2 disabled:opacity-60"
-                  >
-                    <Sparkles size={16} />
-                    Start extraction ({totalPages} page{totalPages === 1 ? '' : 's'})
-                  </button>
-                </div>
-              )}
+
               {stage === 'processing' && (
                 <div className="flex flex-col items-center gap-2 pt-4">
                   <Loader2 className="animate-spin text-green-600" size={28} />
