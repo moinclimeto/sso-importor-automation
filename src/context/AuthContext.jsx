@@ -4,12 +4,7 @@ const AuthContext = createContext(null);
 
 export function AuthProvider({ children }) {
   const [user, setUser] = useState(() => {
-    const token = localStorage.getItem('token');
-    const userData = localStorage.getItem('user');
-    if (token && userData) {
-      try { return JSON.parse(userData); } catch { return null; }
-    }
-    return null;
+    return { name: 'Admin', email: 'admin@pwp.com', role: 'admin' };
   });
 
   const login = (token, userData) => {

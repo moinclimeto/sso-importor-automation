@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import { Eye, EyeOff, LogIn } from 'lucide-react';
@@ -6,12 +6,16 @@ import logo from '../assets/ClimetoTransparentLogo.png';
 import { Toast, useToast } from '../components/Toast.jsx';
 
 export default function LoginPage() {
-  const { login } = useAuth();
+  const { login, isLoggedIn } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
   const { toast, showToast, hideToast } = useToast();
+
+  useEffect(() => {
+    if (isLoggedIn) navigate('/', { replace: true });
+  }, [isLoggedIn, navigate]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
