@@ -84,15 +84,16 @@ export default function EprProcurementData() {
                 <tr className="bg-teal-700 text-white">
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Sr. No.</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Supplier Name</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Address</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Address Line 1</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Address Line 2</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">City</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">State</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Pincode</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Category</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty (MT)</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">GST No</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Invoice No</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Supplier GST Number</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Invoice Number/GST E-Invoice No.</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty. of Feed (MT)</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Procurement Date</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Entry</th>
                   <th className="px-4 py-3 text-center font-medium whitespace-nowrap">Action</th>
                 </tr>
               </thead>
@@ -102,17 +103,20 @@ export default function EprProcurementData() {
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{i + 1}</td>
                     <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800" title={r.supplier_name}>{r.supplier_name || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 truncate max-w-xs" title={r.supplier_addr_1}>{r.supplier_addr_1 || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 truncate max-w-xs" title={r.supplier_addr_2}>{r.supplier_addr_2 || ''}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.supplier_city || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.supplier_state || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.supplier_pin_code || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-700">{r.category_name || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs">{r.supplier_gst_no || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">{r.invoice_no || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
                       {r.qty_plastic_waste_mt?.toFixed(2) || '0.00'}
                     </td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs">{r.supplier_gst_no || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">{r.invoice_no || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
                       {r.procurement_date ? new Date(r.procurement_date).toLocaleDateString('en-IN') : 'N/A'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
+                      {r.created_on ? new Date(r.created_on).toLocaleDateString('en-IN') : 'N/A'}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button className="text-teal-600 hover:text-teal-800 p-1 bg-teal-50 rounded-full transition-colors">

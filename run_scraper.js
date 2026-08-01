@@ -42,29 +42,45 @@ async function runScraper() {
         await page.waitForURL('**/*dashboard*', { timeout: 300000 }); // 5 minutes to login
         console.log("🔓 Login detected! Proceeding with extraction...");
 
-        console.log("🖱️ Clicking the first open button...");
-        await page.click("xpath=//html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/div/div/div[4]/div/div[2]/div[2]/button[1]");
+        console.log("🖱️ Clicking the first 'Open' button on Waste Category card...");
+        const firstOpenBtn = page.locator('app-waste-category button').filter({ hasText: /Open/i }).first();
+        await firstOpenBtn.waitFor({ state: 'visible', timeout: 15000 });
+        await firstOpenBtn.click();
         await page.waitForTimeout(1000);
 
-        console.log("🔘 Selecting the radio button...");
-        await page.click("xpath=//html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr/td[1]/div/input");
+        console.log("🔘 Selecting the 'PWP' application radio button...");
+        try {
+            // Find the radio button explicitly by XPath (as requested by user)
+            const pwpRadioBtn = page.locator('xpath=/html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr[2]/td[1]/div/input');
+            await pwpRadioBtn.waitFor({ state: 'visible', timeout: 3000 });
+            await pwpRadioBtn.click();
+        } catch (e) {
+            console.log("⚠️ PWP radio button not found by XPath, falling back to first radio button...");
+            const firstRadioBtn = page.locator('app-modal-frame input[type="radio"]').first();
+            await firstRadioBtn.click();
+        }
         await page.waitForTimeout(1000);
 
-        console.log("🖱️ Clicking the second open button...");
-        await page.click("xpath=//html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[3]/app-button/div/button/p");
-        await page.waitForTimeout(3000); // Give it a moment to load the next page
+        console.log("🖱️ Clicking the 'Proceed/Open' button in the modal...");
+        const modalOpenBtn = page.locator('app-modal-frame app-button button').first();
+        await modalOpenBtn.click();
+        await page.waitForTimeout(3000);
 
-        console.log("🖱️ Waiting for 'Select Unit' dropdown to appear...");
-        const selectUnitBtn = "xpath=//html/body/app-root/app-dashboard/div/div[2]/div[2]/app-onboard-dashboard/div/div[1]/app-breadcrumb/div/div[2]/button[1]";
-        await page.waitForSelector(selectUnitBtn, { state: 'visible', timeout: 15000 });
-        await page.click(selectUnitBtn);
-        await page.waitForTimeout(1500);
+        console.log("🖱️ Checking if 'Select Unit' dropdown exists...");
+        try {
+            const selectUnitBtn = page.locator('button[title="Select Unit"]').first();
+            await selectUnitBtn.waitFor({ state: 'visible', timeout: 8000 });
+            await selectUnitBtn.click();
+            await page.waitForTimeout(1500);
 
-        console.log("🖱️ Waiting for the specific unit card...");
-        const unitCard = "xpath=//html/body/app-root/app-dashboard/div/div[1]/app-dashboard-topbar/app-common-modal/div/div[2]/div/div/div[2]/div/ul/li";
-        await page.waitForSelector(unitCard, { state: 'visible', timeout: 10000 });
-        await page.click(unitCard);
-        await page.waitForTimeout(3000); // Wait for the dashboard to refresh with the selected unit's data
+            console.log("🖱️ Clicking the specific unit card...");
+            const unitCard = page.locator('button.unit-card').first();
+            await unitCard.waitFor({ state: 'visible', timeout: 5000 });
+            await unitCard.click();
+            await page.waitForTimeout(3000);
+        } catch (e) {
+            console.log("⏭️ No 'Select Unit' dropdown found (likely single-unit user). Skipping unit selection...");
+        }
 
     } catch (e) {
         console.error("❌ Error during login or post-login clicks:", e.message);
@@ -114,6 +130,16 @@ async function runScraper() {
 
     console.log("✅ EPR Scraping completed successfully!");
     console.log("📂 JSON files are saved in the 'data' directory.");
+    
+    console.log("🔄 Auto-syncing JSON data to SQLite database...");
+    try {
+        const syncModule = await import('./sync_to_sqlite.js');
+        if (syncModule.default) {
+            await syncModule.default();
+        }
+    } catch (e) {
+        console.error("⚠️ Auto-sync to SQLite failed:", e.message);
+    }
     
     // Commenting out close so you can inspect the browser during development
     // await browser.close();

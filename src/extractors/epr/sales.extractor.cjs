@@ -29,45 +29,33 @@ async function extractEprSales(page) {
             console.log(`\n🔄 Processing Sales Year: ${year}`);
             
             try {
-                // Intercept and force the API request to use the correct year dates (Fail-safe)
-                await page.route('**/api/v1/pwp/sales-details/**', async route => {
-                    const requestUrl = new URL(route.request().url());
-                    requestUrl.searchParams.set('fromDate', `01-01-${year}`);
-                    requestUrl.searchParams.set('toDate', `31-12-${year}`);
-                    await route.continue({ url: requestUrl.toString() });
-                });
+                // Removed API interceptor because frontend now sends timeInterval, which conflicts with fromDate/toDate
 
                 // Visually change the year in the dropdown so the user can see it
                 try {
-                    console.log(`🖱️ Attempting to visually select Year ${year} in UI...`);
-                    // There are 3 dropdowns: 1. Interval Type (Year), 2. From Year, 3. To Year
-                    const selects = page.locator('select');
+                    console.log(`🖱️ Attempting to visually select 'Year' in interval dropdown...`);
+                    const selects = page.locator('select.filter-select-input');
                     const count = await selects.count();
                     
-                    if (count >= 3) {
-                        try { await selects.nth(0).selectOption({ label: 'Year' }); } catch (e) {}
-                        await page.waitForTimeout(500);
+                    if (count > 0) {
+                        // The first select is the interval type (Day/Month/Year)
+                        await selects.first().selectOption('year');
+                        await page.waitForTimeout(1000);
                         
-                        await selects.nth(1).selectOption(year);
-                        await page.waitForTimeout(500);
-                        
-                        await selects.nth(2).selectOption(year);
-                        await page.waitForTimeout(500);
-                    } else if (count === 2) {
-                        await selects.nth(0).selectOption(year);
-                        await selects.nth(1).selectOption(year);
+                        // There are probably 2 more selects or date inputs now for 'From' and 'To'
+                        // Since we just need the API to trigger, we can try to select the year if they are selects
+                        const allSelects = page.locator('select');
+                        const totalSelects = await allSelects.count();
+                        if (totalSelects >= 3) {
+                            try { await allSelects.nth(1).selectOption(year); } catch (e) {}
+                            await page.waitForTimeout(500);
+                            try { await allSelects.nth(2).selectOption(year); } catch (e) {}
+                            await page.waitForTimeout(500);
+                        }
                     }
                 } catch(e) {
-                    console.log(`⚠️ Could not select year in UI.`);
+                    console.log(`⚠️ Could not select year in UI. Error: ${e.message}`);
                 }
-
-                // Debug listener to see what's actually being called when clicking the underlined data
-                const debugListener = (response) => {
-                    if (response.url().includes('/api/v1/')) {
-                        console.log(`[Network Debug] Saw API call: ${response.url()} (Status: ${response.status()})`);
-                    }
-                };
-                page.on('response', debugListener);
 
                 console.log("🖱️ Clicking 'Fetch Data' button...");
                 const fetchBtn = page.locator('button').filter({ hasText: /Fetch Data/i }).first();
@@ -75,22 +63,22 @@ async function extractEprSales(page) {
                 await fetchBtn.click({ force: true });
                 await page.waitForTimeout(3000);
 
-                // Setup API listener
+                // Setup API listener BEFORE clicking the underlined data
                 const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('categoryDetails') && response.request().method() !== 'OPTIONS',
+                    response => response.url().includes('salesList') && response.request().method() !== 'OPTIONS',
                     { timeout: 15000 }
                 ).catch(() => null);
 
                 // Click the table underlined data to trigger API
                 console.log("🖱️ Clicking the underlined data in the table...");
                 try {
-                    // It could be an 'a', 'button', or something with an 'underline' class/style inside the table
-                    const tableLink = page.locator('td').locator('a, button, [style*="underline"], [class*="underline"], u').first();
+                    // Find the underlined number in the first column or any link inside the table
+                    const tableLink = page.locator('td u, td a, td [style*="underline"], td [class*="underline"]').first();
                     await tableLink.waitFor({ state: 'visible', timeout: 8000 });
                     await tableLink.click({ force: true });
 
                     // Wait for the API response
-                    console.log("⏳ Waiting for API response...");
+                    console.log("⏳ Waiting for API response (salesList)...");
                     const apiResponse = await apiResponsePromise;
                     if (apiResponse) {
                         const apiJson = await apiResponse.json();

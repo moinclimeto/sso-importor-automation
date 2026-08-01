@@ -54,46 +54,44 @@ export default function EprData() {
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[1000px]">
               <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="th">Source Year</th>
-                  <th className="th">Procurement Date</th>
+                <tr className="bg-slate-50 border-b border-slate-100 whitespace-nowrap">
+                  <th className="th">Sr. No.</th>
                   <th className="th">Supplier Name</th>
-                  <th className="th">Supplier City/State</th>
-                  <th className="th">Category</th>
-                  <th className="th">Applicant Sub Type</th>
-                  <th className="th text-right">Qty (MT)</th>
+                  <th className="th">Address Line 1</th>
+                  <th className="th">Address Line 2</th>
+                  <th className="th">City</th>
+                  <th className="th">State</th>
+                  <th className="th">Pincode</th>
+                  <th className="th">Supplier GST Number</th>
+                  <th className="th">Invoice Number/GST E-Invoice No.</th>
+                  <th className="th text-right">Qty. of Feed (MT)</th>
+                  <th className="th">Procurement Date</th>
+                  <th className="th">Date of Entry</th>
+                  <th className="th">Action</th>
                 </tr>
               </thead>
               <tbody>
                 {records.map((r, i) => (
-                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="td text-slate-500">
-                      <span className="bg-blue-50 text-blue-600 px-2 py-1 rounded-md text-xs font-medium border border-blue-100">
-                        {r.source_year}
-                      </span>
-                    </td>
-                    <td className="td text-slate-600">
-                      <div className="flex items-center gap-1.5">
-                        <Calendar size={14} className="text-slate-400" />
-                        {new Date(r.procurement_date).toLocaleDateString('en-IN')}
-                      </div>
-                    </td>
-                    <td className="td font-medium text-slate-800">{r.supplier_name}</td>
-                    <td className="td text-slate-600">
-                      <div className="flex items-center gap-1.5">
-                        <MapPin size={14} className="text-slate-400" />
-                        {r.supplier_city || 'N/A'}, {r.supplier_state || 'N/A'}
-                      </div>
-                    </td>
-                    <td className="td">
-                      <span className="bg-slate-100 text-slate-600 px-2 py-1 rounded-md text-xs font-medium">
-                        {r.category_name || 'N/A'}
-                      </span>
-                    </td>
-                    <td className="td text-slate-500">{r.applicant_sub_type || 'N/A'}</td>
+                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors whitespace-nowrap">
+                    <td className="td text-slate-500 font-medium">{i + 1}</td>
+                    <td className="td font-medium text-slate-800">{r.supplier_name || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.supplier_addr_1 || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.supplier_addr_2 || ''}</td>
+                    <td className="td text-slate-600">{r.supplier_city || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.supplier_state || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.supplier_pin_code || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.supplier_gst_no || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.invoice_no || 'N/A'}</td>
                     <td className="td text-right font-semibold text-blue-600">
                       {r.qty_plastic_waste_mt?.toFixed(2) || '0.00'}
                     </td>
+                    <td className="td text-slate-600">
+                      {r.procurement_date ? new Date(r.procurement_date).toLocaleDateString('en-IN') : 'N/A'}
+                    </td>
+                    <td className="td text-slate-600">
+                      {r.created_on ? new Date(r.created_on).toLocaleDateString('en-IN') : 'N/A'}
+                    </td>
+                    <td className="td text-slate-600"></td>
                   </tr>
                 ))}
               </tbody>

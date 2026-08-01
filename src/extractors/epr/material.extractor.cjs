@@ -27,56 +27,60 @@ async function extractEprMaterial(page) {
             console.log(`\n🔄 Processing Year: ${year}`);
             
             try {
-                // Intercept and force the API request to use the correct year dates (Fail-safe)
-                await page.route('**/api/v1/pwp/procurement-details/**', async route => {
-                    const requestUrl = new URL(route.request().url());
-                    requestUrl.searchParams.set('fromDate', `01-01-${year}`);
-                    requestUrl.searchParams.set('toDate', `31-12-${year}`);
-                    await route.continue({ url: requestUrl.toString() });
-                });
+                // Removed API interceptor because frontend now sends timeInterval, which conflicts with fromDate/toDate
 
                 // Visually change the year in the dropdown so the user can see it
                 try {
-                    console.log(`🖱️ Attempting to visually select Year ${year} in UI...`);
-                    const selects = page.locator('select.filter-year-select');
-                    if (await selects.count() >= 2) {
-                        // Playwright's native selectOption is perfect for standard <select> tags
-                        await selects.nth(0).selectOption(year);
-                        await page.waitForTimeout(500);
+                    console.log(`🖱️ Attempting to visually select 'Year' in interval dropdown...`);
+                    const selects = page.locator('select.filter-select-input');
+                    const count = await selects.count();
+                    
+                    if (count > 0) {
+                        // The first select is the interval type (Day/Month/Year)
+                        await selects.first().selectOption('year');
+                        await page.waitForTimeout(1000);
                         
-                        await selects.nth(1).selectOption(year);
-                        await page.waitForTimeout(500);
+                        // There are probably 2 more selects or date inputs now for 'From' and 'To'
+                        // Since we just need the API to trigger, we can try to select the year if they are selects
+                        const allSelects = page.locator('select');
+                        const totalSelects = await allSelects.count();
+                        if (totalSelects >= 3) {
+                            try { await allSelects.nth(1).selectOption(year); } catch (e) {}
+                            await page.waitForTimeout(500);
+                            try { await allSelects.nth(2).selectOption(year); } catch (e) {}
+                            await page.waitForTimeout(500);
+                        }
                     }
                 } catch(e) {
-                    console.log(`⚠️ Could not select year in UI, but API interceptor will still force ${year} in background.`);
+                    console.log(`⚠️ Could not select year in UI. Error: ${e.message}`);
                 }
 
                 // Click Fetch Data (this triggers a UI refresh, but our route overrides the dates)
                 console.log("🖱️ Clicking 'Fetch Data' button...");
                 const fetchBtn = page.locator('button').filter({ hasText: /Fetch Data/i }).first();
                 await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
-                await fetchBtn.click();
+                await fetchBtn.click({ force: true });
                 
                 // Wait for table to load
                 await page.waitForTimeout(3000);
 
                 // Setup API listener AFTER Fetch Data (to catch the modal popup API, not the initial table API)
                 const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('procurement-details/summary-details') && response.status() === 200,
+                    response => response.url().includes('summary-details') && response.request().method() !== 'OPTIONS',
                     { timeout: 15000 }
                 ).catch(() => null);
 
-                // Click the specific table button in the Total row
-                console.log("🖱️ Clicking the table-link button in the Total row...");
+                // Click the specific table link/button
+                console.log("🖱️ Clicking the underlined data in the table...");
                 
                 try {
-                    // Find the row containing 'Total' in the first column, then get its button
-                    const tableButton = page.locator('tr').filter({ has: page.locator('td', { hasText: 'Total' }) }).locator('button.table-link:visible').first();
-                    await tableButton.waitFor({ state: 'visible', timeout: 8000 });
-                    await tableButton.click();
+                    // Find the underlined number in the table (like sales)
+                    const tableLink = page.locator('td u, td a, td [style*="underline"], td [class*="underline"], td button.table-link').first();
+                    await tableLink.waitFor({ state: 'visible', timeout: 8000 });
+                    await tableLink.click({ force: true });
 
                     // Wait for the API response that fires after clicking the table button
-                    console.log("⏳ Waiting for API response...");
+                    console.log("⏳ Waiting for API response (summary-details)...");
                     const apiResponse = await apiResponsePromise;
                     if (apiResponse) {
                         const apiJson = await apiResponse.json();

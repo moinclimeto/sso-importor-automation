@@ -31,7 +31,7 @@ export default function EprProductionData() {
     return String(r.year) === selectedYear;
   });
 
-  const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r.qty__of_product_tons_) || 0), 0);
+  const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r.qty_of_clinker_produced__mt_) || 0), 0);
 
   return (
     <div className="space-y-5">
@@ -79,18 +79,20 @@ export default function EprProductionData() {
       ) : (
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full text-sm min-w-[1200px]">
+            <table className="w-full text-sm min-w-[1500px]">
               <thead>
                 <tr className="bg-teal-700 text-white">
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Sr. No.</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Category</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Process Code</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Plastic Type</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Product</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of Product (Tons)</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of Input Waste (Tons)</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">% of Recycled Plastic</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Production</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">From Date</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">To Date</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">QTY of Clinker Produced (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qualifying Feed (MT) / Solid Waste Burnt (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat I (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat II (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat III (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat IV (MT)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Energy contibution by alternative fuel (MSW/RDF)</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Entry</th>
                   <th className="px-4 py-3 text-center font-medium whitespace-nowrap">Action</th>
                 </tr>
               </thead>
@@ -98,21 +100,31 @@ export default function EprProductionData() {
                 {filteredRecords.map((r, i) => (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r.sr__no_ || (i + 1)}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800">{r.category || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 truncate max-w-xs">{r.process_code || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.plastic_type || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.product || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.from_date || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.to_date || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {Number(r.qty__of_product_tons_) ? Number(r.qty__of_product_tons_).toFixed(2) : (r.qty__of_product_tons_ || '0.00')}
+                      {r.qty_of_clinker_produced__mt_ || '0'}
                     </td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {Number(r.qty__of_input_waste_tons__) ? Number(r.qty__of_input_waste_tons__).toFixed(2) : (r.qty__of_input_waste_tons__ || '0.00')}
+                      {r.qualifying_feed__mt_____solid_waste_burnt__mt_ || '0'}
                     </td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.percentage_of_recycled_plastic_in_product___ || 'N/A'}
+                      {r.qty_of_pw_processed_for_cat_i__mt_ || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r.qty_of_pw_processed_for_cat_ii__mt_ || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r.qty_of_pw_processed_for_cat_iii__mt_ || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r.qty_of_pw_processed_for_cat_iv__mt_ || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r.energy_contibution_by_alternative_fuel__msw_rdf_ || '0'}
                     </td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
-                      {r.date_of_production || 'N/A'}
+                      {r.date_of_entry || 'N/A'}
                     </td>
                     <td className="px-4 py-3 text-center">
                       <button className="text-teal-600 hover:text-teal-800 p-1 bg-teal-50 rounded-full transition-colors">

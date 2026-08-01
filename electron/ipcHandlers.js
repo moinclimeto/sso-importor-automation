@@ -94,12 +94,12 @@ export function registerIpcHandlers() {
   });
 
   // ─── COMPANIES ───────────────────────────────────────────────
-  ipcMain.handle('companies:getAll', () => {
+  ipcMain.handle('companies:getAll', async () => {
     const db = getDb();
-    return db.prepare('SELECT * FROM companies ORDER BY name ASC').all();
+    return await db.all('SELECT * FROM companies ORDER BY name ASC');
   });
 
-  ipcMain.handle('companies:add', (_, data) => {
+  ipcMain.handle('companies:add', async (_, data) => {
     const db = getDb();
     const created_at = new Date().toISOString();
     const stmt = db.prepare('INSERT INTO companies (name, gstin, state, address, created_at) VALUES (?, ?, ?, ?, ?)');
@@ -107,21 +107,20 @@ export function registerIpcHandlers() {
     return { id: info.lastInsertRowid, ...data, created_at };
   });
 
-  ipcMain.handle('companies:update', (_, data) => {
+  ipcMain.handle('companies:update', async (_, data) => {
     const db = getDb();
-    const stmt = db.prepare('UPDATE companies SET name=?, gstin=?, state=?, address=? WHERE id=?');
-    stmt.run(data.name || '', data.gstin || '', data.state || '', data.address || '', data.id);
+    await db.run('UPDATE companies SET name=?, gstin=?, state=?, address=? WHERE id=?', [data.name || '', data.gstin || '', data.state || '', data.address || '', data.id]);
     return { success: true };
   });
 
-  ipcMain.handle('companies:delete', (_, id) => {
+  ipcMain.handle('companies:delete', async (_, id) => {
     const db = getDb();
-    db.prepare('DELETE FROM companies WHERE id=?').run(id);
+    await db.run('DELETE FROM companies WHERE id=?', [id]);
     return { success: true };
   });
 
   // ─── PURCHASES ───────────────────────────────────────────────
-  ipcMain.handle('purchases:getAll', (_, filters) => {
+  ipcMain.handle('purchases:getAll', async (_, filters) => {
     const db = getDb();
     let query = 'SELECT p.*, c.name as company_name FROM purchases p LEFT JOIN companies c ON p.company_id = c.id WHERE 1=1';
     const params = [];
@@ -129,7 +128,7 @@ export function registerIpcHandlers() {
     if (filters?.from_date) { query += ' AND p.invoice_date >= ?'; params.push(filters.from_date); }
     if (filters?.to_date) { query += ' AND p.invoice_date <= ?'; params.push(filters.to_date); }
     query += ' ORDER BY p.invoice_date DESC';
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.all(query, params);
     return rows.map(r => {
       let parsed = {};
       try { parsed = JSON.parse(r.data); } catch(e) {}
@@ -137,7 +136,7 @@ export function registerIpcHandlers() {
     });
   });
 
-  ipcMain.handle('purchases:add', (_, data) => {
+  ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || '';
@@ -147,7 +146,7 @@ export function registerIpcHandlers() {
     return { id: info.lastInsertRowid, ...data, created_at };
   });
 
-  ipcMain.handle('purchases:update', (_, data) => {
+  ipcMain.handle('purchases:update', async (_, data) => {
     const db = getDb();
     const invoice_no = data.invoice_no || data.invoice_number || '';
     const invoice_date = data.invoice_date || data.procurement_date || '';
@@ -156,20 +155,20 @@ export function registerIpcHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('purchases:delete', (_, id) => {
+  ipcMain.handle('purchases:delete', async (_, id) => {
     const db = getDb();
-    db.prepare('DELETE FROM purchases WHERE id=?').run(id);
+    await db.run('DELETE FROM purchases WHERE id=?', [id]);
     return { success: true };
   });
 
-  ipcMain.handle('purchases:getSummary', (_, filters) => {
+  ipcMain.handle('purchases:getSummary', async (_, filters) => {
     const db = getDb();
     let query = 'SELECT data FROM purchases WHERE 1=1';
     const params = [];
     if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
     if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
     if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.all(query, params);
     let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
     rows.forEach(r => {
       try {
@@ -188,7 +187,7 @@ export function registerIpcHandlers() {
   });
 
   // ─── SALES ────────────────────────────────────────────────────
-  ipcMain.handle('sales:getAll', (_, filters) => {
+  ipcMain.handle('sales:getAll', async (_, filters) => {
     const db = getDb();
     let query = 'SELECT s.*, c.name as company_name FROM sales s LEFT JOIN companies c ON s.company_id = c.id WHERE 1=1';
     const params = [];
@@ -196,7 +195,7 @@ export function registerIpcHandlers() {
     if (filters?.from_date) { query += ' AND s.invoice_date >= ?'; params.push(filters.from_date); }
     if (filters?.to_date) { query += ' AND s.invoice_date <= ?'; params.push(filters.to_date); }
     query += ' ORDER BY s.invoice_date DESC';
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.all(query, params);
     return rows.map(r => {
       let parsed = {};
       try { parsed = JSON.parse(r.data); } catch(e) {}
@@ -204,7 +203,7 @@ export function registerIpcHandlers() {
     });
   });
 
-  ipcMain.handle('sales:add', (_, data) => {
+  ipcMain.handle('sales:add', async (_, data) => {
     const db = getDb();
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
@@ -214,7 +213,7 @@ export function registerIpcHandlers() {
     return { id: info.lastInsertRowid, ...data, created_at };
   });
 
-  ipcMain.handle('sales:update', (_, data) => {
+  ipcMain.handle('sales:update', async (_, data) => {
     const db = getDb();
     const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
     const invoice_date = data.invoice_date || '';
@@ -223,20 +222,20 @@ export function registerIpcHandlers() {
     return { success: true };
   });
 
-  ipcMain.handle('sales:delete', (_, id) => {
+  ipcMain.handle('sales:delete', async (_, id) => {
     const db = getDb();
-    db.prepare('DELETE FROM sales WHERE id=?').run(id);
+    await db.run('DELETE FROM sales WHERE id=?', [id]);
     return { success: true };
   });
 
-  ipcMain.handle('sales:getSummary', (_, filters) => {
+  ipcMain.handle('sales:getSummary', async (_, filters) => {
     const db = getDb();
     let query = 'SELECT data FROM sales WHERE 1=1';
     const params = [];
     if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
     if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
     if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
-    const rows = db.prepare(query).all(...params);
+    const rows = await db.all(query, params);
     let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
     rows.forEach(r => {
       try {
@@ -255,11 +254,11 @@ export function registerIpcHandlers() {
   });
 
   // ─── DASHBOARD STATS ─────────────────────────────────────────
-  ipcMain.handle('dashboard:getStats', () => {
+  ipcMain.handle('dashboard:getStats', async () => {
     const db = getDb();
     
     // Purchases
-    const pRows = db.prepare('SELECT data, invoice_date FROM purchases').all();
+    const pRows = await db.all('SELECT data, invoice_date FROM purchases');
     let purchaseTotal = 0;
     const monthlyPurchaseObj = {};
     pRows.forEach(r => {
@@ -273,7 +272,7 @@ export function registerIpcHandlers() {
     });
     
     // Sales
-    const sRows = db.prepare('SELECT data, invoice_date FROM sales').all();
+    const sRows = await db.all('SELECT data, invoice_date FROM sales');
     let saleTotal = 0;
     const monthlySaleObj = {};
     sRows.forEach(r => {
@@ -862,10 +861,17 @@ export function registerIpcHandlers() {
           await firstOpenBtn.click();
           await page.waitForTimeout(1000);
   
-          console.log("🔘 Selecting the first application radio button...");
-          const radioBtn = page.locator('app-modal-frame input[type="radio"]').first();
-          await radioBtn.waitFor({ state: 'visible', timeout: 5000 });
-          await radioBtn.click();
+          console.log("🔘 Selecting the 'PWP' application radio button...");
+          try {
+            // Find the radio button explicitly by XPath
+            const pwpRadioBtn = page.locator('xpath=/html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr[2]/td[1]/div/input');
+            await pwpRadioBtn.waitFor({ state: 'visible', timeout: 3000 });
+            await pwpRadioBtn.click();
+          } catch (e) {
+            console.log("⚠️ PWP radio button not found by XPath, falling back to first radio button...");
+            const firstRadioBtn = page.locator('app-modal-frame input[type="radio"]').first();
+            await firstRadioBtn.click();
+          }
           await page.waitForTimeout(1000);
   
           console.log("🖱️ Clicking the 'Proceed/Open' button in the modal...");
@@ -964,16 +970,11 @@ export function registerIpcHandlers() {
     try {
       return await sdb.get('SELECT * FROM epr_profile LIMIT 1');
     } catch (e) {
-      // Fallback: If epr_profile doesn't exist, try getting company name from epr_dashboard raw_text
+      // Fallback: Try getting company name from epr_dashboard
       try {
         const dashboard = await sdb.get('SELECT * FROM epr_dashboard LIMIT 1');
-        if (dashboard && dashboard.raw_text) {
-           const lines = dashboard.raw_text.split('\n').map(l => l.trim()).filter(l => l);
-           // Find "Central Pollution Control Board" and take the next line
-           const cpcbIdx = lines.findIndex(l => l.includes('Central Pollution Control Board'));
-           if (cpcbIdx !== -1 && lines.length > cpcbIdx + 1) {
-              return { company_name: lines[cpcbIdx + 1] };
-           }
+        if (dashboard && dashboard.company_name) {
+           return { company_name: dashboard.company_name };
         }
       } catch (err2) {}
       return null;

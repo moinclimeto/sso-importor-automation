@@ -4,7 +4,6 @@ import fs from 'fs';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { fileURLToPath } from 'url';
-import Database from 'better-sqlite3';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -20,10 +19,14 @@ export async function initDatabase() {
   }
 
   const dbPath = path.join(dbDir, 'pwp.sqlite');
-  db = new Database(dbPath, { verbose: null });
-  db.pragma('journal_mode = WAL');
+  db = await open({
+    filename: dbPath,
+    driver: sqlite3.Database
+  });
+  
+  await db.exec('PRAGMA journal_mode = WAL;');
 
-  db.exec(`
+  await db.exec(`
     CREATE TABLE IF NOT EXISTS companies (
       id INTEGER PRIMARY KEY AUTOINCREMENT,
       name TEXT NOT NULL,
