@@ -4,12 +4,12 @@ import fs from 'fs';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import { fileURLToPath } from 'url';
+import Database from 'better-sqlite3';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let db = null;
-let dbPath = '';
 let sqliteDb = null;
 
 export async function initDatabase() {
@@ -19,23 +19,38 @@ export async function initDatabase() {
     fs.mkdirSync(dbDir, { recursive: true });
   }
 
-  dbPath = path.join(dbDir, 'db.json');
-  if (!fs.existsSync(dbPath)) {
-    db = { companies: [], purchases: [], sales: [], nextId: 1 };
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  } else {
-    try {
-      const raw = fs.readFileSync(dbPath, 'utf8').replace(/^\uFEFF/, '');
-      db = JSON.parse(raw);
-      if (!Array.isArray(db.companies)) db.companies = [];
-      if (!Array.isArray(db.purchases)) db.purchases = [];
-      if (!Array.isArray(db.sales)) db.sales = [];
-      if (!db.nextId) db.nextId = 1;
-    } catch (e) {
-      console.error('Failed to read db.json, starting empty:', e?.message);
-      db = { companies: [], purchases: [], sales: [], nextId: 1 };
-    }
-  }
+  const dbPath = path.join(dbDir, 'pwp.sqlite');
+  db = new Database(dbPath, { verbose: null });
+  db.pragma('journal_mode = WAL');
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS companies (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT NOT NULL,
+      gstin TEXT,
+      state TEXT,
+      address TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS purchases (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER,
+      invoice_no TEXT,
+      invoice_date TEXT,
+      data TEXT,
+      created_at TEXT
+    );
+
+    CREATE TABLE IF NOT EXISTS sales (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      company_id INTEGER,
+      invoice_no TEXT,
+      invoice_date TEXT,
+      data TEXT,
+      created_at TEXT
+    );
+  `);
 
   // Connect to the scraped SQLite database
   const sqlitePath = path.join(__dirname, '..', 'database.sqlite');
@@ -58,9 +73,7 @@ export function getDb() {
 
 
 export function saveDb() {
-  if (db && dbPath) {
-    fs.writeFileSync(dbPath, JSON.stringify(db, null, 2));
-  }
+  // no-op, handled by SQLite
 }
 
 export function getSqliteDb() {

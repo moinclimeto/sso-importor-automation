@@ -96,181 +96,217 @@ export function registerIpcHandlers() {
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', () => {
     const db = getDb();
-    return db.companies.sort((a, b) => a.name.localeCompare(b.name));
+    return db.prepare('SELECT * FROM companies ORDER BY name ASC').all();
   });
 
   ipcMain.handle('companies:add', (_, data) => {
     const db = getDb();
-    const newCompany = { id: db.nextId++, ...data, created_at: new Date().toISOString() };
-    db.companies.push(newCompany);
-    saveDb();
-    return newCompany;
+    const created_at = new Date().toISOString();
+    const stmt = db.prepare('INSERT INTO companies (name, gstin, state, address, created_at) VALUES (?, ?, ?, ?, ?)');
+    const info = stmt.run(data.name || '', data.gstin || '', data.state || '', data.address || '', created_at);
+    return { id: info.lastInsertRowid, ...data, created_at };
   });
 
   ipcMain.handle('companies:update', (_, data) => {
     const db = getDb();
-    const idx = db.companies.findIndex(c => c.id === data.id);
-    if (idx !== -1) {
-      db.companies[idx] = { ...db.companies[idx], ...data };
-      saveDb();
-    }
+    const stmt = db.prepare('UPDATE companies SET name=?, gstin=?, state=?, address=? WHERE id=?');
+    stmt.run(data.name || '', data.gstin || '', data.state || '', data.address || '', data.id);
     return { success: true };
   });
 
   ipcMain.handle('companies:delete', (_, id) => {
     const db = getDb();
-    db.companies = db.companies.filter(c => c.id !== id);
-    saveDb();
+    db.prepare('DELETE FROM companies WHERE id=?').run(id);
     return { success: true };
   });
 
   // ─── PURCHASES ───────────────────────────────────────────────
   ipcMain.handle('purchases:getAll', (_, filters) => {
     const db = getDb();
-    let res = db.purchases.map(p => {
-      const comp = db.companies.find(c => c.id === p.company_id);
-      return { ...p, company_name: comp ? comp.name : '' };
+    let query = 'SELECT p.*, c.name as company_name FROM purchases p LEFT JOIN companies c ON p.company_id = c.id WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND p.company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND p.invoice_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND p.invoice_date <= ?'; params.push(filters.to_date); }
+    query += ' ORDER BY p.invoice_date DESC';
+    const rows = db.prepare(query).all(...params);
+    return rows.map(r => {
+      let parsed = {};
+      try { parsed = JSON.parse(r.data); } catch(e) {}
+      return { ...parsed, id: r.id, company_name: r.company_name, company_id: r.company_id, created_at: r.created_at };
     });
-    if (filters?.company_id) res = res.filter(p => p.company_id === filters.company_id);
-    if (filters?.from_date) res = res.filter(p => p.invoice_date >= filters.from_date);
-    if (filters?.to_date) res = res.filter(p => p.invoice_date <= filters.to_date);
-    return res.sort((a, b) => b.invoice_date.localeCompare(a.invoice_date));
   });
 
   ipcMain.handle('purchases:add', (_, data) => {
     const db = getDb();
-    const newItem = { id: db.nextId++, ...data, created_at: new Date().toISOString() };
-    db.purchases.push(newItem);
-    saveDb();
-    return newItem;
+    const created_at = new Date().toISOString();
+    const invoice_no = data.invoice_no || data.invoice_number || '';
+    const invoice_date = data.invoice_date || data.procurement_date || '';
+    const stmt = db.prepare('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)');
+    const info = stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at);
+    return { id: info.lastInsertRowid, ...data, created_at };
   });
 
   ipcMain.handle('purchases:update', (_, data) => {
     const db = getDb();
-    const idx = db.purchases.findIndex(p => p.id === data.id);
-    if (idx !== -1) {
-      db.purchases[idx] = { ...db.purchases[idx], ...data };
-      saveDb();
-    }
+    const invoice_no = data.invoice_no || data.invoice_number || '';
+    const invoice_date = data.invoice_date || data.procurement_date || '';
+    const stmt = db.prepare('UPDATE purchases SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?');
+    stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id);
     return { success: true };
   });
 
   ipcMain.handle('purchases:delete', (_, id) => {
     const db = getDb();
-    db.purchases = db.purchases.filter(p => p.id !== id);
-    saveDb();
+    db.prepare('DELETE FROM purchases WHERE id=?').run(id);
     return { success: true };
   });
 
   ipcMain.handle('purchases:getSummary', (_, filters) => {
     const db = getDb();
-    let res = db.purchases;
-    if (filters?.company_id) res = res.filter(p => p.company_id === filters.company_id);
-    if (filters?.from_date) res = res.filter(p => p.invoice_date >= filters.from_date);
-    if (filters?.to_date) res = res.filter(p => p.invoice_date <= filters.to_date);
-    
+    let query = 'SELECT data FROM purchases WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
+    const rows = db.prepare(query).all(...params);
+    let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
+    rows.forEach(r => {
+      try {
+        const d = JSON.parse(r.data);
+        total_taxable += (parseFloat(d.taxable_amount) || 0);
+        total_cgst += (parseFloat(d.cgst_amount) || 0);
+        total_sgst += (parseFloat(d.sgst_amount) || 0);
+        total_igst += (parseFloat(d.igst_amount) || 0);
+        total_amount += (parseFloat(d.total_amount) || 0);
+      } catch(e) {}
+    });
     return {
-      total_records: res.length,
-      total_taxable: res.reduce((sum, p) => sum + (p.taxable_amount || 0), 0),
-      total_cgst: res.reduce((sum, p) => sum + (p.cgst_amount || 0), 0),
-      total_sgst: res.reduce((sum, p) => sum + (p.sgst_amount || 0), 0),
-      total_igst: res.reduce((sum, p) => sum + (p.igst_amount || 0), 0),
-      total_amount: res.reduce((sum, p) => sum + (p.total_amount || 0), 0),
+      total_records: rows.length,
+      total_taxable, total_cgst, total_sgst, total_igst, total_amount
     };
   });
 
   // ─── SALES ────────────────────────────────────────────────────
   ipcMain.handle('sales:getAll', (_, filters) => {
     const db = getDb();
-    let res = db.sales.map(s => {
-      const comp = db.companies.find(c => c.id === s.company_id);
-      return { ...s, company_name: comp ? comp.name : '' };
+    let query = 'SELECT s.*, c.name as company_name FROM sales s LEFT JOIN companies c ON s.company_id = c.id WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND s.company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND s.invoice_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND s.invoice_date <= ?'; params.push(filters.to_date); }
+    query += ' ORDER BY s.invoice_date DESC';
+    const rows = db.prepare(query).all(...params);
+    return rows.map(r => {
+      let parsed = {};
+      try { parsed = JSON.parse(r.data); } catch(e) {}
+      return { ...parsed, id: r.id, company_name: r.company_name, company_id: r.company_id, created_at: r.created_at };
     });
-    if (filters?.company_id) res = res.filter(s => s.company_id === filters.company_id);
-    if (filters?.from_date) res = res.filter(s => s.invoice_date >= filters.from_date);
-    if (filters?.to_date) res = res.filter(s => s.invoice_date <= filters.to_date);
-    return res.sort((a, b) => b.invoice_date.localeCompare(a.invoice_date));
   });
 
   ipcMain.handle('sales:add', (_, data) => {
     const db = getDb();
-    const newItem = { id: db.nextId++, ...data, created_at: new Date().toISOString() };
-    db.sales.push(newItem);
-    saveDb();
-    return newItem;
+    const created_at = new Date().toISOString();
+    const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
+    const invoice_date = data.invoice_date || '';
+    const stmt = db.prepare('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)');
+    const info = stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at);
+    return { id: info.lastInsertRowid, ...data, created_at };
   });
 
   ipcMain.handle('sales:update', (_, data) => {
     const db = getDb();
-    const idx = db.sales.findIndex(s => s.id === data.id);
-    if (idx !== -1) {
-      db.sales[idx] = { ...db.sales[idx], ...data };
-      saveDb();
-    }
+    const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
+    const invoice_date = data.invoice_date || '';
+    const stmt = db.prepare('UPDATE sales SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?');
+    stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id);
     return { success: true };
   });
 
   ipcMain.handle('sales:delete', (_, id) => {
     const db = getDb();
-    db.sales = db.sales.filter(s => s.id !== id);
-    saveDb();
+    db.prepare('DELETE FROM sales WHERE id=?').run(id);
     return { success: true };
   });
 
   ipcMain.handle('sales:getSummary', (_, filters) => {
     const db = getDb();
-    let res = db.sales;
-    if (filters?.company_id) res = res.filter(s => s.company_id === filters.company_id);
-    if (filters?.from_date) res = res.filter(s => s.invoice_date >= filters.from_date);
-    if (filters?.to_date) res = res.filter(s => s.invoice_date <= filters.to_date);
-    
+    let query = 'SELECT data FROM sales WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
+    const rows = db.prepare(query).all(...params);
+    let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
+    rows.forEach(r => {
+      try {
+        const d = JSON.parse(r.data);
+        total_taxable += (parseFloat(d.taxable_amount) || 0);
+        total_cgst += (parseFloat(d.cgst_amount) || 0);
+        total_sgst += (parseFloat(d.sgst_amount) || 0);
+        total_igst += (parseFloat(d.igst_amount) || 0);
+        total_amount += (parseFloat(d.total_amount) || 0);
+      } catch(e) {}
+    });
     return {
-      total_records: res.length,
-      total_taxable: res.reduce((sum, s) => sum + (s.taxable_amount || 0), 0),
-      total_cgst: res.reduce((sum, s) => sum + (s.cgst_amount || 0), 0),
-      total_sgst: res.reduce((sum, s) => sum + (s.sgst_amount || 0), 0),
-      total_igst: res.reduce((sum, s) => sum + (s.igst_amount || 0), 0),
-      total_amount: res.reduce((sum, s) => sum + (s.total_amount || 0), 0),
+      total_records: rows.length,
+      total_taxable, total_cgst, total_sgst, total_igst, total_amount
     };
   });
 
   // ─── DASHBOARD STATS ─────────────────────────────────────────
   ipcMain.handle('dashboard:getStats', () => {
     const db = getDb();
-    const purchaseTotal = db.purchases.reduce((s, p) => s + (p.total_amount || 0), 0);
-    const saleTotal = db.sales.reduce((s, x) => s + (x.total_amount || 0), 0);
     
+    // Purchases
+    const pRows = db.prepare('SELECT data, invoice_date FROM purchases').all();
+    let purchaseTotal = 0;
     const monthlyPurchaseObj = {};
-    db.purchases.forEach(p => {
-      if(!p.invoice_date) return;
-      const month = p.invoice_date.substring(0, 7);
-      monthlyPurchaseObj[month] = (monthlyPurchaseObj[month] || 0) + (p.total_amount || 0);
+    pRows.forEach(r => {
+      try {
+        const d = JSON.parse(r.data);
+        const amt = parseFloat(d.total_amount) || 0;
+        purchaseTotal += amt;
+        const month = r.invoice_date ? r.invoice_date.substring(0, 7) : '';
+        if (month) monthlyPurchaseObj[month] = (monthlyPurchaseObj[month] || 0) + amt;
+      } catch(e) {}
     });
+    
+    // Sales
+    const sRows = db.prepare('SELECT data, invoice_date FROM sales').all();
+    let saleTotal = 0;
+    const monthlySaleObj = {};
+    sRows.forEach(r => {
+      try {
+        const d = JSON.parse(r.data);
+        const amt = parseFloat(d.total_amount) || 0;
+        saleTotal += amt;
+        const month = r.invoice_date ? r.invoice_date.substring(0, 7) : '';
+        if (month) monthlySaleObj[month] = (monthlySaleObj[month] || 0) + amt;
+      } catch(e) {}
+    });
+    
+    const companyCount = db.prepare('SELECT COUNT(*) as c FROM companies').get().c;
+    
     const monthlyPurchase = Object.keys(monthlyPurchaseObj)
       .map(month => ({ month, total: monthlyPurchaseObj[month] }))
       .sort((a,b)=>b.month.localeCompare(a.month))
       .slice(0,6);
-
-    const monthlySaleObj = {};
-    db.sales.forEach(s => {
-      if(!s.invoice_date) return;
-      const month = s.invoice_date.substring(0, 7);
-      monthlySaleObj[month] = (monthlySaleObj[month] || 0) + (s.total_amount || 0);
-    });
+    
     const monthlySale = Object.keys(monthlySaleObj)
       .map(month => ({ month, total: monthlySaleObj[month] }))
       .sort((a,b)=>b.month.localeCompare(a.month))
       .slice(0,6);
-
+      
     return {
-      purchaseTotal: purchaseTotal,
-      saleTotal: saleTotal,
-      purchaseCount: db.purchases.length,
-      saleCount: db.sales.length,
-      companyCount: db.companies.length,
+      purchaseTotal,
+      saleTotal,
+      purchaseCount: pRows.length,
+      saleCount: sRows.length,
+      companyCount,
       profit: saleTotal - purchaseTotal,
       monthlyPurchase,
-      monthlySale,
+      monthlySale
     };
   });
 

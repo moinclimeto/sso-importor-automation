@@ -1,7 +1,10 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('pwp', {
-  // Companies
+  // webUtils
+  webUtils: {
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+  },
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
     add: (data) => ipcRenderer.invoke('companies:add', data),
