@@ -92,6 +92,17 @@ export function registerIpcHandlers() {
     }
     return [];
   });
+  // ─── FILE SYSTEM ───────────────────────────────────────────────
+  ipcMain.handle('fs:readFileBase64', async (_, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return null;
+      const data = fs.readFileSync(filePath);
+      return data.toString('base64');
+    } catch (e) {
+      console.error('Failed to read file as base64', e);
+      return null;
+    }
+  });
 
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', async () => {
@@ -102,9 +113,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('companies:add', async (_, data) => {
     const db = getDb();
     const created_at = new Date().toISOString();
-    const stmt = db.prepare('INSERT INTO companies (name, gstin, state, address, created_at) VALUES (?, ?, ?, ?, ?)');
-    const info = stmt.run(data.name || '', data.gstin || '', data.state || '', data.address || '', created_at);
-    return { id: info.lastInsertRowid, ...data, created_at };
+    const info = await db.run('INSERT INTO companies (name, gstin, state, address, created_at) VALUES (?, ?, ?, ?, ?)', [data.name || '', data.gstin || '', data.state || '', data.address || '', created_at]);
+    return { id: info.lastID, ...data, created_at };
   });
 
   ipcMain.handle('companies:update', async (_, data) => {
@@ -141,17 +151,15 @@ export function registerIpcHandlers() {
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || '';
     const invoice_date = data.invoice_date || data.procurement_date || '';
-    const stmt = db.prepare('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)');
-    const info = stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at);
-    return { id: info.lastInsertRowid, ...data, created_at };
+    const info = await db.run('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at]);
+    return { id: info.lastID, ...data, created_at };
   });
 
   ipcMain.handle('purchases:update', async (_, data) => {
     const db = getDb();
     const invoice_no = data.invoice_no || data.invoice_number || '';
     const invoice_date = data.invoice_date || data.procurement_date || '';
-    const stmt = db.prepare('UPDATE purchases SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?');
-    stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id);
+    await db.run('UPDATE purchases SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id]);
     return { success: true };
   });
 
@@ -208,17 +216,15 @@ export function registerIpcHandlers() {
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
     const invoice_date = data.invoice_date || '';
-    const stmt = db.prepare('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)');
-    const info = stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at);
-    return { id: info.lastInsertRowid, ...data, created_at };
+    const info = await db.run('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at]);
+    return { id: info.lastID, ...data, created_at };
   });
 
   ipcMain.handle('sales:update', async (_, data) => {
     const db = getDb();
     const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
     const invoice_date = data.invoice_date || '';
-    const stmt = db.prepare('UPDATE sales SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?');
-    stmt.run(data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id);
+    await db.run('UPDATE sales SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id]);
     return { success: true };
   });
 
@@ -285,7 +291,8 @@ export function registerIpcHandlers() {
       } catch(e) {}
     });
     
-    const companyCount = db.prepare('SELECT COUNT(*) as c FROM companies').get().c;
+    const companyCountRow = await db.get('SELECT COUNT(*) as c FROM companies');
+    const companyCount = companyCountRow ? companyCountRow.c : 0;
     
     const monthlyPurchase = Object.keys(monthlyPurchaseObj)
       .map(month => ({ month, total: monthlyPurchaseObj[month] }))

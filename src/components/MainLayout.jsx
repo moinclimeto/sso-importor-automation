@@ -2,16 +2,28 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 
 const navLinks = [
-  { to: '/cpcb-dashboard', icon: LayoutDashboard, label: 'CPCB Dashboard' },
-  { to: '/epr-production', icon: Database, label: 'EPR Production Data' },
-  { to: '/epr-sales', icon: Database, label: 'EPR Sales Data' },
-  { to: '/epr-procurement', icon: Database, label: 'EPR Procurement Data' },
-  { to: '/companies', icon: Building2, label: 'Company Profile' },
+  {
+    icon: LayoutDashboard,
+    label: 'Overview',
+    subLinks: [
+      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
+      { to: '/companies', label: 'Company Profile' },
+    ]
+  },
+  {
+    icon: Database,
+    label: 'EPR Data',
+    subLinks: [
+      { to: '/epr-production', label: 'Production Data' },
+      { to: '/epr-sales', label: 'Sales Data' },
+      { to: '/epr-procurement', label: 'Procurement Data' },
+    ]
+  },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
 ];
 
@@ -35,6 +47,70 @@ const pageHeaders = {
     subtitle: 'Upload and track documents by category',
     showUpload: true,
   },
+};
+
+const NavItem = ({ item, sidebarOpen }) => {
+  const location = useLocation();
+  const [isOpen, setIsOpen] = useState(
+    item.subLinks?.some(sub => location.pathname.startsWith(sub.to)) || false
+  );
+
+  const isDocSection =
+    location.pathname.startsWith('/doc-processor') ||
+    location.pathname.startsWith('/doc-upload') ||
+    location.pathname.startsWith('/doc-table');
+    
+  const Icon = item.icon;
+
+  if (item.subLinks) {
+    const isChildActive = item.subLinks.some(sub => location.pathname.startsWith(sub.to));
+    return (
+      <div className="mb-0.5">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors text-sm font-medium ${isChildActive ? 'bg-green-50 text-green-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+        >
+          <div className="flex items-center gap-3">
+            {Icon && <Icon size={18} className="flex-shrink-0" />}
+            {sidebarOpen && <span>{item.label}</span>}
+          </div>
+          {sidebarOpen && (
+            isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+          )}
+        </button>
+        {sidebarOpen && isOpen && (
+          <div className="mt-1 ml-9 flex flex-col gap-1">
+            {item.subLinks.map(sub => (
+              <NavLink
+                key={sub.to}
+                to={sub.to}
+                className={({ isActive }) => `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
+              >
+                {sub.label}
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <NavLink
+      to={item.to}
+      className={({ isActive }) => {
+        const active = isActive || (item.to === '/doc-processor' && isDocSection);
+        return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
+        ${active
+          ? 'bg-green-50 text-green-700'
+          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+        }`;
+      }}
+    >
+      {Icon && <Icon size={18} className="flex-shrink-0" />}
+      {sidebarOpen && <span>{item.label}</span>}
+    </NavLink>
+  );
 };
 
 export default function MainLayout() {
@@ -76,24 +152,8 @@ export default function MainLayout() {
         </div>
 
         <nav className="flex-1 py-3 overflow-y-auto px-2">
-          {navLinks.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) => {
-                const active =
-                  isActive ||
-                  (to === '/doc-processor' && isDocSection);
-                return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
-                ${active
-                  ? 'bg-green-50 text-green-700'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`;
-              }}
-            >
-              <Icon size={18} className="flex-shrink-0" />
-              {sidebarOpen && <span>{label}</span>}
-            </NavLink>
+          {navLinks.map((item) => (
+            <NavItem key={item.label} item={item} sidebarOpen={sidebarOpen} />
           ))}
         </nav>
 

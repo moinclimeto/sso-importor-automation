@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('pwp', {
   webUtils: {
     getPathForFile: (file) => webUtils.getPathForFile(file),
   },
+  // FS
+  fs: {
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+  },
   // Companies
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
