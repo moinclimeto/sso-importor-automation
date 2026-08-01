@@ -11,6 +11,10 @@ contextBridge.exposeInMainWorld('pwp', {
     update: (data) => ipcRenderer.invoke('companies:update', data),
     delete: (id) => ipcRenderer.invoke('companies:delete', id),
   },
+  // Invoices Export
+  invoices: {
+    exportZip: (payload) => ipcRenderer.invoke('invoices:exportZip', payload),
+  },
   // Purchases
   purchases: {
     getAll: (filters) => ipcRenderer.invoke('purchases:getAll', filters),

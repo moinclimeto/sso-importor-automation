@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus
@@ -15,6 +15,7 @@ import { getApi } from '../utils/pwpApi.js';
 import InvoiceDetailsModal, {
   ViewInvoiceButton,
 } from '../components/InvoiceDetailsModal.jsx';
+import * as XLSX from 'xlsx';
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 }).format(n || 0);
@@ -452,6 +453,76 @@ export default function DocTable() {
   const [cpcbOpen, setCpcbOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [detailRow, setDetailRow] = useState(null);
+  
+  // Month-wise view state
+  const [viewMode, setViewMode] = useState('row'); // 'row' | 'month'
+  const [monthDetail, setMonthDetail] = useState(null); // stores the month group object when viewing month details
+
+  const monthGroups = useMemo(() => {
+    const groups = {};
+    rows.forEach(r => {
+      const dateStr = r.invoice_date || r.date_of_entry || r.created_at;
+      let dateObj = new Date();
+      if (dateStr) {
+        const parsed = new Date(dateStr);
+        if (!isNaN(parsed)) dateObj = parsed;
+      }
+      const monthYear = dateObj.toLocaleString('en-US', { month: 'long', year: 'numeric' });
+      const monthKey = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+      
+      if (!groups[monthKey]) {
+        groups[monthKey] = {
+          label: monthYear,
+          key: monthKey,
+          rows: [],
+          totalQtyMT: 0,
+          totalQtyKg: 0,
+        };
+      }
+      
+      groups[monthKey].rows.push(r);
+      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.available_quantity_mt || 0);
+      const qtyKg = parseFloat(r.quantity_kg || 0);
+      if (!isNaN(qtyMT)) groups[monthKey].totalQtyMT += qtyMT;
+      if (!isNaN(qtyKg)) groups[monthKey].totalQtyKg += qtyKg;
+    });
+    
+    return Object.values(groups).sort((a, b) => b.key.localeCompare(a.key));
+  }, [rows]);
+
+  const handleDownloadMonthInvoices = async (monthGroup) => {
+    if (!monthGroup || !monthGroup.rows.length) return;
+    try {
+      const headers = isPurchase ? PURCHASE_TABLE_COLUMNS.map(c => c.label) : SALE_TABLE_COLUMNS.map(c => c.label);
+      const exportRows = monthGroup.rows.map(r => {
+        const rowData = {};
+        const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
+        columns.forEach(c => {
+          rowData[c.label] = r[c.key] !== null && r[c.key] !== undefined ? r[c.key] : '';
+        });
+        return rowData;
+      });
+      
+      const pdfFiles = monthGroup.rows.map(r => ({
+        name: r.invoice_filename || r.invoice_file_name,
+        localPath: r.local_pdf_path
+      })).filter(f => f.name);
+
+      const res = await window.pwp.invoices.exportZip({
+        type: isPurchase ? 'Purchase' : 'Sales',
+        label: monthGroup.label,
+        exportRows,
+        headers,
+        pdfFiles
+      });
+
+      if (res && res.error) {
+        alert('Failed to download invoices ZIP: ' + res.error);
+      }
+    } catch (err) {
+      alert('Failed to download invoices: ' + err.message);
+    }
+  };
 
   const load = async () => {
     setLoading(true);
@@ -539,7 +610,25 @@ export default function DocTable() {
             <ArrowLeft size={18} />
           </button>
           <div>
-            <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+            <div className="flex items-center gap-3">
+              <h2 className="text-lg font-bold text-slate-900">{title}</h2>
+              <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('row')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'row' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Row-wise
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('month')}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                >
+                  Month-wise
+                </button>
+              </div>
+            </div>
             <p className="text-sm text-slate-500">{rows.length} records in local database</p>
           </div>
         </div>
@@ -618,6 +707,44 @@ export default function DocTable() {
             <p>No records yet.</p>
             <p className="text-xs text-slate-400">Upload invoices or import Excel to add rows.</p>
           </div>
+        ) : viewMode === 'month' ? (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Month</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Total Records</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Total Quantity (MT)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-600">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {monthGroups.map((mg) => (
+                  <tr key={mg.key} className="border-b border-slate-100 hover:bg-slate-50/60 transition-colors">
+                    <td className="px-4 py-3 font-medium text-slate-800">{mg.label}</td>
+                    <td className="px-4 py-3 text-slate-600">{mg.rows.length}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmt(mg.totalQtyMT)} MT</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setMonthDetail(mg)}
+                          className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleDownloadMonthInvoices(mg)}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-900 flex items-center gap-1.5"
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : isPurchase ? (
           renderWideTable(rows, PURCHASE_TABLE_COLUMNS, handleDelete, {
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
@@ -684,6 +811,38 @@ export default function DocTable() {
             load();
           }}
         />
+      )}
+
+      {monthDetail && (
+        <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-100 flex-shrink-0">
+              <div>
+                <h3 className="text-xl font-bold text-slate-900">{monthDetail.label} - {title}</h3>
+                <p className="text-sm text-slate-500">{monthDetail.rows.length} records • {fmt(monthDetail.totalQtyMT)} MT Total</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <button
+                  onClick={() => handleDownloadMonthInvoices(monthDetail)}
+                  className="inline-flex items-center gap-2 rounded-lg bg-slate-800 text-white text-sm font-medium px-4 py-2"
+                >
+                  <Download size={16} /> Download
+                </button>
+                <button
+                  onClick={() => setMonthDetail(null)}
+                  className="p-2 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+                >
+                  <X size={20} />
+                </button>
+              </div>
+            </div>
+            <div className="p-0 overflow-y-auto flex-1">
+              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, handleDelete, {
+                onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename || r.invoice_file_name }),
+              })}
+            </div>
+          </div>
+        </div>
       )}
 
       <InvoiceDetailsModal

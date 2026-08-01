@@ -1,4 +1,4 @@
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
 import { getDb, saveDb, getSqliteDb } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
@@ -11,7 +11,10 @@ import {
   prepareDummyProcurementBulk,
   runProcurementBulkFill,
   CPCB_ONBOARDING_URL,
+  createZipStore,
+  MINIMAL_PDF,
 } from './cpcbProcurementBulk.js';
+import * as XLSX from 'xlsx';
 import {
   runSalesBulkFill,
 } from './cpcbSalesBulk.js';
@@ -146,13 +149,46 @@ export function registerIpcHandlers() {
     });
   });
 
+  async function storeInvoicePdfLocally(data) {
+    if (!data._page || !data._page.sourceFileName) return data;
+    const source = data._page.sourceFileName;
+    if (!fs.existsSync(source)) return data;
+
+    const companyName = data.company_name || 'Unknown_Company';
+    const invoiceDate = data.invoice_date || data.procurement_date || data.date_of_entry || new Date().toISOString().split('T')[0];
+    
+    let dateObj = new Date(invoiceDate);
+    if (isNaN(dateObj)) dateObj = new Date();
+    const yearMonth = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+    
+    const destDir = path.join(app.getPath('userData'), 'processed_invoices', companyName, yearMonth);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    const invoiceFileName = data.invoice_filename || data.invoice_file_name || path.basename(source);
+    const safeName = invoiceFileName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const destPath = path.join(destDir, safeName);
+    
+    try {
+      fs.copyFileSync(source, destPath);
+      data.local_pdf_path = destPath;
+    } catch (err) {
+      console.error('Failed to copy PDF invoice locally:', err);
+    }
+    return data;
+  }
+
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || '';
     const invoice_date = data.invoice_date || data.procurement_date || '';
-    const info = await db.run('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at]);
-    return { id: info.lastID, ...data, created_at };
+    
+    const processedData = await storeInvoicePdfLocally(data);
+    
+    const info = await db.run('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [processedData.company_id, invoice_no, invoice_date, JSON.stringify(processedData), created_at]);
+    return { id: info.lastID, ...processedData, created_at };
   });
 
   ipcMain.handle('purchases:update', async (_, data) => {
@@ -216,8 +252,11 @@ export function registerIpcHandlers() {
     const created_at = new Date().toISOString();
     const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
     const invoice_date = data.invoice_date || '';
-    const info = await db.run('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), created_at]);
-    return { id: info.lastID, ...data, created_at };
+    
+    const processedData = await storeInvoicePdfLocally(data);
+    
+    const info = await db.run('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [processedData.company_id, invoice_no, invoice_date, JSON.stringify(processedData), created_at]);
+    return { id: info.lastID, ...processedData, created_at };
   });
 
   ipcMain.handle('sales:update', async (_, data) => {
@@ -1069,6 +1108,46 @@ export function registerIpcHandlers() {
       return await sdb.all(`SELECT * FROM production_details WHERE year = ?`, [year || 2025]);
     } catch (err) {
       return [];
+    }
+  });
+
+  ipcMain.handle('invoices:exportZip', async (_, { type, label, exportRows, headers, pdfFiles }) => {
+    try {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Save Invoices ZIP',
+        defaultPath: `${type}_Invoices_${label.replace(/ /g, '_')}.zip`,
+        filters: [{ name: 'ZIP Archives', extensions: ['zip'] }]
+      });
+      if (canceled || !filePath) return { success: false, canceled: true };
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(exportRows, { header: headers });
+      XLSX.utils.book_append_sheet(wb, ws, label.substring(0, 31));
+      const excelBuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      const entries = [
+        { name: `${type}_Invoices_${label.replace(/ /g, '_')}.xlsx`, data: excelBuf }
+      ];
+
+      for (const pdfFile of pdfFiles) {
+        if (pdfFile && pdfFile.name) {
+          let pdfData = MINIMAL_PDF;
+          if (pdfFile.localPath && fs.existsSync(pdfFile.localPath)) {
+            try {
+              pdfData = fs.readFileSync(pdfFile.localPath);
+            } catch (err) {
+              console.error('Failed to read local PDF for ZIP:', err);
+            }
+          }
+          entries.push({ name: pdfFile.name, data: pdfData });
+        }
+      }
+
+      const zipBuf = createZipStore(entries);
+      fs.writeFileSync(filePath, zipBuf);
+      return { success: true, filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   });
 }
