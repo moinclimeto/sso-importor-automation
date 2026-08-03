@@ -1232,6 +1232,7 @@ export function registerIpcHandlers() {
                   console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
               } catch(e) {}
               memoryDataMap[filename] = parsed;
+                originalWriteFileSync(filePath, data, ...args);
           } else {
               originalWriteFileSync(filePath, data, ...args);
           }
