@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
@@ -15,7 +15,7 @@ const navLinks = [
     label: 'Overview',
     subLinks: [
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
-      { to: '/companies', label: 'Company Profile' },
+      
     ]
   },
   {
@@ -127,7 +127,18 @@ export default function MainLayout() {
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [syncingEpr, setSyncingEpr] = useState(false);
+  const [myCompany, setMyCompany] = useState(null);
   const { toast, showToast, hideToast } = useToast();
+
+  useEffect(() => {
+    if (window.pwp?.companies) {
+      window.pwp.companies.getAll().then(companies => {
+        if (companies && companies.length > 0) {
+          setMyCompany(companies[0]);
+        }
+      });
+    }
+  }, []);
 
   const handleSyncEpr = async () => {
     setSyncingEpr(true);
@@ -212,14 +223,25 @@ export default function MainLayout() {
               </div>
             )}
             <div className="min-w-0">
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
-                {header.title}
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
+                  {header.title}
+                </h1>
+                {myCompany && (
+                  <div className="hidden sm:inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-md">
+                    <Building2 size={14} className="text-indigo-600" />
+                    <span className="text-xs font-medium text-indigo-900">{myCompany.name}</span>
+                    <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full font-mono border border-indigo-200">GST: {myCompany.gstin}</span>
+                  </div>
+                )}
+              </div>
               {header.subtitle && (
                 <p className="text-sm text-slate-500 mt-0.5 truncate">{header.subtitle}</p>
               )}
             </div>
           </div>
+
+          <div id="header-actions-portal" className="flex-1 flex items-center justify-end gap-4 px-2"></div>
 
           {header.showUpload && (
             <button
@@ -256,7 +278,7 @@ export default function MainLayout() {
           )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 relative">
+        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-4 relative">
           <Toast toast={toast} onClose={hideToast} />
           <Outlet />
         </div>

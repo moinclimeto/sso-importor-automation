@@ -1,6 +1,6 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
-import { initDatabase, getDb, getSqliteDb, dbJsonPath } from './database.js';
+import { initDatabase, getDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from './dataMigration.js';
@@ -42,7 +42,7 @@ export function registerIpcHandlers() {
 
   // ─── EPR SCRAPED DATA (SQLITE) ────────────────────────────────
   ipcMain.handle('eprData:getProcurement', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -62,7 +62,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('eprData:getSales', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -81,7 +81,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('eprData:getProduction', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -628,6 +628,8 @@ export function registerIpcHandlers() {
     const purchaseTotal = (await db.get('SELECT SUM(total_amount) as total FROM purchases')).total || 0;
     const saleTotal = (await db.get('SELECT SUM(total_amount) as total FROM sales')).total || 0;
 
+    const myCompany = await db.get('SELECT name, gstin FROM companies LIMIT 1');
+
     const monthlyPurchaseData = await db.all(
       'SELECT SUBSTR(invoice_date, 1, 7) as month, SUM(total_amount) as total FROM purchases WHERE invoice_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 6'
     );
@@ -641,6 +643,7 @@ export function registerIpcHandlers() {
       purchaseCount: (await db.get('SELECT COUNT(id) as count FROM purchases')).count,
       saleCount: (await db.get('SELECT COUNT(id) as count FROM sales')).count,
       companyCount: (await db.get('SELECT COUNT(id) as count FROM companies')).count,
+      myCompany: myCompany || null,
       profit: saleTotal - purchaseTotal,
       monthlyPurchase: monthlyPurchaseData.map(row => ({ month: row.month, total: row.total || 0 })),
       monthlySale: monthlySaleData.map(row => ({ month: row.month, total: row.total || 0 })),
@@ -1303,7 +1306,7 @@ export function registerIpcHandlers() {
 
   // ─── SQLITE SCRAPER DATA ──────────────────────────────────────────────
   ipcMain.handle('scraper:getProfile', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return null;
     try {
       return await sdb.get('SELECT * FROM epr_profile LIMIT 1');
@@ -1320,7 +1323,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getDashboardCards', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return null;
     try {
       const row = await sdb.get('SELECT * FROM epr_dashboard LIMIT 1');
@@ -1337,7 +1340,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getPayments', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all('SELECT * FROM epr_payment');
@@ -1348,7 +1351,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getWallet', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all('SELECT * FROM wallet_wallet_potentials');
@@ -1358,7 +1361,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getWalletHistory', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       const rows = await sdb.all('SELECT * FROM wallet_certificate_transaction');
@@ -1374,7 +1377,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getProcurement', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM procurement_details WHERE year = ?`, [year || 2025]);
@@ -1384,7 +1387,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getSales', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM sales_details WHERE year = ?`, [year || 2025]);
@@ -1394,7 +1397,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getProduction', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM production_details WHERE year = ?`, [year || 2025]);

@@ -9,18 +9,12 @@ const currentModuleUrl = import.meta.url;
 const __dirname = fileURLToPath(new URL('.', currentModuleUrl));
 
 let db = null;
-let sqliteDb = null; // Added for the scraped data database
 let dbFilePath = '';
 export let dbJsonPath = '';
 
 // Path to the database file
 function getDbFilePath() {
-  const userDataPath = app.getPath('userData');
-  const dbDir = path.join(userDataPath, 'pwp-db');
-  if (!fs.existsSync(dbDir)) {
-    fs.mkdirSync(dbDir, { recursive: true });
-  }
-  return path.join(dbDir, 'app.db'); // Changed to .db
+  return path.join(__dirname, '..', 'pwp.db');
 }
 
 // Initialize main application database connection
@@ -42,29 +36,17 @@ export async function initDatabase(onDbReadyCallback) {
     await onDbReadyCallback(db);
   }
 
-  // Initialize separate database for scraped data (from 'dev' branch)
-  const sqlitePath = path.join(__dirname, '..', 'database.sqlite');
-  try {
-    sqliteDb = await open({
-      filename: sqlitePath,
-      driver: sqlite3.Database
-    });
-    console.log("✅ Connected to SQLite database for scraped data at", sqlitePath);
-
-    // Auto-create scraper tables to prevent UI crashes if data isn't synced yet
-    await sqliteDb.exec(`
-      CREATE TABLE IF NOT EXISTS epr_dashboard (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT, tables_dump TEXT);
-      CREATE TABLE IF NOT EXISTS epr_profile (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT, gstin TEXT);
-      CREATE TABLE IF NOT EXISTS epr_payment (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
-      CREATE TABLE IF NOT EXISTS wallet_wallet_potentials (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
-      CREATE TABLE IF NOT EXISTS wallet_certificate_transaction (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
-      CREATE TABLE IF NOT EXISTS procurement_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER, source_year INTEGER);
-      CREATE TABLE IF NOT EXISTS sales_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
-      CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
-    `);
-  } catch (error) {
-    console.error("⚠️ Failed to connect to SQLite scraped database (it may not exist yet).", error.message);
-  }
+  // Auto-create scraper tables to prevent UI crashes if data isn't synced yet
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS epr_dashboard (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT, tables_dump TEXT);
+    CREATE TABLE IF NOT EXISTS epr_profile (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT, gstin TEXT);
+    CREATE TABLE IF NOT EXISTS epr_payment (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE IF NOT EXISTS wallet_wallet_potentials (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE IF NOT EXISTS wallet_certificate_transaction (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE IF NOT EXISTS procurement_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER, source_year INTEGER);
+    CREATE TABLE IF NOT EXISTS sales_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
+    CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
+  `);
 }
 
 // Get main application database instance
@@ -73,14 +55,6 @@ export function getDb() {
     throw new Error('Main application database not initialized. Call initDatabase() first.');
   }
   return db;
-}
-
-// Get scraped data database instance
-export function getSqliteDb() {
-  if (!sqliteDb) {
-    throw new Error('Scraped data database not initialized. Call initDatabase() first.');
-  }
-  return sqliteDb;
 }
 
 // --- Migrations System ---

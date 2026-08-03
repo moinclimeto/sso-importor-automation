@@ -7,7 +7,7 @@ import { open } from 'sqlite';
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const DATA_DIR = path.join(__dirname, 'data');
-const DB_PATH = path.join(__dirname, 'database.sqlite');
+const DB_PATH = path.join(__dirname, 'pwp.db');
 
 // Map JSON types to SQLite types
 function getSqliteType(value) {
@@ -286,6 +286,26 @@ async function syncToSqlite() {
             
             targetData = [parsed];
         }
+        // 5.5 EPR Profile (Sync into companies table)
+        else if (file === 'epr_profile.json') {
+            if (jsonData.company_name && jsonData.gstin) {
+                targetData = [jsonData];
+                tableName = 'companies'; // Explicitly set table name to companies
+                
+                // For companies, we want to UPSERT based on gstin
+                const existingCompany = await db.get('SELECT id FROM companies WHERE gstin = ?', jsonData.gstin);
+                if (existingCompany) {
+                    await db.run('UPDATE companies SET name = ? WHERE gstin = ?', jsonData.company_name, jsonData.gstin);
+                    console.log(`[Data] Updated existing company: ${jsonData.company_name}`);
+                } else {
+                    await db.run('INSERT INTO companies (name, gstin) VALUES (?, ?)', jsonData.company_name, jsonData.gstin);
+                    console.log(`[Data] Inserted new company: ${jsonData.company_name}`);
+                }
+                
+                console.log(`[Data] Successfully processed ${file}.`);
+                continue; // Skip the generic table creation for this file since we manually handled it
+            }
+        }
         // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
         else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
             const headers = jsonData.tables[0][0].map(h => {
@@ -323,7 +343,7 @@ async function syncToSqlite() {
     }
 
     await db.close();
-    console.log("\n🎉 All done! Data synced to SQLite database.sqlite file.");
+    console.log("\n🎉 All done! Data synced to SQLite pwp.db file.");
 }
 
 syncToSqlite().catch(console.error);

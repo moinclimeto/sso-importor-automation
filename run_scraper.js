@@ -73,9 +73,36 @@ async function runScraper() {
             await selectUnitBtn.click();
             await page.waitForTimeout(1500);
 
-            console.log("🖱️ Clicking the specific unit card...");
+            console.log("🖱️ Extracting Company Profile from unit card...");
             const unitCard = page.locator('button.unit-card').first();
             await unitCard.waitFor({ state: 'visible', timeout: 5000 });
+            
+            try {
+                // Extract text from the unit card
+                const cardText = await unitCard.innerText();
+                // Find GST using Regex (15 alphanumeric characters)
+                const gstMatch = cardText.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/i);
+                const gstin = gstMatch ? gstMatch[0].toUpperCase() : '';
+                
+                // Assuming the company name is usually the very first line of the card text before 'Unit ID'
+                const lines = cardText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                const companyName = lines.length > 0 ? lines[0] : '';
+                
+                if (gstin && companyName) {
+                    const profileData = { company_name: companyName, gstin: gstin };
+                    console.log("✅ Scraped Company Profile:", profileData);
+                    
+                    const dataDir = path.join(__dirname, 'data');
+                    if (!fs.existsSync(dataDir)) {
+                        fs.mkdirSync(dataDir, { recursive: true });
+                    }
+                    fs.writeFileSync(path.join(dataDir, 'epr_profile.json'), JSON.stringify(profileData, null, 2));
+                }
+            } catch (extErr) {
+                console.log("⚠️ Could not extract profile from unit card:", extErr.message);
+            }
+
+            console.log("🖱️ Clicking the specific unit card...");
             await unitCard.click();
             await page.waitForTimeout(3000);
         } catch (e) {
