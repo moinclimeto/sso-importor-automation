@@ -47,6 +47,8 @@ contextBridge.exposeInMainWorld('pwp', {
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
     selectFolder: () => ipcRenderer.invoke('ocr:select-folder'),
+    selectUploads: () => ipcRenderer.invoke('ocr:select-uploads'),
+    resolveUploads: (filePaths) => ipcRenderer.invoke('ocr:resolve-uploads', filePaths),
     inspectPaths: (filePaths) => ipcRenderer.invoke('ocr:inspect-paths', filePaths),
     extract: (payload) => ipcRenderer.invoke('ocr:extract', payload),
     extractBatch: (payload) => ipcRenderer.invoke('ocr:extract-batch', payload),

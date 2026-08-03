@@ -23,6 +23,7 @@ import {
   safeUnlink,
   pageInvoiceFileName,
 } from './pdfPages.js';
+import { resolveUploadPaths } from './zipExpand.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -318,6 +319,8 @@ export function registerOcrHandlers() {
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Documents', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'zip'] },
+        { name: 'ZIP archive', extensions: ['zip'] },
+        { name: 'All files', extensions: ['*'] },
       ],
     });
     if (result.canceled) return [];
@@ -329,30 +332,43 @@ export function registerOcrHandlers() {
       properties: ['openDirectory'],
     });
     if (result.canceled || !result.filePaths?.[0]) return [];
-    const folder = result.filePaths[0];
-    const allowed = new Set(['.pdf', '.png', '.jpg', '.jpeg', '.webp']);
-    const collected = [];
-    const walk = (dir, depth = 0) => {
-      if (depth > 3 || collected.length >= 200) return;
-      let entries = [];
-      try {
-        entries = fs.readdirSync(dir, { withFileTypes: true });
-      } catch {
-        return;
-      }
-      for (const entry of entries) {
-        const full = path.join(dir, entry.name);
-        if (entry.isDirectory()) {
-          walk(full, depth + 1);
-        } else if (entry.isFile()) {
-          const ext = path.extname(entry.name).toLowerCase();
-          if (allowed.has(ext)) collected.push(full);
-        }
-        if (collected.length >= 200) break;
-      }
-    };
-    walk(folder);
-    return collected;
+    return [result.filePaths[0]];
+  });
+
+  /**
+   * Single picker for uploads. Paths are returned raw — resolve-uploads
+   * detects file vs folder vs ZIP vs unsupported.
+   * Note: Windows/Linux dialogs cannot mix file+folder; folders also work via drag-drop.
+   */
+  ipcMain.handle('ocr:select-uploads', async () => {
+    const properties =
+      process.platform === 'darwin'
+        ? ['openFile', 'openDirectory', 'multiSelections']
+        : ['openFile', 'multiSelections'];
+    const result = await dialog.showOpenDialog({
+      title: 'Select invoices, ZIP, or folder',
+      properties,
+      filters: [
+        { name: 'Documents', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'zip'] },
+        { name: 'All files', extensions: ['*'] },
+      ],
+    });
+    if (result.canceled) return [];
+    return result.filePaths || [];
+  });
+
+  /** Expand ZIPs, skip RAR/unsupported; return document paths for the queue. */
+  ipcMain.handle('ocr:resolve-uploads', async (_, filePaths) => {
+    try {
+      return await resolveUploadPaths(Array.isArray(filePaths) ? filePaths : []);
+    } catch (err) {
+      return {
+        files: [],
+        skipped: [{ name: 'uploads', reason: err?.message || 'Failed to resolve uploads' }],
+        tempRoots: [],
+        zipSummaries: [],
+      };
+    }
   });
 
   /** Count pages per file — UI shows total pages (not just file count). */

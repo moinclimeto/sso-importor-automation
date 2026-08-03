@@ -2,12 +2,13 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 import { getApi } from '../utils/pwpApi.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import { RefreshCw } from 'lucide-react';
+import { PageHeaderProvider, usePageHeader } from '../context/PageHeaderContext.jsx';
 
 const navLinks = [
   {
@@ -122,9 +123,18 @@ const NavItem = ({ item, sidebarOpen }) => {
 };
 
 export default function MainLayout() {
+  return (
+    <PageHeaderProvider>
+      <MainLayoutInner />
+    </PageHeaderProvider>
+  );
+}
+
+function MainLayoutInner() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const { pageHeader } = usePageHeader();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [syncingEpr, setSyncingEpr] = useState(false);
   const { toast, showToast, hideToast } = useToast();
@@ -153,10 +163,16 @@ export default function MainLayout() {
     location.pathname.startsWith('/doc-upload') ||
     location.pathname.startsWith('/doc-table');
 
-  const header = pageHeaders[location.pathname] || {
+  const baseHeader = pageHeaders[location.pathname] || {
     title: 'PWP',
     subtitle: 'Purchase & Sale Manager',
   };
+
+  const headerTitle = pageHeader?.title
+    || (pageHeader?.sectionTitle
+      ? `${baseHeader.title} / ${pageHeader.sectionTitle}`
+      : baseHeader.title);
+  const headerSubtitle = pageHeader?.subtitle ?? baseHeader.subtitle;
 
   const handleLogout = () => {
     logout();
@@ -204,8 +220,18 @@ export default function MainLayout() {
       </aside>
 
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 flex-shrink-0">
+        <header className="relative z-30 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 flex-shrink-0 overflow-visible">
           <div className="flex items-start gap-3 min-w-0">
+            {pageHeader?.onBack && (
+              <button
+                type="button"
+                onClick={pageHeader.onBack}
+                className="mt-0.5 p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 flex-shrink-0"
+                title="Back"
+              >
+                <ArrowLeft size={18} />
+              </button>
+            )}
             {isDocSection && (
               <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-green-600 flex-shrink-0">
                 <LayoutGrid size={20} />
@@ -213,47 +239,51 @@ export default function MainLayout() {
             )}
             <div className="min-w-0">
               <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
-                {header.title}
+                {headerTitle}
               </h1>
-              {header.subtitle && (
-                <p className="text-sm text-slate-500 mt-0.5 truncate">{header.subtitle}</p>
+              {headerSubtitle && (
+                <p className="text-sm text-slate-500 mt-0.5 truncate">{headerSubtitle}</p>
               )}
             </div>
           </div>
 
-          {header.showUpload && (
-            <button
-              type="button"
-              onClick={() => navigate('/doc-upload')}
-              className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
-            >
-              <Upload size={16} />
-              Upload
-            </button>
-          )}
+          <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
+            {pageHeader?.actions}
 
-          {header.showEprRefresh && (
-            <button
-              type="button"
-              onClick={() => window.dispatchEvent(new Event('refresh-epr-data'))}
-              className="flex items-center gap-2 border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex-shrink-0"
-            >
-              <RefreshCw size={18} /> 
-              Refresh
-            </button>
-          )}
+            {baseHeader.showUpload && (
+              <button
+                type="button"
+                onClick={() => navigate('/doc-upload', pageHeader?.uploadState ? { state: pageHeader.uploadState } : undefined)}
+                className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
+              >
+                <Upload size={16} />
+                Upload
+              </button>
+            )}
 
-          {header.showSync && (
-            <button
-              type="button"
-              onClick={handleSyncEpr}
-              disabled={syncingEpr}
-              className="flex items-center gap-2 border border-green-200 text-green-700 bg-white hover:bg-green-50 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
-            >
-              {syncingEpr ? <Loader2 size={18} className="animate-spin" /> : <Building2 size={18} />} 
-              {syncingEpr ? 'Syncing...' : 'Sync EPR Portal'}
-            </button>
-          )}
+            {baseHeader.showEprRefresh && (
+              <button
+                type="button"
+                onClick={() => window.dispatchEvent(new Event('refresh-epr-data'))}
+                className="flex items-center gap-2 border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex-shrink-0"
+              >
+                <RefreshCw size={18} />
+                Refresh
+              </button>
+            )}
+
+            {baseHeader.showSync && (
+              <button
+                type="button"
+                onClick={handleSyncEpr}
+                disabled={syncingEpr}
+                className="flex items-center gap-2 border border-green-200 text-green-700 bg-white hover:bg-green-50 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+              >
+                {syncingEpr ? <Loader2 size={18} className="animate-spin" /> : <Building2 size={18} />}
+                {syncingEpr ? 'Syncing...' : 'Sync EPR Portal'}
+              </button>
+            )}
+          </div>
         </header>
 
         <div className="flex-1 overflow-y-auto p-6 relative">

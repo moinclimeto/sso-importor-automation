@@ -1,37 +1,22 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
-
 import {
-
-  ArrowLeft, Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus
-
+  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight,
 } from 'lucide-react';
-
 import {
-
   downloadExcelTemplate,
-
   parseExcelFile,
-
   importExcelRows,
-
   exportExcelData,
-
   SALE_TABLE_COLUMNS,
-
   PURCHASE_TABLE_COLUMNS,
-
 } from '../utils/excelImport.js';
-
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
-
 import { getApi } from '../utils/pwpApi.js';
-
 import InvoiceDetailsModal, {
-
   ViewInvoiceButton,
-
 } from '../components/InvoiceDetailsModal.jsx';
+import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import * as XLSX from 'xlsx';
 
 
@@ -891,261 +876,249 @@ function rowLineCount(r) {
 
 
 function renderWideTable(rows, columns, onDelete, extras = {}) {
-
-
+  const {
+    onView,
+    getValue,
+    selectedIds,
+    onToggleSelect,
+    onToggleSelectAll,
+    onMove,
+    moveLabel,
+  } = extras;
+  const allSelected = rows.length > 0 && rows.every((r) => selectedIds?.has(r.id));
+  const someSelected = rows.some((r) => selectedIds?.has(r.id));
 
   return (
-
-
-
     <div className="overflow-x-auto">
-
-
-
       <table className="w-full text-sm min-w-[1200px]">
-
-
-
         <thead className="bg-slate-50 border-b border-slate-200">
-
-
-
           <tr>
-
-
-
+            <th className="th w-10 sticky left-0 bg-slate-50 z-10">
+              <input
+                type="checkbox"
+                checked={allSelected}
+                ref={(el) => {
+                  if (el) el.indeterminate = someSelected && !allSelected;
+                }}
+                onChange={(e) => onToggleSelectAll?.(e.target.checked)}
+                className="rounded border-slate-300"
+                aria-label="Select all"
+              />
+            </th>
             {columns.map((col) => (
-
-
-
               <th key={col.key} className="th whitespace-nowrap">
-
-
-
                 {col.label}
-
-
-
               </th>
-
-
-
             ))}
-
-
-
-            <th className="th whitespace-nowrap">Lines</th>
-
-
-
-            <th className="th" />
-
-
-
+            <th className="th text-right sticky right-0 bg-slate-50">Actions</th>
           </tr>
-
-
-
         </thead>
-
-
-
-        <tbody>
-
-
-
+        <tbody className="divide-y divide-slate-100">
           {rows.map((r, idx) => (
-
-
-
-            <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/60">
-
-
-
-              {columns.map((col) => {
-
-
-
-                let value = r[col.key];
-
-
-
-                if (extras.getValue) {
-
-
-
-                  value = extras.getValue(r, col, idx, value);
-
-
-
-                }
-
-
-
-                return (
-
-
-
-                  <td
-
-
-
-                    key={col.key}
-
-
-
-                    className="td whitespace-nowrap max-w-[220px] truncate"
-
-
-
-                    title={String(cell(value))}
-
-
-
-                  >
-
-
-
-                    {cell(value)}
-
-
-
-                  </td>
-
-
-
-                );
-
-
-
-              })}
-
-
-
-              <td className="td text-center tabular-nums">{rowLineCount(r) || '—'}</td>
-
-
-
-              <td className="td text-right sticky right-0 bg-white">
-
-
-
-                <div className="inline-flex items-center gap-1.5">
-
-
-
-                  <ViewInvoiceButton
-
-
-
-                    onClick={() => extras.onView?.(r)}
-
-
-
-                    disabled={!rowLineCount(r)}
-
-
-
-                    title={rowLineCount(r) ? 'View line items' : 'No line items'}
-
-
-
-                  />
-
-
-
-                  <button
-
-
-
-                    type="button"
-
-
-
-                    onClick={() => onDelete(r.id)}
-
-
-
-                    className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
-
-
-
-                  >
-
-
-
-                    <Trash2 size={15} />
-
-
-
-                  </button>
-
-
-
-                </div>
-
-
-
+            <tr key={r.id ?? idx} className={`hover:bg-slate-50/80 ${selectedIds?.has(r.id) ? 'bg-blue-50/40' : ''}`}>
+              <td className="td sticky left-0 bg-white z-10">
+                <input
+                  type="checkbox"
+                  checked={!!selectedIds?.has(r.id)}
+                  onChange={() => onToggleSelect?.(r.id)}
+                  className="rounded border-slate-300"
+                  aria-label={`Select row ${r.id}`}
+                />
               </td>
-
-
-
+              {columns.map((col) => {
+                let value = r[col.key];
+                if (getValue) value = getValue(r, col, idx, value);
+                return (
+                  <td
+                    key={col.key}
+                    className="td whitespace-nowrap max-w-[220px] truncate"
+                    title={String(cell(value))}
+                  >
+                    {cell(value)}
+                  </td>
+                );
+              })}
+              <td className="td text-right sticky right-0 bg-white">
+                <div className="inline-flex items-center gap-1.5">
+                  <ViewInvoiceButton
+                    onClick={() => onView?.(r)}
+                    disabled={!rowLineCount(r)}
+                    title={rowLineCount(r) ? 'View line items' : 'No line items'}
+                  />
+                  {onMove && (
+                    <button
+                      type="button"
+                      onClick={() => onMove(r)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:bg-amber-50 hover:text-amber-700"
+                      title={moveLabel || 'Move'}
+                    >
+                      <ArrowLeftRight size={15} />
+                    </button>
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => onDelete(r.id)}
+                    className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600"
+                    title="Delete"
+                  >
+                    <Trash2 size={15} />
+                  </button>
+                </div>
+              </td>
             </tr>
-
-
-
           ))}
-
-
-
         </tbody>
-
-
-
       </table>
-
-
-
     </div>
-
-
-
   );
-
-
-
 }
 
 
 
+function purchaseToSalePayload(row) {
+  const lineItems = row.line_items || row.lineItems || null;
+  const party = row.supplier_name || row.vendor_name || row.entity_name || '';
+  return {
+    company_id: row.company_id,
+    company_name: row.company_name,
+    record_type: row.record_type,
+    entity_name: party,
+    customer_name: party,
+    customer_gstin: row.supplier_gst_number || row.vendor_gstin || '',
+    category_of_plastic: row.category_of_plastic,
+    state: row.state,
+    address: [row.address_line_1, row.address_line_2].filter(Boolean).join(', ') || row.address,
+    district: row.city || row.district,
+    financial_year: row.financial_year,
+    invoice_no: row.invoice_number || row.invoice_no,
+    application_number: row.invoice_number || row.invoice_no,
+    invoice_date: row.invoice_date || row.procurement_date,
+    invoice_file_name: row.invoice_filename || row.invoice_file_name,
+    quantity_sold_mt: row.quantity_mt || row.quantity,
+    quantity: row.quantity || row.quantity_mt,
+    unit: row.unit,
+    total_amount: row.total_amount,
+    item_name: row.item_name,
+    hsn_code: row.hsn_code,
+    lineItems,
+    extraction: row.extraction,
+    _source_fields: row._source_fields,
+    _routing: { ...(row._routing || {}), movedFrom: 'purchase', movedAt: new Date().toISOString() },
+    fileHash: row.file_hash || row.fileHash,
+  };
+}
+
+function saleToPurchasePayload(row) {
+  const lineItems = row.line_items || row.lineItems || null;
+  const party = row.entity_name || row.customer_name || '';
+  return {
+    company_id: row.company_id,
+    company_name: row.company_name,
+    record_type: row.record_type,
+    supplier_name: party,
+    vendor_name: party,
+    vendor_gstin: row.customer_gstin || '',
+    supplier_gst_number: row.customer_gstin || '',
+    category_of_plastic: row.category_of_plastic,
+    state: row.state,
+    city: row.district || row.city,
+    address_line_1: row.address,
+    invoice_number: row.invoice_no || row.application_number,
+    invoice_no: row.invoice_no || row.application_number,
+    invoice_date: row.invoice_date,
+    procurement_date: row.invoice_date,
+    invoice_filename: row.invoice_file_name || row.invoice_filename,
+    quantity_mt: row.quantity_sold_mt || row.quantity,
+    quantity: row.quantity || row.quantity_sold_mt,
+    unit: row.unit,
+    total_amount: row.total_amount,
+    item_name: row.item_name,
+    hsn_code: row.hsn_code,
+    lineItems,
+    extraction: row.extraction,
+    _source_fields: row._source_fields,
+    _routing: { ...(row._routing || {}), movedFrom: 'sale', movedAt: new Date().toISOString() },
+    fileHash: row.file_hash || row.fileHash,
+  };
+}
 
 
+function ConfirmActionModal({ open, kind, count, fromLabel, toLabel, busy, onCancel, onConfirm }) {
+  if (!open) return null;
+  const isMove = kind === 'move';
+  const isBulk = count > 1;
+  const title = isMove
+    ? (isBulk ? `Move ${count} records` : 'Move record')
+    : (isBulk ? `Delete ${count} records` : 'Delete record');
+  const description = isMove
+    ? (isBulk
+      ? `These ${count} records will be moved from ${fromLabel} to ${toLabel}.`
+      : `This record will be moved from ${fromLabel} to ${toLabel}.`)
+    : (isBulk
+      ? `Permanently delete ${count} selected records? This cannot be undone.`
+      : 'Permanently delete this record? This cannot be undone.');
 
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 bg-slate-900/45" onClick={busy ? undefined : onCancel}>
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="confirm-action-title"
+        className="w-full max-w-md rounded-2xl border border-slate-200 bg-white shadow-xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-5 pt-5 pb-4">
+          <div className="flex items-start gap-3">
+            <div className={`mt-0.5 flex h-10 w-10 shrink-0 items-center justify-center rounded-xl ${isMove ? 'bg-amber-50 text-amber-700' : 'bg-red-50 text-red-600'}`}>
+              {isMove ? <ArrowLeftRight size={18} /> : <Trash2 size={18} />}
+            </div>
+            <div className="min-w-0">
+              <h2 id="confirm-action-title" className="text-base font-semibold text-slate-800">{title}</h2>
+              <p className="mt-1 text-sm text-slate-500 leading-relaxed">{description}</p>
+            </div>
+          </div>
+
+          {isMove && (
+            <div className="mt-4 flex items-center gap-2 rounded-xl border border-slate-200 bg-slate-50 px-3 py-2.5 text-sm">
+              <span className="rounded-md bg-white px-2 py-1 border border-slate-200 text-slate-700 font-medium">{fromLabel}</span>
+              <ArrowLeftRight size={14} className="text-amber-600 shrink-0" />
+              <span className="rounded-md bg-amber-50 px-2 py-1 border border-amber-200 text-amber-800 font-medium">{toLabel}</span>
+            </div>
+          )}
+        </div>
+
+        <div className="flex items-center justify-end gap-2 border-t border-slate-100 px-5 py-3 bg-slate-50/60 rounded-b-2xl">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onCancel}
+            className="rounded-lg px-3 py-1.5 text-sm font-medium text-slate-600 hover:bg-white hover:text-slate-800 disabled:opacity-50"
+          >
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={onConfirm}
+            className={`inline-flex items-center gap-1.5 rounded-lg px-3.5 py-1.5 text-sm font-medium text-white disabled:opacity-60 ${isMove ? 'bg-amber-600 hover:bg-amber-700' : 'bg-red-600 hover:bg-red-700'}`}
+          >
+            {busy ? <Loader2 size={14} className="animate-spin" /> : null}
+            {isMove ? 'Move' : 'Delete'}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 export default function DocTable() {
-
-
-
   const navigate = useNavigate();
-
-
-
   const location = useLocation();
-
-
-
   const fileRef = useRef(null);
-
-
+  const { setPageHeader, clearPageHeader } = usePageHeader();
 
   const type = location.state?.type === 'sale' ? 'sale' : 'purchase';
-
-
-
   const isPurchase = type === 'purchase';
-
-
-
   const title = isPurchase ? 'Procurement' : 'Post Consumer';
 
 
@@ -1155,6 +1128,9 @@ export default function DocTable() {
 
 
   const [rows, setRows] = useState([]);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [confirmDialog, setConfirmDialog] = useState(null);
+  const [actionBusy, setActionBusy] = useState(false);
 
 
 
@@ -1175,8 +1151,8 @@ export default function DocTable() {
 
 
   const [cpcbOpen, setCpcbOpen] = useState(false);
-
-
+  const [excelMenuOpen, setExcelMenuOpen] = useState(false);
+  const excelMenuRef = useRef(null);
 
   const [addOpen, setAddOpen] = useState(false);
 
@@ -1321,13 +1297,8 @@ export default function DocTable() {
 
 
   useEffect(() => {
-
-
-
+    setSelectedIds(new Set());
     load();
-
-
-
   }, [type]);
 
 
@@ -1336,52 +1307,87 @@ export default function DocTable() {
 
 
 
-  const handleDelete = async (id) => {
+  const moveLabel = isPurchase ? 'Move to Sale' : 'Move to Purchase';
+  const fromLabel = isPurchase ? 'Procurement' : 'Post Consumer';
+  const toLabel = isPurchase ? 'Post Consumer' : 'Procurement';
 
-
-
-    if (!confirm('Delete this record?')) return;
-
-
-
-    try {
-
-
-
-      const api = getApi();
-
-
-
-      if (isPurchase) await api.purchases.delete(id);
-
-
-
-      else await api.sales.delete(id);
-
-
-
-      load();
-
-
-
-    } catch (err) {
-
-
-
-      alert(err?.message || 'Delete failed');
-
-
-
-    }
-
-
-
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
   };
 
+  const toggleSelectAll = (checked) => {
+    if (checked) setSelectedIds(new Set(rows.map((r) => r.id)));
+    else setSelectedIds(new Set());
+  };
 
+  const clearSelection = () => setSelectedIds(new Set());
 
+  const requestDelete = (id) => {
+    setConfirmDialog({ kind: 'delete', ids: [id], count: 1 });
+  };
 
+  const requestMove = (row) => {
+    setConfirmDialog({ kind: 'move', rows: [row], count: 1 });
+  };
 
+  const requestBulkDelete = () => {
+    const ids = [...selectedIds];
+    if (!ids.length) return;
+    setConfirmDialog({ kind: 'delete', ids, count: ids.length });
+  };
+
+  const requestBulkMove = () => {
+    const selectedRows = rows.filter((r) => selectedIds.has(r.id));
+    if (!selectedRows.length) return;
+    setConfirmDialog({ kind: 'move', rows: selectedRows, count: selectedRows.length });
+  };
+
+  const executeConfirmedAction = async () => {
+    if (!confirmDialog) return;
+    setActionBusy(true);
+    try {
+      const api = getApi();
+      if (confirmDialog.kind === 'delete') {
+        for (const id of confirmDialog.ids) {
+          if (isPurchase) await api.purchases.delete(id);
+          else await api.sales.delete(id);
+        }
+        clearSelection();
+      } else if (confirmDialog.kind === 'move') {
+        for (const row of confirmDialog.rows) {
+          if (isPurchase) {
+            await api.sales.add(purchaseToSalePayload(row));
+            await api.purchases.delete(row.id);
+          } else {
+            await api.purchases.add(saleToPurchasePayload(row));
+            await api.sales.delete(row.id);
+          }
+        }
+        clearSelection();
+      }
+      setConfirmDialog(null);
+      await load();
+    } catch (err) {
+      alert(err?.message || 'Action failed');
+      await load();
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const tableExtras = (base) => ({
+    ...base,
+    selectedIds,
+    onToggleSelect: toggleSelect,
+    onToggleSelectAll: toggleSelectAll,
+    onMove: (r) => requestMove(r),
+    moveLabel,
+  });
 
 
   const handleDownloadTemplate = () => {
@@ -1556,357 +1562,205 @@ export default function DocTable() {
 
 
 
-  return (
+  useEffect(() => {
+    if (!excelMenuOpen) return undefined;
+    const onDocClick = (e) => {
+      if (excelMenuRef.current && !excelMenuRef.current.contains(e.target)) {
+        setExcelMenuOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', onDocClick);
+    return () => document.removeEventListener('mousedown', onDocClick);
+  }, [excelMenuOpen]);
 
-
-
-    <div className="space-y-5 max-w-full">
-
-
-
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
-
-
-
-        <div className="flex items-center gap-3">
-
-
-
+  useEffect(() => {
+    setPageHeader({
+      sectionTitle: title,
+      onBack: () => navigate('/doc-processor'),
+      uploadState: { type },
+      actions: (
+        <>
           <button
-
-
-
             type="button"
-
-
-
-            onClick={() => navigate('/doc-processor')}
-
-
-
-            className="p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600"
-
-
-
+            onClick={() => setAddOpen(true)}
+            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-3 py-2 transition-colors"
           >
-
-
-
-            <ArrowLeft size={18} />
-
-
-
+            <Plus size={16} />
+            Add
           </button>
-
-
-
-          <div>
-            <div className="flex items-center gap-3">
-              <h2 className="text-lg font-bold text-slate-900">{title}</h2>
-              <div className="flex bg-slate-100 p-1 rounded-lg border border-slate-200">
+          <div className="relative" ref={excelMenuRef}>
+            <button
+              type="button"
+              onClick={() => setExcelMenuOpen((v) => !v)}
+              disabled={importing}
+              aria-expanded={excelMenuOpen}
+              aria-haspopup="menu"
+              className={`inline-flex items-center gap-2 rounded-lg border text-sm font-medium px-3 py-2 transition-all duration-200 disabled:opacity-60 ${
+                excelMenuOpen
+                  ? 'border-green-300 bg-green-50 text-green-800 shadow-sm'
+                  : 'border-slate-300 bg-white hover:bg-slate-50 text-slate-700'
+              }`}
+            >
+              {importing ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <FileSpreadsheet size={16} />
+              )}
+              {importing ? 'Importing…' : 'Excel'}
+              <ChevronDown
+                size={14}
+                className={`transition-transform duration-200 ease-out ${excelMenuOpen ? 'rotate-180' : 'rotate-0'}`}
+              />
+            </button>
+            {!importing && (
+              <div
+                role="menu"
+                className={`absolute right-0 top-full mt-2 z-[80] w-56 origin-top-right rounded-xl border border-slate-200/80 bg-white p-1.5 shadow-xl shadow-slate-200/60 ring-1 ring-black/5 transition-all duration-200 ease-out ${
+                  excelMenuOpen
+                    ? 'pointer-events-auto translate-y-0 scale-100 opacity-100'
+                    : 'pointer-events-none -translate-y-1 scale-95 opacity-0'
+                }`}
+              >
                 <button
                   type="button"
-                  onClick={() => setViewMode('row')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'row' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  role="menuitem"
+                  onClick={() => {
+                    setExcelMenuOpen(false);
+                    handleDownloadTemplate();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm text-slate-700 transition-colors duration-150 hover:bg-slate-50"
                 >
-                  Row-wise
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-slate-100 text-slate-600">
+                    <Download size={15} />
+                  </span>
+                  <span>
+                    <span className="block font-medium text-slate-800">Download template</span>
+                    <span className="block text-[11px] text-slate-400">Blank Excel format</span>
+                  </span>
                 </button>
                 <button
                   type="button"
-                  onClick={() => setViewMode('month')}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+                  role="menuitem"
+                  onClick={() => {
+                    setExcelMenuOpen(false);
+                    handleImportClick();
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm text-slate-700 transition-colors duration-150 hover:bg-green-50"
                 >
-                  Month-wise
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-green-50 text-green-700">
+                    <FileSpreadsheet size={15} />
+                  </span>
+                  <span>
+                    <span className="block font-medium text-slate-800">Import Excel</span>
+                    <span className="block text-[11px] text-slate-400">Upload .xlsx / .csv</span>
+                  </span>
+                </button>
+                <button
+                  type="button"
+                  role="menuitem"
+                  disabled={!rows.length}
+                  onClick={() => {
+                    setExcelMenuOpen(false);
+                    exportExcelData(type, rows);
+                  }}
+                  className="flex w-full items-center gap-3 rounded-lg px-2.5 py-2.5 text-left text-sm text-slate-700 transition-colors duration-150 hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                >
+                  <span className="flex h-8 w-8 items-center justify-center rounded-lg bg-blue-50 text-blue-700">
+                    <FileSpreadsheet size={15} />
+                  </span>
+                  <span>
+                    <span className="block font-medium text-slate-800">Export Excel</span>
+                    <span className="block text-[11px] text-slate-400">Download current rows</span>
+                  </span>
                 </button>
               </div>
-            </div>
-            <p className="text-sm text-slate-500">{rows.length} records in local database</p>
-
-
-
-          </div>
-
-
-
-        </div>
-
-
-
-
-
-
-
-        <div className="flex items-center gap-2 flex-wrap">
-
-
-
-          <button
-
-
-
-            type="button"
-
-
-
-            onClick={() => setAddOpen(true)}
-
-
-
-            className="inline-flex items-center gap-2 rounded-lg bg-slate-800 hover:bg-slate-900 text-white text-sm font-medium px-3 py-2 transition-colors"
-
-
-
-          >
-
-
-
-            <Plus size={16} />
-
-
-
-            Add
-
-
-
-          </button>
-
-
-
-          <button
-
-
-
-            type="button"
-
-
-
-            onClick={handleDownloadTemplate}
-
-
-
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-3 py-2 transition-colors"
-
-
-
-          >
-
-
-
-            <Download size={16} />
-
-
-
-            Download template
-
-
-
-          </button>
-
-
-
-          <button
-
-
-
-            type="button"
-
-
-
-            onClick={handleImportClick}
-
-
-
-            disabled={importing}
-
-
-
-            className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2 transition-colors disabled:opacity-60"
-
-
-
-          >
-
-
-
-            {importing ? (
-
-
-
-              <Loader2 size={16} className="animate-spin" />
-
-
-
-            ) : (
-
-
-
-              <FileSpreadsheet size={16} />
-
-
-
             )}
-
-
-
-            {importing ? 'Importing…' : 'Import Excel'}
-
-
-
-          </button>
-
-
-
+          </div>
           <button
-
-
-
             type="button"
-
-
-
-            onClick={() => exportExcelData(type, rows)}
-
-
-
-            disabled={!rows.length}
-
-
-
-            className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-3 py-2 transition-colors disabled:opacity-60"
-
-
-
-          >
-
-
-
-            <FileSpreadsheet size={16} />
-
-
-
-            Export Excel
-
-
-
-          </button>
-
-
-
-          <button
-
-
-
-            type="button"
-
-
-
             onClick={() => setCpcbOpen(true)}
-
-
-
             className="inline-flex items-center gap-2 rounded-lg border border-green-600 text-green-700 bg-white hover:bg-green-50 text-sm font-medium px-3 py-2 transition-colors"
-
-
-
           >
-
-
-
             <UploadCloud size={16} />
-
-
-
-            Upload to CPCB
-
-
-
+            Upload CPCB
           </button>
+        </>
+      ),
+    });
+    return () => clearPageHeader();
+  }, [title, type, rows, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
 
-
-
-          <input
-
-
-
-            ref={fileRef}
-
-
-
-            type="file"
-
-
-
-            accept=".xlsx,.xls,.csv"
-
-
-
-            className="hidden"
-
-
-
-            onChange={handleFileChange}
-
-
-
-          />
-
-
-
+  return (
+    <div className="space-y-5 max-w-full">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <div className="flex flex-wrap items-center gap-2">
+          <div className="flex bg-slate-100 p-0.5 rounded-lg border border-slate-200">
+            <button
+              type="button"
+              onClick={() => setViewMode('row')}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'row' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Row-wise
+            </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('month')}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'month' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Month-wise
+            </button>
+          </div>
+          <p className="text-xs text-slate-500">{rows.length} records</p>
+          {selectedIds.size > 0 && (
+            <>
+              <span className="h-4 w-px bg-slate-200" />
+              <span className="text-xs font-medium text-blue-700">{selectedIds.size} selected</span>
+              <button
+                type="button"
+                onClick={requestBulkMove}
+                className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-white px-2 py-1 text-xs font-medium text-amber-800 hover:bg-amber-50"
+              >
+                <ArrowLeftRight size={12} />
+                {moveLabel}
+              </button>
+              <button
+                type="button"
+                onClick={requestBulkDelete}
+                className="inline-flex items-center gap-1 rounded-md border border-red-300 bg-white px-2 py-1 text-xs font-medium text-red-700 hover:bg-red-50"
+              >
+                <Trash2 size={12} />
+                Delete
+              </button>
+              <button
+                type="button"
+                onClick={clearSelection}
+                className="rounded-md px-2 py-1 text-xs text-slate-500 hover:bg-slate-100 hover:text-slate-700"
+              >
+                Clear
+              </button>
+            </>
+          )}
         </div>
-
-
-
+        <input
+          ref={fileRef}
+          type="file"
+          accept=".xlsx,.xls,.csv"
+          className="hidden"
+          onChange={handleFileChange}
+        />
       </div>
 
-
-
-
-
-
-
       {message && (
-
-
-
         <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-
-
-
           {message}
-
-
-
         </div>
-
-
-
       )}
-
-
 
       {error && (
-
-
-
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line">
-
-
-
           {error}
-
-
-
         </div>
-
-
-
       )}
-
-
-
-
-
-
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
 
@@ -1979,10 +1833,7 @@ export default function DocTable() {
 
 
 
-          renderWideTable(rows, PURCHASE_TABLE_COLUMNS, handleDelete, {
-
-
-
+          renderWideTable(rows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
 
 
@@ -2103,7 +1954,7 @@ export default function DocTable() {
 
 
 
-          })
+          }))
 
 
 
@@ -2111,10 +1962,7 @@ export default function DocTable() {
 
 
 
-          renderWideTable(rows, SALE_TABLE_COLUMNS, handleDelete, {
-
-
-
+          renderWideTable(rows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
 
 
@@ -2183,7 +2031,7 @@ export default function DocTable() {
 
 
 
-          })
+          }))
 
 
 
@@ -2293,13 +2141,24 @@ export default function DocTable() {
               </div>
             </div>
             <div className="p-0 overflow-y-auto flex-1">
-              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, handleDelete, {
+              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras({
                 onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename || r.invoice_file_name }),
-              })}
+              }))}
             </div>
           </div>
         </div>
       )}
+
+      <ConfirmActionModal
+        open={Boolean(confirmDialog)}
+        kind={confirmDialog?.kind}
+        count={confirmDialog?.count || 0}
+        fromLabel={fromLabel}
+        toLabel={toLabel}
+        busy={actionBusy}
+        onCancel={() => !actionBusy && setConfirmDialog(null)}
+        onConfirm={executeConfirmedAction}
+      />
 
       <InvoiceDetailsModal
 
