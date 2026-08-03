@@ -148,23 +148,23 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
     const fe = {};
 
     if (isPurchase) {
-      if (!isEdit && !form.invoice_filename?.trim() && !form.invoice_file) {
+      if (!isEdit && !(form.invoice_filename || '').trim() && !form.invoice_file) {
         fe.invoice_filename = 'Please upload invoice / GST e-invoice';
       }
       if (!form.category_of_plastic) fe.category_of_plastic = 'Please Select Categories of Plastic';
-      if (!form.supplier_name.trim()) fe.supplier_name = 'Please Enter Name of Supplier';
-      if (!form.address_line_1.trim()) fe.address_line_1 = 'Please Enter Address Line 1';
+      if (!(form.supplier_name || '').trim()) fe.supplier_name = 'Please Enter Name of Supplier';
+      if (!(form.address_line_1 || '').trim()) fe.address_line_1 = 'Please Enter Address Line 1';
       if (!form.state) fe.state = 'Please Select State';
-      if (!form.city.trim()) fe.city = 'Please Select City';
-      if (!form.pin_code.trim()) fe.pin_code = 'Please Enter PIN Code';
+      if (!(form.city || '').trim()) fe.city = 'Please Select City';
+      if (!(form.pin_code || '').trim()) fe.pin_code = 'Please Enter PIN Code';
       if (!isEdit && !form.is_supplier_gst_available) {
         fe.is_supplier_gst_available = 'Please Select Is Supplier GST Available?';
       }
-      if (!isEdit && form.is_supplier_gst_available === 'Yes' && !form.supplier_gst_number.trim()) {
+      if (!isEdit && form.is_supplier_gst_available === 'Yes' && !(form.supplier_gst_number || '').trim()) {
         fe.supplier_gst_number = 'Please Enter Supplier GST';
       }
-      if (!form.hsn_code.trim()) fe.hsn_code = 'Please Enter HSN Code';
-      if (!form.invoice_number.trim()) {
+      if (!(form.hsn_code || '').trim()) fe.hsn_code = 'Please Enter HSN Code';
+      if (!(form.invoice_number || '').trim()) {
         fe.invoice_number = 'Please Enter Invoice No./GST E-Invoice Number';
       }
       if (form.quantity_mt === '' || form.quantity_mt === null) {
@@ -184,27 +184,27 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
         company_id: null,
         record_type: 'purchase_epr',
         category_of_plastic: form.category_of_plastic,
-        supplier_name: form.supplier_name.trim(),
-        address_line_1: form.address_line_1.trim(),
-        address_line_2: form.address_line_2.trim(),
+        supplier_name: (form.supplier_name || '').trim(),
+        address_line_1: (form.address_line_1 || '').trim(),
+        address_line_2: (form.address_line_2 || '').trim(),
         state: form.state,
-        city: form.city.trim(),
-        pin_code: form.pin_code.trim(),
-        buyer_gst: form.buyer_gst.trim().toUpperCase(),
+        city: (form.city || '').trim(),
+        pin_code: (form.pin_code || '').trim(),
+        buyer_gst: (form.buyer_gst || '').trim().toUpperCase(),
         is_supplier_gst_available: form.is_supplier_gst_available,
-        supplier_gst_number: form.supplier_gst_number.trim().toUpperCase(),
-        hsn_code: form.hsn_code.trim(),
-        invoice_number: form.invoice_number.trim(),
-        irn_no: form.irn_no.trim(),
+        supplier_gst_number: (form.supplier_gst_number || '').trim().toUpperCase(),
+        hsn_code: (form.hsn_code || '').trim(),
+        invoice_number: (form.invoice_number || '').trim(),
+        irn_no: (form.irn_no || '').trim(),
         quantity_mt: qty,
         quantity_kg: qtyKg,
         date_of_entry: form.date_of_entry || todayIso(),
         procurement_date: form.procurement_date,
-        invoice_filename: form.invoice_filename.trim(),
+        invoice_filename: (form.invoice_filename || '').trim(),
         // compat
-        vendor_name: form.supplier_name.trim(),
-        vendor_gstin: form.supplier_gst_number.trim().toUpperCase(),
-        invoice_no: form.invoice_number.trim(),
+        vendor_name: (form.supplier_name || '').trim(),
+        vendor_gstin: (form.supplier_gst_number || '').trim().toUpperCase(),
+        invoice_no: (form.invoice_number || '').trim(),
         invoice_date: form.procurement_date,
         item_name: form.category_of_plastic,
         quantity: qty,
