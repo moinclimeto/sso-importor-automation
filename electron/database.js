@@ -1,69 +1,56 @@
 import path from 'path';
 import { app } from 'electron';
-import fs from 'fs';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
+import fs from 'fs'; // Import fs
 import { fileURLToPath } from 'url';
 
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+const currentModuleUrl = import.meta.url;
+const __dirname = fileURLToPath(new URL('.', currentModuleUrl));
 
 let db = null;
-let sqliteDb = null;
+let sqliteDb = null; // Added for the scraped data database
+let dbFilePath = '';
+export let dbJsonPath = '';
 
-export async function initDatabase() {
+// Path to the database file
+function getDbFilePath() {
   const userDataPath = app.getPath('userData');
   const dbDir = path.join(userDataPath, 'pwp-db');
   if (!fs.existsSync(dbDir)) {
     fs.mkdirSync(dbDir, { recursive: true });
   }
+  return path.join(dbDir, 'app.db'); // Changed to .db
+}
 
-  const dbPath = path.join(dbDir, 'pwp.sqlite');
+// Initialize main application database connection
+export async function initDatabase(onDbReadyCallback) {
+  dbFilePath = getDbFilePath();
+  dbJsonPath = path.join(path.dirname(dbFilePath), 'db.json');
   db = await open({
-    filename: dbPath,
-    driver: sqlite3.Database
+    filename: dbFilePath,
+    driver: sqlite3.Database,
   });
-  
-  await db.exec('PRAGMA journal_mode = WAL;');
 
-  await db.exec(`
-    CREATE TABLE IF NOT EXISTS companies (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      name TEXT NOT NULL,
-      gstin TEXT,
-      state TEXT,
-      address TEXT,
-      created_at TEXT
-    );
+  // Enable foreign keys
+  await db.exec('PRAGMA foreign_keys = ON;');
 
-    CREATE TABLE IF NOT EXISTS purchases (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      company_id INTEGER,
-      invoice_no TEXT,
-      invoice_date TEXT,
-      data TEXT,
-      created_at TEXT
-    );
+  // Run migrations for the main app.db
+  await runMigrations();
 
-    CREATE TABLE IF NOT EXISTS sales (
-      id INTEGER PRIMARY KEY AUTOINCREMENT,
-      company_id INTEGER,
-      invoice_no TEXT,
-      invoice_date TEXT,
-      data TEXT,
-      created_at TEXT
-    );
-  `);
+  if (onDbReadyCallback) {
+    await onDbReadyCallback(db);
+  }
 
-  // Connect to the scraped SQLite database
+  // Initialize separate database for scraped data (from 'dev' branch)
   const sqlitePath = path.join(__dirname, '..', 'database.sqlite');
   try {
     sqliteDb = await open({
       filename: sqlitePath,
       driver: sqlite3.Database
     });
-    console.log("✅ Connected to SQLite database at", sqlitePath);
-    
+    console.log("✅ Connected to SQLite database for scraped data at", sqlitePath);
+
     // Auto-create scraper tables to prevent UI crashes if data isn't synced yet
     await sqliteDb.exec(`
       CREATE TABLE IF NOT EXISTS epr_dashboard (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT, tables_dump TEXT);
@@ -76,21 +63,60 @@ export async function initDatabase() {
       CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
     `);
   } catch (error) {
-    console.error("⚠️ Failed to connect to SQLite (it may not exist yet).", error.message);
+    console.error("⚠️ Failed to connect to SQLite scraped database (it may not exist yet).", error.message);
   }
-
-  return db;
 }
 
+// Get main application database instance
 export function getDb() {
+  if (!db) {
+    throw new Error('Main application database not initialized. Call initDatabase() first.');
+  }
   return db;
 }
 
-
-export function saveDb() {
-  // no-op, handled by SQLite
+// Get scraped data database instance
+export function getSqliteDb() {
+  if (!sqliteDb) {
+    throw new Error('Scraped data database not initialized. Call initDatabase() first.');
+  }
+  return sqliteDb;
 }
 
-export function getSqliteDb() {
-  return sqliteDb;
+// --- Migrations System ---
+const migrationsDir = path.join(__dirname, 'migrations'); // Assuming migrations are in electron/migrations
+
+async function runMigrations() {
+  await db.exec(`
+    CREATE TABLE IF NOT EXISTS _migrations (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      name TEXT UNIQUE NOT NULL,
+      applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+  `);
+
+  const appliedMigrations = new Set(
+    (await db.all('SELECT name FROM _migrations')).map((row) => row.name)
+  );
+
+  const migrationFiles = fs
+    .readdirSync(migrationsDir)
+    .filter((f) => f.endsWith('.js'))
+    .sort();
+
+  for (const file of migrationFiles) {
+    if (!appliedMigrations.has(file)) {
+      const migration = await import('file:///' + path.join(migrationsDir, file)); // Use file:/// for dynamic import
+      console.log(`Applying migration: ${file}`);
+      await db.exec(migration.up); // Each migration file should export an 'up' string
+      await db.run('INSERT INTO _migrations (name) VALUES (?)', file);
+    }
+  }
+}
+
+// Placeholder for saveDb
+export async function saveDb() {
+  // In a SQLite context, changes are saved via explicit INSERT/UPDATE/DELETE. No global saveDb needed.
+  // This function might be removed or adapted depending on final data access patterns.
+  // For now, let's keep a placeholder if it's called elsewhere and expects to exist.
 }

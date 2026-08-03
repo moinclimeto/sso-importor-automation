@@ -4,6 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { scanQrFromDocument } from './qrScan.js';
+import { getFileSha256 } from './hashUtils.js';
+import { getDb, saveDb } from './database.js';
 import {
   buildExtractionPrompt,
   mapPurchaseFromOcr,
@@ -68,6 +70,7 @@ async function extractOneInvoice({
   pageCount = null,
   invoiceFileName = null,
   displayName = null,
+  fileHash = null,
 }) {
   loadEnvFile();
   const log = parentLog || createLogger(trackId || createTrackId('ocr'));
@@ -95,22 +98,26 @@ async function extractOneInvoice({
 
   const ext = path.extname(filePath).toLowerCase();
   const isPdf = ext === '.pdf';
-  let resolvedPageCount = pageCount;
-  if (resolvedPageCount == null) {
-    try {
-      resolvedPageCount = isPdf ? await getPdfPageCount(filePath) : 1;
-    } catch {
-      resolvedPageCount = 1;
+    let resolvedPageCount = pageCount;
+    if (resolvedPageCount == null) {
+      try {
+        resolvedPageCount = isPdf ? await getPdfPageCount(filePath) : 1;
+      } catch {
+        resolvedPageCount = 1;
+      }
     }
-  }
-  const pageNo = Math.min(Math.max(1, Number(pageNumber) || 1), resolvedPageCount);
-  const sourceName = fileBaseName(filePath);
-  const outFileName =
-    invoiceFileName || pageInvoiceFileName(sourceName, pageNo, resolvedPageCount);
+    const pageNo = Math.min(Math.max(1, Number(pageNumber) || 1), resolvedPageCount);
+    const sourceName = fileBaseName(filePath);
+    const outFileName =
+      invoiceFileName || pageInvoiceFileName(sourceName, pageNo, resolvedPageCount);
 
-  let mimeType = mimeFromPath(filePath);
-  let base64;
-  let qrTargetPath = filePath;
+    if (!fileHash) {
+      fileHash = await getFileSha256(filePath);
+    }
+
+    let mimeType = mimeFromPath(filePath);
+    let base64;
+    let qrTargetPath = filePath;
   let tempPng = null;
 
   try {
@@ -297,6 +304,7 @@ async function extractOneInvoice({
         pageNumber: pageNo,
         pageCount: resolvedPageCount,
       },
+      fileHash,
     };
   } finally {
     safeUnlink(tempPng);

@@ -1,8 +1,9 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
-import { getDb, saveDb, getSqliteDb } from './database.js';
+import { initDatabase, getDb, getSqliteDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
 import { chromium } from 'playwright';
+import { migrateFromJsonToSqlite } from './dataMigration.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -33,6 +34,9 @@ const { extractEprWallet } = require("../src/extractors/epr/wallet.extractor.cjs
 const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.extractor.cjs");
 
 export function registerIpcHandlers() {
+  initDatabase(async (dbInstance) => {
+    await migrateFromJsonToSqlite(dbInstance, dbJsonPath);
+  }).catch(err => console.error("Failed to initialize database:", err));
   registerOcrHandlers();
   warmupQrScanner().catch(() => {});
 
@@ -43,12 +47,11 @@ export function registerIpcHandlers() {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
     }
-    
+
     try {
       const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='procurement_details'`);
       if (tableCheck) {
         const rows = await sqliteDb.all(`SELECT * FROM procurement_details ORDER BY year DESC`);
-        // rename year to source_year for backward compatibility with frontend
         rows.forEach(r => { r.source_year = r.year; });
         return rows;
       }
@@ -64,7 +67,7 @@ export function registerIpcHandlers() {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
     }
-    
+
     try {
       const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='sales_details'`);
       if (tableCheck) {
@@ -83,7 +86,7 @@ export function registerIpcHandlers() {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
     }
-    
+
     try {
       const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='production_details'`);
       if (tableCheck) {
@@ -95,6 +98,7 @@ export function registerIpcHandlers() {
     }
     return [];
   });
+
   // ─── FILE SYSTEM ───────────────────────────────────────────────
   ipcMain.handle('fs:readFileBase64', async (_, filePath) => {
     try {
@@ -110,43 +114,31 @@ export function registerIpcHandlers() {
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', async () => {
     const db = getDb();
-    return await db.all('SELECT * FROM companies ORDER BY name ASC');
+    return db.all('SELECT * FROM companies ORDER BY name COLLATE NOCASE ASC');
   });
 
   ipcMain.handle('companies:add', async (_, data) => {
     const db = getDb();
-    const created_at = new Date().toISOString();
-    const info = await db.run('INSERT INTO companies (name, gstin, state, address, created_at) VALUES (?, ?, ?, ?, ?)', [data.name || '', data.gstin || '', data.state || '', data.address || '', created_at]);
-    return { id: info.lastID, ...data, created_at };
+    const result = await db.run(
+      'INSERT INTO companies (name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?)',
+      data.name, data.gstin, data.pan, data.entity_type, new Date().toISOString()
+    );
+    return { id: result.lastID, ...data };
   });
 
   ipcMain.handle('companies:update', async (_, data) => {
     const db = getDb();
-    await db.run('UPDATE companies SET name=?, gstin=?, state=?, address=? WHERE id=?', [data.name || '', data.gstin || '', data.state || '', data.address || '', data.id]);
+    await db.run(
+      'UPDATE companies SET name = ?, gstin = ?, pan = ?, entity_type = ? WHERE id = ?',
+      data.name, data.gstin, data.pan, data.entity_type, data.id
+    );
     return { success: true };
   });
 
   ipcMain.handle('companies:delete', async (_, id) => {
     const db = getDb();
-    await db.run('DELETE FROM companies WHERE id=?', [id]);
+    await db.run('DELETE FROM companies WHERE id = ?', id);
     return { success: true };
-  });
-
-  // ─── PURCHASES ───────────────────────────────────────────────
-  ipcMain.handle('purchases:getAll', async (_, filters) => {
-    const db = getDb();
-    let query = 'SELECT p.*, c.name as company_name FROM purchases p LEFT JOIN companies c ON p.company_id = c.id WHERE 1=1';
-    const params = [];
-    if (filters?.company_id) { query += ' AND p.company_id=?'; params.push(filters.company_id); }
-    if (filters?.from_date) { query += ' AND p.invoice_date >= ?'; params.push(filters.from_date); }
-    if (filters?.to_date) { query += ' AND p.invoice_date <= ?'; params.push(filters.to_date); }
-    query += ' ORDER BY p.invoice_date DESC';
-    const rows = await db.all(query, params);
-    return rows.map(r => {
-      let parsed = {};
-      try { parsed = JSON.parse(r.data); } catch(e) {}
-      return { ...parsed, id: r.id, company_name: r.company_name, company_id: r.company_id, created_at: r.created_at };
-    });
   });
 
   async function storeInvoicePdfLocally(data) {
@@ -156,11 +148,11 @@ export function registerIpcHandlers() {
 
     const companyName = data.company_name || 'Unknown_Company';
     const invoiceDate = data.invoice_date || data.procurement_date || data.date_of_entry || new Date().toISOString().split('T')[0];
-    
+
     let dateObj = new Date(invoiceDate);
     if (isNaN(dateObj)) dateObj = new Date();
     const yearMonth = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
-    
+
     const destDir = path.join(app.getPath('userData'), 'processed_invoices', companyName, yearMonth);
     if (!fs.existsSync(destDir)) {
       fs.mkdirSync(destDir, { recursive: true });
@@ -169,7 +161,7 @@ export function registerIpcHandlers() {
     const invoiceFileName = data.invoice_filename || data.invoice_file_name || path.basename(source);
     const safeName = invoiceFileName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
     const destPath = path.join(destDir, safeName);
-    
+
     try {
       fs.copyFileSync(source, destPath);
       data.local_pdf_path = destPath;
@@ -179,179 +171,479 @@ export function registerIpcHandlers() {
     return data;
   }
 
+  function withLocalPdfInSourceFields(data) {
+    if (!data.local_pdf_path) return data;
+    const base =
+      data._source_fields && typeof data._source_fields === 'object' ? data._source_fields : {};
+    return {
+      ...data,
+      _source_fields: { ...base, local_pdf_path: data.local_pdf_path },
+    };
+  }
+
+  // ─── PURCHASES ───────────────────────────────────────────────
+  ipcMain.handle('purchases:getAll', async (_, filters) => {
+    const db = getDb();
+    let query = `
+      SELECT
+        p.*,
+        c.name AS company_name
+      FROM purchases p
+      LEFT JOIN companies c ON p.company_id = c.id
+    `;
+    const params = [];
+    const conditions = [];
+
+    if (filters?.company_id) {
+      conditions.push('p.company_id = ?');
+      params.push(filters.company_id);
+    }
+    if (filters?.from_date) {
+      conditions.push('p.invoice_date >= ?');
+      params.push(filters.from_date);
+    }
+    if (filters?.to_date) {
+      conditions.push('p.invoice_date <= ?');
+      params.push(filters.to_date);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY p.invoice_date DESC`;
+
+    const res = await db.all(query, ...params);
+
+    // Parse JSON fields back to objects
+    return res.map(row => {
+      return {
+        ...row,
+        line_items: row.line_items ? JSON.parse(row.line_items) : null,
+        extraction: row.extraction ? JSON.parse(row.extraction) : null,
+        _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
+        _routing: row._routing ? JSON.parse(row._routing) : null,
+      };
+    });
+  });
+
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
-    const created_at = new Date().toISOString();
-    const invoice_no = data.invoice_no || data.invoice_number || '';
-    const invoice_date = data.invoice_date || data.procurement_date || '';
-    
-    const processedData = await storeInvoicePdfLocally(data);
-    
-    const info = await db.run('INSERT INTO purchases (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [processedData.company_id, invoice_no, invoice_date, JSON.stringify(processedData), created_at]);
-    return { id: info.lastID, ...processedData, created_at };
+    let processedData = withLocalPdfInSourceFields(
+      await storeInvoicePdfLocally({ ...data })
+    );
+    const stmt = await db.prepare(`
+      INSERT INTO purchases (
+        company_id, record_type, category_of_plastic, supplier_name, address_line_1,
+        address_line_2, state, city, pin_code, buyer_gst, is_supplier_gst_available,
+        supplier_gst_number, supplier_mobile_number, procurement_date, quantity_mt,
+        invoice_number, hsn_code, invoice_filename, vendor_name, vendor_gstin, invoice_no,
+        invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
+        _source_fields, _routing, file_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = await stmt.run(
+      processedData.company_id,
+      processedData.record_type,
+      processedData.category_of_plastic,
+      processedData.supplier_name,
+      processedData.address_line_1,
+      processedData.address_line_2,
+      processedData.state,
+      processedData.city,
+      processedData.pin_code,
+      processedData.buyer_gst,
+      processedData.is_supplier_gst_available,
+      processedData.supplier_gst_number,
+      processedData.supplier_mobile_number,
+      processedData.procurement_date,
+      processedData.quantity_mt,
+      processedData.invoice_number,
+      processedData.hsn_code,
+      processedData.invoice_filename,
+      processedData.vendor_name,
+      processedData.vendor_gstin,
+      processedData.invoice_no,
+      processedData.invoice_date,
+      processedData.item_name,
+      processedData.quantity,
+      processedData.unit,
+      processedData.total_amount,
+      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
+      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
+      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
+      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      processedData.fileHash || null,
+      new Date().toISOString()
+    );
+    await stmt.finalize();
+
+    if (processedData.fileHash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', processedData.fileHash);
+    }
+
+    return { id: result.lastID, ...processedData };
   });
 
   ipcMain.handle('purchases:update', async (_, data) => {
     const db = getDb();
-    const invoice_no = data.invoice_no || data.invoice_number || '';
-    const invoice_date = data.invoice_date || data.procurement_date || '';
-    await db.run('UPDATE purchases SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id]);
+    const oldData = await db.get('SELECT file_hash FROM purchases WHERE id = ?', data.id);
+
+    const stmt = await db.prepare(`
+      UPDATE purchases SET
+        company_id = ?, record_type = ?, category_of_plastic = ?, supplier_name = ?, address_line_1 = ?,
+        address_line_2 = ?, state = ?, city = ?, pin_code = ?, buyer_gst = ?, is_supplier_gst_available = ?,
+        supplier_gst_number = ?, supplier_mobile_number = ?, procurement_date = ?, quantity_mt = ?,
+        invoice_number = ?, hsn_code = ?, invoice_filename = ?, vendor_name = ?, vendor_gstin = ?, invoice_no = ?,
+        invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
+        _source_fields = ?, _routing = ?, file_hash = ?
+      WHERE id = ?
+    `);
+
+    await stmt.run(
+      data.company_id,
+      data.record_type,
+      data.category_of_plastic,
+      data.supplier_name,
+      data.address_line_1,
+      data.address_line_2,
+      data.state,
+      data.city,
+      data.pin_code,
+      data.buyer_gst,
+      data.is_supplier_gst_available,
+      data.supplier_gst_number,
+      data.supplier_mobile_number,
+      data.procurement_date,
+      data.quantity_mt,
+      data.invoice_number,
+      data.hsn_code,
+      data.invoice_filename,
+      data.vendor_name,
+      data.vendor_gstin,
+      data.invoice_no,
+      data.invoice_date,
+      data.item_name,
+      data.quantity,
+      data.unit,
+      data.total_amount,
+      data.lineItems ? JSON.stringify(data.lineItems) : null,
+      data.extraction ? JSON.stringify(data.extraction) : null,
+      data._source_fields ? JSON.stringify(data._source_fields) : null,
+      data._routing ? JSON.stringify(data._routing) : null,
+      data.fileHash || null,
+      data.id
+    );
+    await stmt.finalize();
+
+    // Update fileHash in the file_hashes table if it changed
+    if (data.fileHash && oldData.file_hash !== data.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+      }
+    } else if (data.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    }
+
     return { success: true };
   });
 
   ipcMain.handle('purchases:delete', async (_, id) => {
     const db = getDb();
-    await db.run('DELETE FROM purchases WHERE id=?', [id]);
+    const record = await db.get('SELECT file_hash FROM purchases WHERE id = ?', id);
+    await db.run('DELETE FROM purchases WHERE id = ?', id);
+    if (record?.file_hash) {
+      const otherUses = await db.get('SELECT 1 FROM purchases WHERE file_hash = ? UNION ALL SELECT 1 FROM sales WHERE file_hash = ?', record.file_hash, record.file_hash);
+      if (!otherUses) {
+        await db.run('DELETE FROM file_hashes WHERE hash = ?', record.file_hash);
+      }
+    }
     return { success: true };
   });
 
   ipcMain.handle('purchases:getSummary', async (_, filters) => {
     const db = getDb();
-    let query = 'SELECT data FROM purchases WHERE 1=1';
+    let query = 'SELECT SUM(total_amount) as total_amount, SUM(taxable_amount) as total_taxable, SUM(cgst_amount) as total_cgst, SUM(sgst_amount) as total_sgst, SUM(igst_amount) as total_igst, COUNT(id) as total_records FROM purchases';
     const params = [];
-    if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
-    if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
-    if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
-    const rows = await db.all(query, params);
-    let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
-    rows.forEach(r => {
-      try {
-        const d = JSON.parse(r.data);
-        total_taxable += (parseFloat(d.taxable_amount) || 0);
-        total_cgst += (parseFloat(d.cgst_amount) || 0);
-        total_sgst += (parseFloat(d.sgst_amount) || 0);
-        total_igst += (parseFloat(d.igst_amount) || 0);
-        total_amount += (parseFloat(d.total_amount) || 0);
-      } catch(e) {}
-    });
+    const conditions = [];
+
+    if (filters?.company_id) {
+      conditions.push('company_id = ?');
+      params.push(filters.company_id);
+    }
+    if (filters?.from_date) {
+      conditions.push('invoice_date >= ?');
+      params.push(filters.from_date);
+    }
+    if (filters?.to_date) {
+      conditions.push('invoice_date <= ?');
+      params.push(filters.to_date);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    const summary = await db.get(query, ...params);
     return {
-      total_records: rows.length,
-      total_taxable, total_cgst, total_sgst, total_igst, total_amount
+      total_records: summary.total_records || 0,
+      total_taxable: summary.total_taxable || 0,
+      total_cgst: summary.total_cgst || 0,
+      total_sgst: summary.total_sgst || 0,
+      total_igst: summary.total_igst || 0,
+      total_amount: summary.total_amount || 0,
     };
   });
 
   // ─── SALES ────────────────────────────────────────────────────
   ipcMain.handle('sales:getAll', async (_, filters) => {
     const db = getDb();
-    let query = 'SELECT s.*, c.name as company_name FROM sales s LEFT JOIN companies c ON s.company_id = c.id WHERE 1=1';
+    let query = `
+      SELECT
+        s.*,
+        c.name AS company_name
+      FROM sales s
+      LEFT JOIN companies c ON s.company_id = c.id
+    `;
     const params = [];
-    if (filters?.company_id) { query += ' AND s.company_id=?'; params.push(filters.company_id); }
-    if (filters?.from_date) { query += ' AND s.invoice_date >= ?'; params.push(filters.from_date); }
-    if (filters?.to_date) { query += ' AND s.invoice_date <= ?'; params.push(filters.to_date); }
-    query += ' ORDER BY s.invoice_date DESC';
-    const rows = await db.all(query, params);
-    return rows.map(r => {
-      let parsed = {};
-      try { parsed = JSON.parse(r.data); } catch(e) {}
-      return { ...parsed, id: r.id, company_name: r.company_name, company_id: r.company_id, created_at: r.created_at };
+    const conditions = [];
+
+    if (filters?.company_id) {
+      conditions.push('s.company_id = ?');
+      params.push(filters.company_id);
+    }
+    if (filters?.from_date) {
+      conditions.push('s.invoice_date >= ?');
+      params.push(filters.from_date);
+    }
+    if (filters?.to_date) {
+      conditions.push('s.invoice_date <= ?');
+      params.push(filters.to_date);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    query += ` ORDER BY s.invoice_date DESC`;
+
+    const res = await db.all(query, ...params);
+
+    // Parse JSON fields back to objects
+    return res.map(row => {
+      return {
+        ...row,
+        line_items: row.line_items ? JSON.parse(row.line_items) : null,
+        extraction: row.extraction ? JSON.parse(row.extraction) : null,
+        _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
+        _routing: row._routing ? JSON.parse(row._routing) : null,
+      };
     });
   });
 
   ipcMain.handle('sales:add', async (_, data) => {
     const db = getDb();
-    const created_at = new Date().toISOString();
-    const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
-    const invoice_date = data.invoice_date || '';
-    
-    const processedData = await storeInvoicePdfLocally(data);
-    
-    const info = await db.run('INSERT INTO sales (company_id, invoice_no, invoice_date, data, created_at) VALUES (?, ?, ?, ?, ?)', [processedData.company_id, invoice_no, invoice_date, JSON.stringify(processedData), created_at]);
-    return { id: info.lastID, ...processedData, created_at };
+    let processedData = withLocalPdfInSourceFields(
+      await storeInvoicePdfLocally({ ...data })
+    );
+    const stmt = await db.prepare(`
+      INSERT INTO sales (
+        company_id, record_type, s_no, category_of_plastic, process_code,
+        plastic_type, product_type, recycled_plastic_percent, conversion_factor,
+        available_quantity_mt, quantity_sold_mt, registration_type, entity_name,
+        address, state, district, account_number, ifsc_code, gst_other_charges,
+        invoice_file_name, application_number, customer_name, customer_gstin, invoice_no,
+        invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
+        _source_fields, _routing, file_hash, created_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    const result = await stmt.run(
+      processedData.company_id,
+      processedData.record_type,
+      processedData.s_no,
+      processedData.category_of_plastic,
+      processedData.process_code,
+      processedData.plastic_type,
+      processedData.product_type,
+      processedData.recycled_plastic_percent,
+      processedData.conversion_factor,
+      processedData.available_quantity_mt,
+      processedData.quantity_sold_mt,
+      processedData.registration_type,
+      processedData.entity_name,
+      processedData.address,
+      processedData.state,
+      processedData.district,
+      processedData.account_number,
+      processedData.ifsc_code,
+      processedData.gst_other_charges,
+      processedData.invoice_file_name,
+      processedData.application_number,
+      processedData.customer_name,
+      processedData.customer_gstin,
+      processedData.invoice_no,
+      processedData.invoice_date,
+      processedData.item_name,
+      processedData.quantity,
+      processedData.unit,
+      processedData.total_amount,
+      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
+      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
+      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
+      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      processedData.fileHash || null,
+      new Date().toISOString()
+    );
+    await stmt.finalize();
+
+    if (processedData.fileHash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', processedData.fileHash);
+    }
+
+    return { id: result.lastID, ...processedData };
   });
 
   ipcMain.handle('sales:update', async (_, data) => {
     const db = getDb();
-    const invoice_no = data.invoice_no || data.invoice_number || data.application_number || '';
-    const invoice_date = data.invoice_date || '';
-    await db.run('UPDATE sales SET company_id=?, invoice_no=?, invoice_date=?, data=? WHERE id=?', [data.company_id, invoice_no, invoice_date, JSON.stringify(data), data.id]);
+    const oldData = await db.get('SELECT file_hash FROM sales WHERE id = ?', data.id);
+
+    const stmt = await db.prepare(`
+      UPDATE sales SET
+        company_id = ?, record_type = ?, s_no = ?, category_of_plastic = ?, process_code = ?,
+        plastic_type = ?, product_type = ?, recycled_plastic_percent = ?, conversion_factor = ?,
+        available_quantity_mt = ?, quantity_sold_mt = ?, registration_type = ?, entity_name = ?,
+        address = ?, state = ?, district = ?, account_number = ?, ifsc_code = ?, gst_other_charges = ?,
+        invoice_file_name = ?, application_number = ?, customer_name = ?, customer_gstin = ?, invoice_no = ?,
+        invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
+        _source_fields = ?, _routing = ?, file_hash = ?
+      WHERE id = ?
+    `);
+
+    await stmt.run(
+      data.company_id,
+      data.record_type,
+      data.s_no,
+      data.category_of_plastic,
+      data.process_code,
+      data.plastic_type,
+      data.product_type,
+      data.recycled_plastic_percent,
+      data.conversion_factor,
+      data.available_quantity_mt,
+      data.quantity_sold_mt,
+      data.registration_type,
+      data.entity_name,
+      data.address,
+      data.state,
+      data.district,
+      data.account_number,
+      data.ifsc_code,
+      data.gst_other_charges,
+      data.invoice_file_name,
+      data.application_number,
+      data.customer_name,
+      data.customer_gstin,
+      data.invoice_no,
+      data.invoice_date,
+      data.item_name,
+      data.quantity,
+      data.unit,
+      data.total_amount,
+      data.lineItems ? JSON.stringify(data.lineItems) : null,
+      data.extraction ? JSON.stringify(data.extraction) : null,
+      data._source_fields ? JSON.stringify(data._source_fields) : null,
+      data._routing ? JSON.stringify(data._routing) : null,
+      data.fileHash || null,
+      data.id
+    );
+    await stmt.finalize();
+
+    // Update fileHash in the file_hashes table if it changed
+    if (data.fileHash && oldData.file_hash !== data.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+      }
+    } else if (data.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    }
+
     return { success: true };
   });
 
   ipcMain.handle('sales:delete', async (_, id) => {
     const db = getDb();
-    await db.run('DELETE FROM sales WHERE id=?', [id]);
+    const record = await db.get('SELECT file_hash FROM sales WHERE id = ?', id);
+    await db.run('DELETE FROM sales WHERE id = ?', id);
+    if (record?.file_hash) {
+      const otherUses = await db.get('SELECT 1 FROM purchases WHERE file_hash = ? UNION ALL SELECT 1 FROM sales WHERE file_hash = ?', record.file_hash, record.file_hash);
+      if (!otherUses) {
+        await db.run('DELETE FROM file_hashes WHERE hash = ?', record.file_hash);
+      }
+    }
     return { success: true };
   });
 
   ipcMain.handle('sales:getSummary', async (_, filters) => {
     const db = getDb();
-    let query = 'SELECT data FROM sales WHERE 1=1';
+    let query = 'SELECT SUM(total_amount) as total_amount, SUM(taxable_amount) as total_taxable, SUM(cgst_amount) as total_cgst, SUM(sgst_amount) as total_sgst, SUM(igst_amount) as total_igst, COUNT(id) as total_records FROM sales';
     const params = [];
-    if (filters?.company_id) { query += ' AND company_id=?'; params.push(filters.company_id); }
-    if (filters?.from_date) { query += ' AND invoice_date >= ?'; params.push(filters.from_date); }
-    if (filters?.to_date) { query += ' AND invoice_date <= ?'; params.push(filters.to_date); }
-    const rows = await db.all(query, params);
-    let total_taxable = 0, total_cgst = 0, total_sgst = 0, total_igst = 0, total_amount = 0;
-    rows.forEach(r => {
-      try {
-        const d = JSON.parse(r.data);
-        total_taxable += (parseFloat(d.taxable_amount) || 0);
-        total_cgst += (parseFloat(d.cgst_amount) || 0);
-        total_sgst += (parseFloat(d.sgst_amount) || 0);
-        total_igst += (parseFloat(d.igst_amount) || 0);
-        total_amount += (parseFloat(d.total_amount) || 0);
-      } catch(e) {}
-    });
+    const conditions = [];
+
+    if (filters?.company_id) {
+      conditions.push('company_id = ?');
+      params.push(filters.company_id);
+    }
+    if (filters?.from_date) {
+      conditions.push('invoice_date >= ?');
+      params.push(filters.from_date);
+    }
+    if (filters?.to_date) {
+      conditions.push('invoice_date <= ?');
+      params.push(filters.to_date);
+    }
+
+    if (conditions.length > 0) {
+      query += ` WHERE ${conditions.join(' AND ')}`;
+    }
+
+    const summary = await db.get(query, ...params);
     return {
-      total_records: rows.length,
-      total_taxable, total_cgst, total_sgst, total_igst, total_amount
+      total_records: summary.total_records || 0,
+      total_taxable: summary.total_taxable || 0,
+      total_cgst: summary.total_cgst || 0,
+      total_sgst: summary.total_sgst || 0,
+      total_igst: summary.total_igst || 0,
+      total_amount: summary.total_amount || 0,
     };
   });
 
   // ─── DASHBOARD STATS ─────────────────────────────────────────
   ipcMain.handle('dashboard:getStats', async () => {
     const db = getDb();
-    
-    // Purchases
-    const pRows = await db.all('SELECT data, invoice_date FROM purchases');
-    let purchaseTotal = 0;
-    const monthlyPurchaseObj = {};
-    pRows.forEach(r => {
-      try {
-        const d = JSON.parse(r.data);
-        const amt = parseFloat(d.total_amount) || 0;
-        purchaseTotal += amt;
-        const month = r.invoice_date ? r.invoice_date.substring(0, 7) : '';
-        if (month) monthlyPurchaseObj[month] = (monthlyPurchaseObj[month] || 0) + amt;
-      } catch(e) {}
-    });
-    
-    // Sales
-    const sRows = await db.all('SELECT data, invoice_date FROM sales');
-    let saleTotal = 0;
-    const monthlySaleObj = {};
-    sRows.forEach(r => {
-      try {
-        const d = JSON.parse(r.data);
-        const amt = parseFloat(d.total_amount) || 0;
-        saleTotal += amt;
-        const month = r.invoice_date ? r.invoice_date.substring(0, 7) : '';
-        if (month) monthlySaleObj[month] = (monthlySaleObj[month] || 0) + amt;
-      } catch(e) {}
-    });
-    
-    const companyCountRow = await db.get('SELECT COUNT(*) as c FROM companies');
-    const companyCount = companyCountRow ? companyCountRow.c : 0;
-    
-    const monthlyPurchase = Object.keys(monthlyPurchaseObj)
-      .map(month => ({ month, total: monthlyPurchaseObj[month] }))
-      .sort((a,b)=>b.month.localeCompare(a.month))
-      .slice(0,6);
-    
-    const monthlySale = Object.keys(monthlySaleObj)
-      .map(month => ({ month, total: monthlySaleObj[month] }))
-      .sort((a,b)=>b.month.localeCompare(a.month))
-      .slice(0,6);
-      
+
+    const purchaseTotal = (await db.get('SELECT SUM(total_amount) as total FROM purchases')).total || 0;
+    const saleTotal = (await db.get('SELECT SUM(total_amount) as total FROM sales')).total || 0;
+
+    const monthlyPurchaseData = await db.all(
+      'SELECT SUBSTR(invoice_date, 1, 7) as month, SUM(total_amount) as total FROM purchases WHERE invoice_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 6'
+    );
+    const monthlySaleData = await db.all(
+      'SELECT SUBSTR(invoice_date, 1, 7) as month, SUM(total_amount) as total FROM sales WHERE invoice_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 6'
+    );
+
     return {
-      purchaseTotal,
-      saleTotal,
-      purchaseCount: pRows.length,
-      saleCount: sRows.length,
-      companyCount,
+      purchaseTotal: purchaseTotal,
+      saleTotal: saleTotal,
+      purchaseCount: (await db.get('SELECT COUNT(id) as count FROM purchases')).count,
+      saleCount: (await db.get('SELECT COUNT(id) as count FROM sales')).count,
+      companyCount: (await db.get('SELECT COUNT(id) as count FROM companies')).count,
       profit: saleTotal - purchaseTotal,
-      monthlyPurchase,
-      monthlySale
+      monthlyPurchase: monthlyPurchaseData.map(row => ({ month: row.month, total: row.total || 0 })),
+      monthlySale: monthlySaleData.map(row => ({ month: row.month, total: row.total || 0 })),
     };
   });
 

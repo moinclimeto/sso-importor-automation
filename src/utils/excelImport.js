@@ -50,6 +50,7 @@ export const PURCHASE_TABLE_COLUMNS = [
   { key: 'hsn_code', label: 'HSN Code' },
   { key: 'invoice_number', label: 'Invoice No./GST E-Invoice Number' },
   { key: 'irn_no', label: 'IRN No.' },
+  { key: 'invoice_date', label: 'Invoice Date' },
   { key: 'quantity_mt', label: 'Qty. of Waste Plastic (MT)' },
   { key: 'quantity_kg', label: 'Qty. of Waste Plastic (Kg)' },
   { key: 'date_of_entry', label: 'Date of Entry' },
@@ -132,6 +133,7 @@ export const SALE_TABLE_COLUMNS = [
   { key: 'gst_other_charges', label: 'GST & Other Charges' },
   { key: 'invoice_file_name', label: 'Invoice File Name' },
   { key: 'application_number', label: 'Application Number' },
+  { key: 'invoice_date', label: 'Invoice Date' },
 ];
 
 const SALE_HEADER_TO_KEY = {
@@ -507,4 +509,44 @@ export async function importExcelRows(type, rows) {
     saved += 1;
   }
   return saved;
+}
+
+export async function exportExcelData(type, rows) {
+  const isPurchase = type !== 'sale';
+  const wb = XLSX.utils.book_new();
+
+  const sheetData = rows.map(r => {
+    const mapped = {};
+    const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
+    for (const col of columns) {
+      if (col.key === 'quantity_mt' && !r[col.key] && r.quantity) {
+        mapped[col.label] = r.quantity;
+      } else if (col.key === 'quantity_kg' && !r[col.key] && r.quantity_mt) {
+        mapped[col.label] = r.quantity_mt * 1000;
+      } else if (col.key === 'entity_name' && !r[col.key] && r.customer_name) {
+        mapped[col.label] = r.customer_name;
+      } else if (col.key === 'supplier_name' && !r[col.key] && r.vendor_name) {
+        mapped[col.label] = r.vendor_name;
+      } else if (col.key === 'invoice_number' && !r[col.key] && r.invoice_no) {
+        mapped[col.label] = r.invoice_no;
+      } else if (col.key === 'procurement_date' && !r[col.key] && r.invoice_date) {
+        mapped[col.label] = r.invoice_date;
+      } else if (col.key === 'supplier_gst_number' && !r[col.key] && r.vendor_gstin) {
+        mapped[col.label] = r.vendor_gstin;
+      } else {
+        mapped[col.label] = r[col.key];
+      }
+    }
+    return mapped;
+  });
+
+  const headers = isPurchase ? PURCHASE_EXCEL_HEADERS : SALE_EXCEL_HEADERS;
+  const ws = XLSX.utils.json_to_sheet(sheetData, { header: headers });
+
+  ws['!cols'] = headers.map((h) => ({
+    wch: Math.min(40, Math.max(16, h.length + 2)),
+  }));
+
+  XLSX.utils.book_append_sheet(wb, ws, isPurchase ? 'Procurement Data' : 'Sales Data');
+  XLSX.writeFile(wb, `${isPurchase ? 'procurement' : 'sales'}_data.xlsx`);
 }

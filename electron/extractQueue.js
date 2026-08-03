@@ -2,10 +2,11 @@
  * Sequential extract queue: page jobs, duplicate skip, progress + trackId.
  */
 import path from 'path';
-import pLimit from 'p-limit';
+import pLimit from 'p-limit'; // From dev
 import { createLogger, createTrackId } from './logger.js';
 import { getDb } from './database.js';
 import { expandFilesToPageJobs } from './pdfPages.js';
+import { getFileSha256 } from './hashUtils.js'; // From HEAD
 
 function normName(name) {
   return String(name || '')
@@ -14,50 +15,65 @@ function normName(name) {
     .replace(/\s+/g, ' ');
 }
 
-export function getExistingInvoiceFileNames(type) {
+// Modified to use file_hashes table from SQLite
+export async function getExistingInvoiceHashes() {
   const db = getDb();
-  const names = new Set();
-  const rows = type === 'sale' ? db.sales || [] : db.purchases || [];
-  for (const row of rows) {
-    const n = normName(
-      row.invoice_file_name || row.invoice_filename || row.invoice_no || ''
-    );
-    if (n) names.add(n);
-  }
-  return names;
+  const hashes = await db.all('SELECT hash FROM file_hashes');
+  return new Set(hashes.map(row => row.hash));
 }
 
 /**
  * Filter page jobs: skip duplicate invoiceFileName in batch or already in DB.
+ * Uses fileHash for robust duplicate detection.
  */
-export function filterPageJobs(jobs, type, log) {
-  const existing = getExistingInvoiceFileNames(type);
+export async function filterPageJobs(jobs, log) { // Removed 'type' as it's not needed for hash check
+  const existingFileHashes = await getExistingInvoiceHashes(); // Await the promise
   const seenBatch = new Set();
   const accepted = [];
   const skipped = [];
 
   for (const job of jobs) {
-    const key = normName(job.invoiceFileName || job.displayName);
-    if (!key) {
-      skipped.push({ ...job, reason: 'invalid_name' });
-      log.warn('Skip invalid page job', { job });
+    if (!job.filePath) {
+      skipped.push({ ...job, reason: 'no_file_path' });
+      log.warn('Skip page job with no file path', { job });
       continue;
     }
-    if (seenBatch.has(key)) {
-      skipped.push({ ...job, reason: 'duplicate_in_batch' });
-      log.warn('Skip duplicate page in batch', { invoiceFileName: job.invoiceFileName });
+
+    let fileHash;
+    try {
+      fileHash = await getFileSha256(job.filePath);
+    } catch (err) {
+      skipped.push({ ...job, reason: 'hash_error', message: err.message });
+      log.error('Failed to get file SHA256 hash', { filePath: job.filePath, error: err.message });
       continue;
     }
-    if (existing.has(key)) {
-      skipped.push({ ...job, reason: 'already_extracted' });
-      log.warn('Skip already extracted page', {
+
+    if (existingFileHashes.has(fileHash)) {
+      skipped.push({
+        ...job,
+        reason: 'already_extracted',
+        fileHash,
+      });
+      log.warn('Skip already extracted page (by hash)', {
         invoiceFileName: job.invoiceFileName,
-        type,
+        fileHash,
       });
       continue;
     }
-    seenBatch.add(key);
-    accepted.push(job);
+    if (seenBatch.has(fileHash)) {
+      skipped.push({
+        ...job,
+        reason: 'duplicate_in_batch',
+        fileHash,
+      });
+      log.warn('Skip duplicate page in batch (by hash)', {
+        invoiceFileName: job.invoiceFileName,
+        fileHash,
+      });
+      continue;
+    }
+    seenBatch.add(fileHash);
+    accepted.push({ ...job, fileHash }); // Add fileHash to the job
   }
 
   return { accepted, skipped };
@@ -90,7 +106,7 @@ export async function runExtractQueue({
     jobs: expanded.jobs.length,
   });
 
-  const { accepted, skipped } = filterPageJobs(expanded.jobs, type, log);
+  const { accepted, skipped } = await filterPageJobs(expanded.jobs, log); // Removed 'type'
   const total = accepted.length;
   const results = [];
   let successCount = 0;
@@ -136,9 +152,14 @@ export async function runExtractQueue({
           ? 'Duplicate in this batch — skipped'
           : s.reason === 'already_extracted'
             ? 'Already extracted — skipped'
-            : 'Skipped',
+            : s.reason === 'no_file_path'
+              ? 'No file path — skipped'
+              : s.reason === 'hash_error'
+                ? `Hash error: ${s.message}`
+                : 'Skipped',
       reason: s.reason,
       trackId,
+      fileHash: s.fileHash, // Added fileHash for skipped results
     });
     emit({
       stage: 'skipped',
@@ -193,11 +214,12 @@ export async function runExtractQueue({
     currentFile: '',
   });
 
-  const limit = pLimit(Number(process.env.GEMINI_MAX_CONCURRENT || process.env.CONCURRENCY_LIMIT || 20)); // Super fast concurrent batch processing
-  let processedCount = 0;
+  const limit = pLimit(Number(process.env.GEMINI_MAX_CONCURRENT || process.env.CONCURRENCY_LIMIT || 20)); // From dev
+  let processedCount = 0; // From dev
 
+  // Combined loop with concurrency and hash-based logic
   await Promise.all(accepted.map((job, i) => limit(async () => {
-    const job = accepted[i];
+    // Moved declarations inside the async function to be scoped per job
     const current = i + 1;
     const fileTrack = `${trackId}#${current}`;
     const label = job.displayName;
@@ -213,7 +235,7 @@ export async function runExtractQueue({
 
     emit({
       stage: 'processing',
-      processed: processedCount,
+      processed: processedCount, // Use processedCount from outside closure
       current,
       message: `Extracting ${current}/${total}`,
       currentFile: label,
@@ -243,17 +265,19 @@ export async function runExtractQueue({
         sNo: successCount + 1,
         trackId: fileTrack,
         log,
+        fileHash: job.fileHash, // Pass fileHash to extractFn
       });
 
       if (one?.success) {
         successCount += 1;
-        processedCount += 1;
+        processedCount += 1; // Increment here
         const lines = Array.isArray(one.data?.lineItems) ? one.data.lineItems.length : 0;
         log.success('Page extracted', {
           label,
           pageNumber: job.pageNumber,
           lines,
           qrUsed: Boolean(one.meta?.qrUsed),
+          fileHash: job.fileHash, // Log fileHash
         });
         results.push({
           ok: true,
@@ -267,10 +291,11 @@ export async function runExtractQueue({
           qr: one.qr,
           meta: { ...one.meta, trackId: fileTrack },
           trackId: fileTrack,
+          fileHash: one.fileHash || job.fileHash, // Ensure fileHash is in results
         });
         emit({
           stage: 'processing',
-          processed: processedCount,
+          processed: processedCount, // Use processedCount
           current,
           message: `Extracting ${current}/${total}`,
           currentFile: label,
@@ -291,7 +316,7 @@ export async function runExtractQueue({
         });
       } else {
         failedCount += 1;
-        processedCount += 1;
+        processedCount += 1; // Increment here
         const message = one?.message || 'Extraction failed';
         log.error('Page extract failed', { label, message });
         results.push({
@@ -304,10 +329,11 @@ export async function runExtractQueue({
           pageCount: job.pageCount,
           message,
           trackId: fileTrack,
+          fileHash: job.fileHash, // Ensure fileHash is in results
         });
         emit({
           stage: 'processing',
-          processed: processedCount,
+          processed: processedCount, // Use processedCount
           current,
           message: `Extracting ${current}/${total}`,
           currentFile: label,
@@ -327,7 +353,7 @@ export async function runExtractQueue({
       }
     } catch (err) {
       failedCount += 1;
-        processedCount += 1;
+      processedCount += 1; // Increment here
       const message = err?.message || 'Extraction failed';
       log.error('Page extract threw', { label, message });
       results.push({
@@ -340,10 +366,11 @@ export async function runExtractQueue({
         pageCount: job.pageCount,
         message,
         trackId: fileTrack,
+        fileHash: job.fileHash, // Ensure fileHash is in results
       });
       emit({
         stage: 'processing',
-        processed: processedCount,
+        processed: processedCount, // Use processedCount
         current,
         message: `Extracting ${current}/${total}`,
         currentFile: label,
@@ -356,7 +383,7 @@ export async function runExtractQueue({
         },
       });
     }
-  })));
+  }))); // End of Promise.all and pLimit
 
   log.info('Queue complete', {
     successCount,
@@ -393,4 +420,3 @@ export async function runExtractQueue({
 export function baseName(filePath) {
   return path.basename(filePath || '') || '';
 }
-
