@@ -43,6 +43,11 @@ contextBridge.exposeInMainWorld('pwp', {
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
   },
+  // Settings
+  settings: {
+    get: (key) => ipcRenderer.invoke('settings:get', key),
+    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
+  },
   // OCR (Gemini + local QR)
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),

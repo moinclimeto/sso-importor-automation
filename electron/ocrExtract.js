@@ -125,9 +125,9 @@ Counterparty=SELLER (supplier).Also extract buyer GST+name for company match.
 
 ${fy}
 
-{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+{"inv":"","dt":"YYYY-MM-DD","sellerName":"","sellerGst":"","buyerName":"","buyerGst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/a*/city/st/pin/mob=seller(supplier).sg/sn=seller GST/name.bg/bn=buyer GST/name.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.${productsHint}`;
+RULES:sellerName/sellerGst/a*/city/st/pin/mob=seller(supplier).buyerName/buyerGst=buyer.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.${productsHint}`;
 
   }
 
@@ -139,9 +139,9 @@ Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Selle
 
 ${fy}
 
-{"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+{"inv":"","dt":"YYYY-MM-DD","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/addr/st/dist=buyer.sg/sn=seller GST/name.bg/bn=buyer GST/name.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.c/rp/pc/reg only if printed else "".${productsHint}`;
+RULES:buyerName/buyerGst/addr/st/dist=buyer(customer).sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.c/rp/pc/reg only if printed else "".${productsHint}`;
 
 }
 
@@ -198,21 +198,21 @@ export function expandRawExtraction(raw = {}) {
 
 
   const sellerGst = nf(
-    raw.sg ?? raw.sellerGst ?? raw.sellerGstin ?? raw.SellerGstin ?? raw.supplierGstin
+    raw.sg ?? raw.sellerGst ?? raw.sellerGstin ?? raw.SellerGstin ?? raw.supplierGstin ?? raw.vendorGstin ?? raw.vendorGst
   ).toUpperCase();
   const buyerGst = nf(
-    raw.bg ?? raw.buyerGst ?? raw.buyerGstin ?? raw.BuyerGstin ?? raw.customerGstin
+    raw.bg ?? raw.buyerGst ?? raw.buyerGstin ?? raw.BuyerGstin ?? raw.customerGstin ?? raw.customerGst
   ).toUpperCase();
-  const sellerName = nf(raw.sn ?? raw.sellerName ?? raw.SellerNm ?? raw.supplierName);
-  const buyerName = nf(raw.bn ?? raw.buyerName ?? raw.BuyerNm ?? raw.customerName);
+  const sellerName = nf(raw.sn ?? raw.sellerName ?? raw.SellerNm ?? raw.supplierName ?? raw.vendorName ?? raw.partyName);
+  const buyerName = nf(raw.bn ?? raw.buyerName ?? raw.BuyerNm ?? raw.customerName ?? raw.consigneeName);
 
   return {
 
-    invoiceNumber: nf(raw.inv ?? raw.invoiceNumber ?? raw.invoice_no ?? raw.invoice_number),
+    invoiceNumber: nf(raw.inv ?? raw.invoiceNumber ?? raw.invoice_no ?? raw.invoice_number ?? raw.billNo ?? raw.billNumber),
 
-    invoiceDate: toIsoDate(raw.dt ?? raw.invoiceDate ?? raw.invoice_date),
+    invoiceDate: toIsoDate(raw.dt ?? raw.invoiceDate ?? raw.invoice_date ?? raw.billDate),
 
-    companyName: nf(raw.name ?? raw.supplierName ?? raw.entityName ?? raw.companyName),
+    companyName: nf(raw.name ?? raw.supplierName ?? raw.entityName ?? raw.companyName ?? raw.partyName),
 
     gstNumber: nf(raw.gst ?? raw.supplierGstin ?? raw.buyerGstin ?? raw.gstNumber).toUpperCase(),
 
@@ -409,7 +409,8 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
   const qty = sumMtFromLines(lineItems) || qtyToMt(raw.quantitySoldMt ?? raw.quantityMt);
 
-
+  const hsnStr = String(first?.hsn || raw.hsnCode || '').replace(/[^0-9]/g, '');
+  const isClinker = hsnStr.includes('25231000');
 
   return {
 
@@ -425,9 +426,9 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
     plastic_type: nf(first?.plasticMaterial || raw.plasticType),
 
-    product_type: nf(first?.productDescription || raw.productType),
+    product_type: isClinker ? 'Clinker' : 'Cement',
 
-    recycled_plastic_percent: num(first?.recycledPercent || raw.recycledPlasticPercent),
+    recycled_plastic_percent: isClinker ? 100 : num(first?.recycledPercent || raw.recycledPlasticPercent),
 
     conversion_factor: num(raw.conversionFactor) || 0,
 

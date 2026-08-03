@@ -1131,6 +1131,7 @@ export default function DocTable() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [globalBankMissing, setGlobalBankMissing] = useState(false);
 
 
 
@@ -1253,18 +1254,15 @@ export default function DocTable() {
 
 
       const data = isPurchase
-
-
-
         ? await api.purchases.getAll()
-
-
-
         : await api.sales.getAll();
-
-
-
       setRows(data || []);
+
+      if (!isPurchase) {
+        const globalBank = await window.pwp?.settings?.get('global_bank_details');
+        setGlobalBankMissing(!globalBank?.account_number || !globalBank?.ifsc_code);
+      }
+
 
 
 
@@ -1757,14 +1755,26 @@ export default function DocTable() {
       )}
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line mb-4">
           {error}
         </div>
       )}
 
+      {!isPurchase && rows.length > 0 && globalBankMissing && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start justify-between gap-2 mb-4">
+          <div className="flex items-start gap-2">
+            <Globe size={18} className="text-amber-500 mt-0.5 shrink-0" />
+            <span>
+              <b>Disclaimer:</b> Global Bank Details (Account No / IFSC) for Sales are missing.
+            </span>
+          </div>
+          <button onClick={() => navigate('/cpcb-dashboard')} className="text-indigo-600 font-medium hover:underline shrink-0">
+            Add in Dashboard
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-
-
 
         {loading ? (
 
@@ -1995,30 +2005,17 @@ export default function DocTable() {
 
 
 
+              if (col.key === 'recycled_plastic_percent') {
+                if (r.product_type === 'Clinker') return '100';
+                return '';
+              }
+
               if (
-
-
-
-                ['recycled_plastic_percent', 'conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) &&
-
-
-
+                ['conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) &&
                 value !== undefined &&
-
-
-
                 value !== ''
-
-
-
               ) {
-
-
-
                 return fmt(value);
-
-
-
               }
 
 

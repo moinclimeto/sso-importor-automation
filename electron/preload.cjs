@@ -34,10 +34,16 @@ contextBridge.exposeInMainWorld('pwp', {
     update: (data) => ipcRenderer.invoke('sales:update', data),
     delete: (id) => ipcRenderer.invoke('sales:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('sales:getSummary', filters),
+    applyBankDetailsToAll: (bankDetails) => ipcRenderer.invoke('sales:applyBankDetailsToAll', bankDetails),
   },
   // Dashboard
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
+  },
+  // Settings
+  settings: {
+    get: (key) => ipcRenderer.invoke('settings:get', key),
+    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
   // OCR (Gemini)
   ocr: {

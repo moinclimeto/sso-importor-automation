@@ -263,6 +263,7 @@ export function applyCompanyRoutingToResults(results = [], companies = []) {
         zone: match.zone,
         companyId: match.company?.id ?? null,
         companyName: match.company?.name || '',
+        company: match.company || null,
       },
     };
 

@@ -99,6 +99,45 @@ export function registerIpcHandlers() {
     return [];
   });
 
+  // ─── SETTINGS ──────────────────────────────────────────────────
+  const ensureSettingsTable = async () => {
+    const db = getDb();
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT
+      );
+    `);
+    return db;
+  };
+
+  ipcMain.handle('settings:get', async (_, key) => {
+    try {
+      const db = await ensureSettingsTable();
+      const row = await db.get(`SELECT value FROM app_settings WHERE key = ?`, key);
+      return row ? JSON.parse(row.value) : null;
+    } catch (err) {
+      console.error('settings:get error', err);
+      return null;
+    }
+  });
+
+  ipcMain.handle('settings:set', async (_, key, value) => {
+    try {
+      const db = await ensureSettingsTable();
+      await db.run(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        key, JSON.stringify(value), new Date().toISOString()
+      );
+      return true;
+    } catch (err) {
+      console.error('settings:set error', err);
+      return false;
+    }
+  });
+
   // ─── FILE SYSTEM ───────────────────────────────────────────────
   ipcMain.handle('fs:readFileBase64', async (_, filePath) => {
     try {
@@ -120,8 +159,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('companies:add', async (_, data) => {
     const db = getDb();
     const result = await db.run(
-      'INSERT INTO companies (name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?)',
-      data.name, data.gstin, data.pan, data.entity_type, new Date().toISOString()
+      'INSERT INTO companies (name, gstin, pan, entity_type, account_number, ifsc_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      data.name, data.gstin, data.pan, data.entity_type, data.account_number, data.ifsc_code, new Date().toISOString()
     );
     return { id: result.lastID, ...data };
   });
@@ -129,8 +168,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('companies:update', async (_, data) => {
     const db = getDb();
     await db.run(
-      'UPDATE companies SET name = ?, gstin = ?, pan = ?, entity_type = ? WHERE id = ?',
-      data.name, data.gstin, data.pan, data.entity_type, data.id
+      'UPDATE companies SET name = ?, gstin = ?, pan = ?, entity_type = ?, account_number = ?, ifsc_code = ? WHERE id = ?',
+      data.name, data.gstin, data.pan, data.entity_type, data.account_number, data.ifsc_code, data.id
     );
     return { success: true };
   });
@@ -572,6 +611,23 @@ export function registerIpcHandlers() {
     }
 
     return { success: true };
+  });
+
+  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {
+    try {
+      const db = getDb();
+      const result = await db.run(
+        `UPDATE sales SET account_number = ?, ifsc_code = ?
+         WHERE (account_number IS NULL OR account_number = '')
+           AND (ifsc_code IS NULL OR ifsc_code = '')`,
+        account_number, ifsc_code
+      );
+      console.log(`[Bank] Applied bank details to ${result.changes} sales records.`);
+      return { success: true, updated: result.changes };
+    } catch (err) {
+      console.error('sales:applyBankDetailsToAll error', err);
+      return { success: false, error: err.message };
+    }
   });
 
   ipcMain.handle('sales:delete', async (_, id) => {

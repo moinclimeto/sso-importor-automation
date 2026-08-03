@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
-import { Play, ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee } from 'lucide-react';
+import { Play, ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee, CreditCard, Edit2, Check, X } from 'lucide-react';
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
@@ -25,12 +25,20 @@ function StatCard({ label, value, icon: Icon, color, sub }) {
 export default function Dashboard() {
   const [stats, setStats] = useState(null);
   const [loading, setLoading] = useState(true);
+  const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
+  const [isEditingBank, setIsEditingBank] = useState(false);
+  const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
 
   useEffect(() => {
     if (window.pwp) {
       window.pwp.dashboard.getStats().then((data) => {
         setStats(data);
         setLoading(false);
+      });
+      window.pwp.settings?.get('global_bank_details').then((data) => {
+        if (data) {
+          setBankDetails(data);
+        }
       });
     } else {
       setStats({
@@ -63,6 +71,14 @@ export default function Dashboard() {
     );
   }
 
+  const handleSaveBankDetails = async () => {
+    if (window.pwp?.settings) {
+      await window.pwp.settings.set('global_bank_details', editBankDetails);
+      setBankDetails(editBankDetails);
+      setIsEditingBank(false);
+    }
+  };
+
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -92,6 +108,63 @@ export default function Dashboard() {
           <Play size={18} />
           Run EPR Scraper
         </button>
+      </div>
+
+      {/* Global Bank Details Card */}
+      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-lg bg-indigo-500">
+            <CreditCard size={22} className="text-white" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-500 font-medium">Sale Auto-Apply Bank Details</p>
+            {isEditingBank ? (
+              <div className="flex items-center gap-3 mt-1">
+                <input
+                  type="text"
+                  placeholder="Account Number"
+                  value={editBankDetails.account_number}
+                  onChange={(e) => setEditBankDetails({ ...editBankDetails, account_number: e.target.value })}
+                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-40"
+                />
+                <input
+                  type="text"
+                  placeholder="IFSC Code"
+                  value={editBankDetails.ifsc_code}
+                  onChange={(e) => setEditBankDetails({ ...editBankDetails, ifsc_code: e.target.value })}
+                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-32"
+                />
+              </div>
+            ) : (
+              <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                {bankDetails.account_number || 'Not Added'} <span className="text-slate-400 mx-1">|</span> {bankDetails.ifsc_code || 'Not Added'}
+              </p>
+            )}
+          </div>
+        </div>
+        <div>
+          {isEditingBank ? (
+            <div className="flex items-center gap-2">
+              <button onClick={handleSaveBankDetails} className="p-1.5 bg-green-50 text-green-600 rounded-md hover:bg-green-100 transition">
+                <Check size={16} />
+              </button>
+              <button onClick={() => setIsEditingBank(false)} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition">
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={() => {
+                setEditBankDetails(bankDetails);
+                setIsEditingBank(true);
+              }} 
+              className="p-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 transition"
+              title="Edit Bank Details"
+            >
+              <Edit2 size={16} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Stats */}
