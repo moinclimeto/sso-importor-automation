@@ -33,7 +33,6 @@ const navLinks = [
 ];
 
 const pageHeaders = {
-  '/dashboard': { title: 'Dashboard', subtitle: 'Overview of your purchase & sale activity' },
   '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
   '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },

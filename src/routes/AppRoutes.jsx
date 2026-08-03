@@ -2,7 +2,6 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import LoginPage from '../pages/Login.jsx';
 import MainLayout from '../components/MainLayout.jsx';
-import Dashboard from '../pages/Dashboard.jsx';
 import Companies from '../pages/Companies.jsx';
 import Purchases from '../pages/Purchases.jsx';
 import Sales from '../pages/Sales.jsx';
@@ -36,7 +35,6 @@ export default function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route path="dashboard" element={<Dashboard />} />
           <Route path="companies" element={<Companies />} />
           <Route path="purchases" element={<Purchases />} />
           <Route path="sales" element={<Sales />} />

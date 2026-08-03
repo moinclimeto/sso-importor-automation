@@ -4,7 +4,7 @@ import { Toast, useToast } from '../components/Toast.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import ScrapedDashboard from '../components/ScrapedDashboard.jsx';
 
-const EMPTY = { name: '', gstin: '', pan: '' };
+const EMPTY = { name: '', gstin: '', pan: '', account_number: '', ifsc_code: '' };
 
 /** PAN = characters 3–12 of a 15-char GSTIN */
 function extractPanFromGstin(gstin) {
@@ -18,6 +18,8 @@ function CompanyModal({ company, onSave, onClose, saving }) {
     name: company?.name || '',
     gstin: company?.gstin || '',
     pan: company?.pan || extractPanFromGstin(company?.gstin) || '',
+    account_number: company?.account_number || '',
+    ifsc_code: company?.ifsc_code || '',
   });
   const [error, setError] = useState('');
 
@@ -52,13 +54,15 @@ function CompanyModal({ company, onSave, onClose, saving }) {
       name: form.name.trim(),
       gstin: form.gstin.trim().toUpperCase(),
       pan,
+      account_number: form.account_number.trim(),
+      ifsc_code: form.ifsc_code.trim().toUpperCase(),
       ...(company?.entity_type != null ? { entity_type: company.entity_type } : {}),
     });
   };
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md">
+      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md max-h-[90vh] overflow-y-auto">
         <div className="flex items-center justify-between p-5 border-b border-slate-100">
           <h2 className="font-semibold text-lg text-slate-800">
             {company?.id ? 'Edit Company' : 'Add Company'}
@@ -97,6 +101,7 @@ function CompanyModal({ company, onSave, onClose, saving }) {
               disabled={saving}
             />
           </div>
+
           <div>
             <label className="label">PAN</label>
             <input
