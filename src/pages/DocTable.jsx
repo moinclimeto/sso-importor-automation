@@ -17,6 +17,7 @@ import InvoiceDetailsModal, {
   ViewInvoiceButton,
 } from '../components/InvoiceDetailsModal.jsx';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
+import { Toast, useToast } from '../components/Toast.jsx';
 import * as XLSX from 'xlsx';
 
 
@@ -1154,7 +1155,7 @@ export default function DocTable() {
 
 
 
-  const [message, setMessage] = useState('');
+  const { toast, showToast, hideToast } = useToast();
 
 
 
@@ -1408,16 +1409,14 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
     downloadExcelTemplate(type);
 
 
-
-    setMessage(`${title} Excel template downloaded.`);
-
+    showToast(`${title} Excel template downloaded.`, 'success');
 
 
   };
@@ -1436,7 +1435,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1504,7 +1503,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1535,9 +1534,7 @@ export default function DocTable() {
       }
 
 
-
-      setMessage(msg);
-
+      showToast(msg, 'success');
 
 
       await load();
@@ -1760,11 +1757,8 @@ export default function DocTable() {
         />
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          {message}
-        </div>
-      )}
+      <Toast toast={toast} onClose={hideToast} />
+
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line mb-4">
@@ -2095,7 +2089,7 @@ export default function DocTable() {
           type={type}
           onClose={() => setAddOpen(false)}
           onSaved={() => {
-            setMessage(`${title} record added successfully.`);
+            showToast(`${title} record added successfully.`, 'success');
             load();
           }}
         />
@@ -2107,7 +2101,7 @@ export default function DocTable() {
           initialData={editRow}
           onClose={() => setEditRow(null)}
           onSaved={() => {
-            setMessage(`${title} record updated successfully.`);
+            showToast(`${title} record updated successfully.`, 'success');
             load();
           }}
         />
