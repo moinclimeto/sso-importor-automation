@@ -123,6 +123,7 @@ export const SALE_TABLE_COLUMNS = [
   { key: 'category_of_plastic', label: 'Category of Plastic' },
   { key: 'plastic_type', label: 'Plastic Type' },
   { key: 'product_type', label: 'Product Type' },
+  { key: 'recycled_plastic_percent', label: '(%) of Recycled Plastic in Product' },
   { key: 'quantity_sold_mt', label: 'Quantity Sold (MT)' },
   { key: 'entity_name', label: 'Name of the Entity' },
   { key: 'address', label: 'Address' },
