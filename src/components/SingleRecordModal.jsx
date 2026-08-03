@@ -74,16 +74,40 @@ function Field({ label, required, hint, children, className = '' }) {
   );
 }
 
-export default function SingleRecordModal({ type, onClose, onSaved }) {
+export default function SingleRecordModal({ type, initialData, onClose, onSaved }) {
   const isPurchase = type !== 'sale';
-  const title = isPurchase ? 'Add Procurement Details' : 'Add Post Consumer';
-  const [form, setForm] = useState(isPurchase ? emptyPurchase() : emptySale());
+  const isEdit = Boolean(initialData?.id);
+  const title = isPurchase 
+    ? (isEdit ? 'Edit Procurement Details' : 'Add Procurement Details') 
+    : (isEdit ? 'Edit Post Consumer' : 'Add Post Consumer');
+
+  const [form, setForm] = useState(() => {
+    if (initialData) {
+      if (isPurchase) {
+        return {
+          ...emptyPurchase(),
+          ...initialData,
+          invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
+          invoice_number: initialData.invoice_number || initialData.invoice_no || '',
+          supplier_name: initialData.supplier_name || initialData.vendor_name || '',
+          supplier_gst_number: initialData.supplier_gst_number || initialData.vendor_gstin || '',
+        };
+      } else {
+        return {
+          ...emptySale(),
+          ...initialData,
+        };
+      }
+    }
+    return isPurchase ? emptyPurchase() : emptySale();
+  });
+  
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!isPurchase) return;
+    if (!isPurchase || isEdit) return;
     (async () => {
       try {
         const companies = await getApi().companies.getAll();
@@ -93,7 +117,7 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
         /* ignore */
       }
     })();
-  }, [isPurchase]);
+  }, [isPurchase, isEdit]);
 
   const set = (key, value) => {
     setForm((prev) => {
@@ -188,9 +212,22 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
         total_amount: 0,
       };
 
+      if (isEdit && initialData) {
+        payload.lineItems = initialData.line_items || initialData.lineItems;
+        payload.extraction = initialData.extraction;
+        payload._source_fields = initialData._source_fields;
+        payload._routing = initialData._routing;
+        payload.fileHash = initialData.file_hash || initialData.fileHash;
+      }
+
       setSaving(true);
       try {
-        await getApi().purchases.add(payload);
+        if (isEdit) {
+          payload.id = initialData.id;
+          await getApi().purchases.update(payload);
+        } else {
+          await getApi().purchases.add(payload);
+        }
         onSaved?.();
         onClose();
       } catch (err) {
@@ -240,9 +277,22 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
       total_amount: parseFloat(form.gst_other_charges) || 0,
     };
 
+    if (isEdit && initialData) {
+      payload.lineItems = initialData.line_items || initialData.lineItems;
+      payload.extraction = initialData.extraction;
+      payload._source_fields = initialData._source_fields;
+      payload._routing = initialData._routing;
+      payload.fileHash = initialData.file_hash || initialData.fileHash;
+    }
+
     setSaving(true);
     try {
-      await getApi().sales.add(payload);
+      if (isEdit) {
+        payload.id = initialData.id;
+        await getApi().sales.update(payload);
+      } else {
+        await getApi().sales.add(payload);
+      }
       onSaved?.();
       onClose();
     } catch (err) {
