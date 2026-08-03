@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
-import { ArrowLeft, Wallet, TrendingUp, Package, History, ArrowDownRight, IndianRupee, Calendar, FileText, AlertCircle, RefreshCw, Scale } from 'lucide-react';
+import { ArrowLeft, Wallet, TrendingUp, Package, History, ArrowDownRight, IndianRupee, Calendar, FileText, AlertCircle, RefreshCw, Scale, CreditCard, Edit2, Check, X } from 'lucide-react';
 import { getApi } from '../utils/pwpApi.js';
+import { useToast, Toast } from '../components/Toast.jsx';
 
 export default function ScrapedDashboard({ company, onBack }) {
   const [profile, setProfile] = useState(null);
@@ -16,7 +17,17 @@ export default function ScrapedDashboard({ company, onBack }) {
 
   const [dashboardCards, setDashboardCards] = useState(null);
 
+  const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
+  const [isEditingBank, setIsEditingBank] = useState(false);
+  const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
+  const { toast, showToast, hideToast } = useToast();
+
   useEffect(() => {
+    window.pwp?.settings?.get('global_bank_details').then((data) => {
+      if (data) {
+        setBankDetails(data);
+      }
+    });
     async function fetchStaticData() {
       try {
         const api = getApi();
@@ -69,6 +80,47 @@ export default function ScrapedDashboard({ company, onBack }) {
     );
   }
 
+  const handleSaveBankDetails = async () => {
+    console.log('[Bank] Save clicked. editBankDetails:', editBankDetails);
+    console.log('[Bank] window.pwp available:', !!window.pwp);
+    console.log('[Bank] window.pwp.settings available:', !!window.pwp?.settings);
+
+    try {
+      if (!window.pwp?.settings) {
+        console.error('[Bank] CRITICAL: window.pwp.settings is not available. Running outside Electron?');
+        showToast('Settings API not available — is the app running in Electron?', 'error');
+        return;
+      }
+
+      console.log('[Bank] Calling settings.set...');
+      const result = await window.pwp.settings.set('global_bank_details', editBankDetails);
+      console.log('[Bank] settings.set result:', result);
+
+      // Auto-apply bank details to all sales records that have no account/IFSC yet
+      let updatedCount = 0;
+      if (window.pwp?.sales?.applyBankDetailsToAll) {
+        const applyResult = await window.pwp.sales.applyBankDetailsToAll(editBankDetails);
+        console.log('[Bank] applyBankDetailsToAll result:', applyResult);
+        if (applyResult?.success) {
+          updatedCount = applyResult.updated || 0;
+        }
+      }
+
+      setBankDetails(editBankDetails);
+      setIsEditingBank(false);
+
+      if (updatedCount > 0) {
+        showToast(`Bank details saved & auto-applied to ${updatedCount} sale record${updatedCount > 1 ? 's' : ''}`, 'success');
+      } else {
+        showToast('Bank details saved successfully', 'success');
+      }
+      console.log('[Bank] Save complete!');
+    } catch (err) {
+      console.error('[Bank] Exception during save:', err);
+      showToast('Failed to save bank details: ' + err.message, 'error');
+    }
+  };
+
   // Calculate some dummy or real metrics if possible
   const totalProc = procurement.reduce((sum, item) => sum + (Number(item.qty_plastic_waste_mt) || 0), 0);
   const totalSale = sales.reduce((sum, item) => sum + (Number(item.productionid_qty) || 0), 0);
@@ -86,6 +138,63 @@ export default function ScrapedDashboard({ company, onBack }) {
           </div>
         </div>
       )}
+
+      {/* Global Bank Details Card */}
+      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
+        <div className="flex items-center gap-4">
+          <div className="p-3 rounded-lg bg-indigo-500">
+            <CreditCard size={22} className="text-white" />
+          </div>
+          <div>
+            <p className="text-sm text-slate-500 font-medium">Sale Auto-Apply Bank Details</p>
+            {isEditingBank ? (
+              <div className="flex items-center gap-3 mt-1">
+                <input
+                  type="text"
+                  placeholder="Account Number"
+                  value={editBankDetails.account_number}
+                  onChange={(e) => setEditBankDetails({ ...editBankDetails, account_number: e.target.value })}
+                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-40"
+                />
+                <input
+                  type="text"
+                  placeholder="IFSC Code"
+                  value={editBankDetails.ifsc_code}
+                  onChange={(e) => setEditBankDetails({ ...editBankDetails, ifsc_code: e.target.value })}
+                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-32"
+                />
+              </div>
+            ) : (
+              <p className="text-sm font-semibold text-slate-800 mt-0.5">
+                {bankDetails.account_number || 'Not Added'} <span className="text-slate-400 mx-1">|</span> {bankDetails.ifsc_code || 'Not Added'}
+              </p>
+            )}
+          </div>
+        </div>
+        <div>
+          {isEditingBank ? (
+            <div className="flex items-center gap-2">
+              <button onClick={handleSaveBankDetails} className="p-1.5 bg-green-50 text-green-600 rounded-md hover:bg-green-100 transition">
+                <Check size={16} />
+              </button>
+              <button onClick={() => setIsEditingBank(false)} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition">
+                <X size={16} />
+              </button>
+            </div>
+          ) : (
+            <button 
+              onClick={() => {
+                setEditBankDetails(bankDetails);
+                setIsEditingBank(true);
+              }} 
+              className="p-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 transition"
+              title="Edit Bank Details"
+            >
+              <Edit2 size={16} />
+            </button>
+          )}
+        </div>
+      </div>
 
       {/* EPR Dashboard Structured Cards */}
       {dashboardCards && (
@@ -252,6 +361,7 @@ export default function ScrapedDashboard({ company, onBack }) {
           <p className="text-2xl font-bold text-slate-900">{totalSale.toFixed(2)} MT</p>
         </div>
       </div>
+      <Toast toast={toast} onClose={hideToast} />
     </div>
   );
 }
