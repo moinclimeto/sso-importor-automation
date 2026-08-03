@@ -43,19 +43,18 @@ function displayMt(item) {
 
 
 function getLineItems(invoice) {
-
   if (!invoice) return [];
-
-  if (Array.isArray(invoice.lineItems) && invoice.lineItems.length) return invoice.lineItems;
-
-  if (Array.isArray(invoice.data?.lineItems) && invoice.data.lineItems.length) {
-
-    return invoice.data.lineItems;
-
+  // Prioritize snake_case from DB or passed directly
+  if (Array.isArray(invoice.line_items) && invoice.line_items.length) return invoice.line_items;
+  if (Array.isArray(invoice.data?.line_items) && invoice.data.line_items.length) {
+    return invoice.data.line_items;
   }
-
+  // Fallback to camelCase for compatibility
+  if (Array.isArray(invoice.lineItems) && invoice.lineItems.length) return invoice.lineItems;
+  if (Array.isArray(invoice.data?.lineItems) && invoice.data.lineItems.length) {
+    return invoice.data.lineItems;
+  }
   return [];
-
 }
 
 

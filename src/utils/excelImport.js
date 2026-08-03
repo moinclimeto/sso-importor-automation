@@ -50,6 +50,7 @@ export const PURCHASE_TABLE_COLUMNS = [
   { key: 'hsn_code', label: 'HSN Code' },
   { key: 'invoice_number', label: 'Invoice No./GST E-Invoice Number' },
   { key: 'irn_no', label: 'IRN No.' },
+  { key: 'invoice_date', label: 'Invoice Date' },
   { key: 'quantity_mt', label: 'Qty. of Waste Plastic (MT)' },
   { key: 'quantity_kg', label: 'Qty. of Waste Plastic (Kg)' },
   { key: 'date_of_entry', label: 'Date of Entry' },
@@ -137,6 +138,7 @@ export const SALE_TABLE_COLUMNS = [
   { key: 'gst_other_charges', label: 'GST & Other Charges' },
   { key: 'invoice_file_name', label: 'Invoice File Name' },
   { key: 'application_number', label: 'Application Number' },
+  { key: 'invoice_date', label: 'Invoice Date' },
 ];
 
 const SALE_HEADER_TO_KEY = {

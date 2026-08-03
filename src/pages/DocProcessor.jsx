@@ -42,13 +42,15 @@ export default function DocProcessor() {
 
   return (
     <div className="space-y-6 max-w-6xl">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-          Records: <span className="ml-1 font-semibold text-slate-800">{totalRecords}</span>
-        </span>
-        <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-          Categories: <span className="ml-1 font-semibold text-slate-800">2</span>
-        </span>
+      <div className="flex items-center justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+            Records: <span className="ml-1 font-semibold text-slate-800">{totalRecords}</span>
+          </span>
+          <span className="inline-flex items-center rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
+            Categories: <span className="ml-1 font-semibold text-slate-800">2</span>
+          </span>
+        </div>
       </div>
 
       <div className="flex items-center justify-between pt-1">
@@ -64,7 +66,8 @@ export default function DocProcessor() {
           return (
             <div
               key={cat.type}
-              className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md transition-shadow"
+              onClick={() => navigate('/doc-table', { state: { type: cat.type } })}
+              className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 hover:shadow-md hover:border-green-300 transition-shadow cursor-pointer"
             >
               <div className="flex items-start justify-between gap-3">
                 <div className="flex items-start gap-3 min-w-0">
@@ -94,25 +97,6 @@ export default function DocProcessor() {
                   <p className="text-lg font-bold text-slate-900">QR</p>
                   <p className="text-xs text-slate-400">Priority</p>
                 </div>
-              </div>
-
-              <div className="mt-4 flex flex-wrap items-center gap-3">
-                <button
-                  type="button"
-                  onClick={() => navigate('/doc-upload', { state: { type: cat.type } })}
-                  className="inline-flex items-center gap-1.5 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-3 py-2"
-                >
-                  <Upload size={14} />
-                  Upload invoices
-                </button>
-                <button
-                  type="button"
-                  onClick={() => navigate('/doc-table', { state: { type: cat.type } })}
-                  className="inline-flex items-center gap-1.5 text-sm font-medium text-green-600 hover:text-green-700"
-                >
-                  View table
-                  <ArrowRight size={14} />
-                </button>
               </div>
             </div>
           );

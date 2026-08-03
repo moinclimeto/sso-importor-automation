@@ -101,13 +101,15 @@ export function registerIpcHandlers() {
     const res = await db.all(query, ...params);
 
     // Parse JSON fields back to objects
-    return res.map(row => ({
-      ...row,
-      line_items: row.line_items ? JSON.parse(row.line_items) : null,
-      extraction: row.extraction ? JSON.parse(row.extraction) : null,
-      _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
-      _routing: row._routing ? JSON.parse(row._routing) : null,
-    }));
+    return res.map(row => {
+      return {
+        ...row,
+        line_items: row.line_items ? JSON.parse(row.line_items) : null,
+        extraction: row.extraction ? JSON.parse(row.extraction) : null,
+        _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
+        _routing: row._routing ? JSON.parse(row._routing) : null,
+      };
+    });
   });
 
   ipcMain.handle('purchases:add', async (_, data) => {
@@ -313,13 +315,15 @@ export function registerIpcHandlers() {
     const res = await db.all(query, ...params);
 
     // Parse JSON fields back to objects
-    return res.map(row => ({
-      ...row,
-      line_items: row.line_items ? JSON.parse(row.line_items) : null,
-      extraction: row.extraction ? JSON.parse(row.extraction) : null,
-      _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
-      _routing: row._routing ? JSON.parse(row._routing) : null,
-    }));
+    return res.map(row => {
+      return {
+        ...row,
+        line_items: row.line_items ? JSON.parse(row.line_items) : null,
+        extraction: row.extraction ? JSON.parse(row.extraction) : null,
+        _source_fields: row._source_fields ? JSON.parse(row._source_fields) : null,
+        _routing: row._routing ? JSON.parse(row._routing) : null,
+      };
+    });
   });
 
   ipcMain.handle('sales:add', async (_, data) => {
