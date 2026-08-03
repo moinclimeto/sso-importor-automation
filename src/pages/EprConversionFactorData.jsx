@@ -65,11 +65,11 @@ export default function EprConversionFactorData() {
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead>
-                <tr className="bg-slate-50 border-b border-slate-100">
-                  <th className="th w-24">Sr. No.</th>
-                  <th className="th">Conversion Factor</th>
-                  <th className="th">Last Updated</th>
+              <thead className="bg-teal-700 text-white">
+                <tr>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap w-24">Sr. No.</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Conversion Factor</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Last Updated</th>
                 </tr>
               </thead>
               <tbody>

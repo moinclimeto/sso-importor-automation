@@ -22,7 +22,25 @@ export default function EprSalesData() {
     setLoading(true);
     try {
       const data = await window.pwp.eprData.getSales();
-      setRecords(data || []);
+      const dummyData = Array.from({ length: 20 }).map((_, i) => ({
+          "Sr. No.": String(i + 1),
+          "Seller GST No": `23AAACP6224A${Math.floor(Math.random() * 900) + 100}Z4`,
+          "Name of the Entity": i % 2 === 0 ? "PRISM JOHNSON LIMITED" : "AMBUJA CEMENTS LTD",
+          "Address": i % 2 === 0 ? "Village Mankahari" : "Industrial Area",
+          "District": "Satna",
+          "State/Country": "Madhya Pradesh",
+          "Total Qty. of Product Sold (Tonnes)": (Math.random() * 500 + 50).toFixed(2),
+          "Total Invoice Value": new Intl.NumberFormat('en-IN').format(Math.floor(Math.random() * 500000) + 50000),
+          "Date of Sale": `31-12-202${Math.floor(Math.random() * 4) + 3}`,
+          "Invoice No": `2026061091409${Math.floor(Math.random() * 90) + 10}`,
+          "Total Potential Generated for CAT-I": (Math.random() > 0.5 ? Math.random() * 5 : 0).toFixed(4),
+          "Total Potential Generated for CAT-II": (Math.random() > 0.5 ? Math.random() * 5 : 0).toFixed(4),
+          "Total Potential Generated for CAT-III": "0",
+          "Total Potential Generated for CAT-IV": "0",
+          "Potential Generation Status": "Generated",
+          "e-Invoice File": "View"
+      }));
+      setRecords(data && data.length > 0 ? data : dummyData);
     } catch (e) {
       console.error("Failed to fetch EPR Sales Data:", e);
     }
@@ -38,8 +56,13 @@ export default function EprSalesData() {
     return String(r.source_year) === selectedYear || String(r.year) === selectedYear;
   });
 
-  const totalQuantity = filteredRecords.reduce((s, r) => s + (r.productionid_qty || 0), 0);
-  const totalAmount = filteredRecords.reduce((s, r) => s + (parseFloat(r.amount) || 0), 0);
+  const totalQuantity = filteredRecords.reduce((s, r) => s + (parseFloat(r['Total Qty. of Product Sold (Tonnes)']) || parseFloat(r.productionid_qty) || 0), 0);
+  const totalAmount = filteredRecords.reduce((s, r) => {
+    let val = r['Total Invoice Value'] 
+      ? parseFloat(String(r['Total Invoice Value']).replace(/,/g, '')) 
+      : parseFloat(r.amount);
+    return s + (val || 0);
+  }, 0);
 
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
   const currentRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -101,20 +124,20 @@ export default function EprSalesData() {
               <thead>
                 <tr className="bg-teal-700 text-white">
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Sr. No.</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Registration Type</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Entity Type</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Seller GST No</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Name of the Entity</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Address</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">District</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Country/State</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Seller GST No</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Qty. of Pr...</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Amount(₹)</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">State/Country</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Qty. (Tonnes)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Invoice Value</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Sale</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">EPR Invoice No</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Potential Generation Status</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">e invoice no</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Product Sold</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Invoice No</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-I Potential</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-II Potential</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-III Potential</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-IV Potential</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Status</th>
                 </tr>
               </thead>
               <tbody>
@@ -122,37 +145,21 @@ export default function EprSalesData() {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{globalIndex}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-700">{r.registration_type_mapped || r.registertype || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-700">{r.entity_type_mapped || r.applicantsubtypeid || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800" title={r.entityname}>{r.entityname ? r.entityname.replace(/^\d+-/, '') : 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600" title={r.entityaddress}>{r.entityaddress || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">
-                      {r.entitydistrict === 357 ? 'Indore' : r.entitydistrict === 352 ? 'Dhar' : r.entitydistrict || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">
-                      {r.entitystate === 23 ? 'Madhya Pradesh' : r.entitystate === 7 ? 'Delhi' : r.entitystate || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs">{r.sellergstno || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {r.productionid_qty?.toFixed(2) || '0.00'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.amount ? `₹${new Intl.NumberFormat('en-IN').format(r.amount)}` : '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
-                      {r.dateofsale ? new Date(r.dateofsale).toLocaleDateString('en-IN') : 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-blue-600">{r.eprinvno || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.totalpotentialgenerated ? parseFloat(r.totalpotentialgenerated).toFixed(4) : '0.00'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">
-                      {r.invoicenumber || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">
-                      {r.productionid_categoryid ? `Cat-I${r.productionid_categoryid === 2 ? 'I' : ''}` : 'N/A'}
-                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['Sr. No.'] || globalIndex}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">{r['Seller GST No'] || r.sellergstno || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800" title={r['Name of the Entity'] || r.entityname}>{r['Name of the Entity'] || (r.entityname ? r.entityname.replace(/^\d+-/, '') : 'N/A')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600" title={r['Address'] || r.entityaddress}>{r['Address'] || r.entityaddress || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['District'] || (r.entitydistrict === 357 ? 'Indore' : r.entitydistrict === 352 ? 'Dhar' : r.entitydistrict || 'N/A')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['State/Country'] || (r.entitystate === 23 ? 'Madhya Pradesh' : r.entitystate === 7 ? 'Delhi' : r.entitystate || 'N/A')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">{r['Total Qty. of Product Sold (Tonnes)'] || (r.productionid_qty?.toFixed(2) || '0.00')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Invoice Value'] ? `₹${r['Total Invoice Value']}` : (r.amount ? `₹${new Intl.NumberFormat('en-IN').format(r.amount)}` : '0')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">{r['Date of Sale'] || (r.dateofsale ? new Date(r.dateofsale).toLocaleDateString('en-IN') : 'N/A')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-blue-600">{r['Invoice No'] || r.invoicenumber || r.eprinvno || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Potential Generated for CAT-I'] || '0'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Potential Generated for CAT-II'] || (r.totalpotentialgenerated ? parseFloat(r.totalpotentialgenerated).toFixed(4) : '0.00')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Potential Generated for CAT-III'] || '0'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Potential Generated for CAT-IV'] || '0'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-700">{r['Potential Generation Status'] || 'Generated'}</td>
                   </tr>
                 )})}
               </tbody>

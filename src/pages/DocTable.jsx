@@ -1188,7 +1188,7 @@ export default function DocTable() {
       }
       
       groups[monthKey].rows.push(r);
-      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.available_quantity_mt || 0);
+      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
       const qtyKg = parseFloat(r.quantity_kg || 0);
       if (!isNaN(qtyMT)) groups[monthKey].totalQtyMT += qtyMT;
       if (!isNaN(qtyKg)) groups[monthKey].totalQtyKg += qtyKg;

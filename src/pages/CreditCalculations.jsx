@@ -259,35 +259,35 @@ export default function CreditCalculations() {
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-left text-sm whitespace-nowrap">
-            <thead className="bg-slate-50 text-slate-600 border-b border-slate-200 text-[13px]">
+            <thead className="bg-teal-700 text-white text-[13px]">
               <tr>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">Year</th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">Month</th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Energy contribution</span><span className="text-xs text-slate-400 font-normal">%</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">Year</th>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">Month</th>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Energy contribution</span><span className="text-xs text-teal-200 font-normal">%</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Energy cons./ton</span><span className="text-xs text-slate-400 font-normal">MJ</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Energy cons./ton</span><span className="text-xs text-teal-200 font-normal">MJ</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Calorific value</span><span className="text-xs text-slate-400 font-normal">KJ/Kg</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Calorific value</span><span className="text-xs text-teal-200 font-normal">KJ/Kg</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Clinker produced</span><span className="text-xs text-slate-400 font-normal">Tons</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Clinker produced</span><span className="text-xs text-teal-200 font-normal">Tons</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Energy from RDF</span><span className="text-xs text-slate-400 font-normal">MJ</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Energy from RDF</span><span className="text-xs text-teal-200 font-normal">MJ</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>RDF burnt</span><span className="text-xs text-slate-400 font-normal">Tons</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>RDF burnt</span><span className="text-xs text-teal-200 font-normal">Tons</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200">
-                  <div className="flex flex-col items-center"><span>Plastic</span><span className="text-xs text-slate-400 font-normal">%</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center"><span>Plastic</span><span className="text-xs text-teal-200 font-normal">%</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center border-r border-slate-200 bg-green-50/50">
-                  <div className="flex flex-col items-center text-green-700"><span>Potential</span><span className="text-xs text-green-600/70 font-normal">Tons</span></div>
+                <th className="px-4 py-3 font-medium text-center border-r border-teal-600 whitespace-nowrap">
+                  <div className="flex flex-col items-center text-teal-100"><span>Potential</span><span className="text-xs text-teal-200 font-normal">Tons</span></div>
                 </th>
-                <th className="px-4 py-3 font-semibold text-center">Actions</th>
+                <th className="px-4 py-3 font-medium text-center whitespace-nowrap">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

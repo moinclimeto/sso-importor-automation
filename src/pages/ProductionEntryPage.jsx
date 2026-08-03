@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { Upload, Plus, FileSpreadsheet, Trash2, Filter, X, Pencil } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
@@ -7,6 +7,7 @@ import { usePageHeader } from '../context/PageHeaderContext.jsx';
 
 const emptyForm = {
   from_date: '', to_date: '', clinker_production: '', energy_percentage: '',
+  conversion_factor: '', calorific_value: '', calorific_unit: 'KJ/Kg', plastic_percent: '',
   energy_contribution_mj: '', qualifying_feed_mt: '', cat_i: '', cat_ii: '', cat_iii: '', cat_iv: ''
 };
 
@@ -29,6 +30,45 @@ export default function ProductionEntryPage() {
   // Bulk Entry State
   const [bulkFile, setBulkFile] = useState(null);
   const [bulkPreview, setBulkPreview] = useState([]);
+  
+  const [fetchedConversionFactor, setFetchedConversionFactor] = useState('');
+
+  useEffect(() => {
+    const fetchCF = async () => {
+      try {
+        if (window.pwp?.eprData?.getConversionFactor) {
+          const cfData = await window.pwp.eprData.getConversionFactor();
+          if (cfData && cfData.length > 0) {
+            setFetchedConversionFactor(cfData[0].conversion_factor?.toString() || '');
+          }
+        }
+      } catch (err) { console.error(err); }
+    };
+    fetchCF();
+  }, []);
+
+  const calculated = useMemo(() => {
+    const clinkerVal = parseFloat(formData.clinker_production) || 0;
+    const energyPct = parseFloat(formData.energy_percentage) || 0;
+    const conversionFactor = parseFloat(formData.conversion_factor) || parseFloat(fetchedConversionFactor) || 0;
+    const calInput = parseFloat(formData.calorific_value) || 0;
+    const plasticPct = parseFloat(formData.plastic_percent) || 0;
+
+    let calValueKJ = calInput;
+    if (formData.calorific_unit === 'Kcal/Kg') {
+      calValueKJ = calInput * 4.184;
+    }
+
+    const energyContributionMJ = (energyPct / 100) * conversionFactor * clinkerVal;
+    const rdfBurntTons = calValueKJ > 0 ? energyContributionMJ / calValueKJ : 0;
+    const potentialTons = rdfBurntTons * (plasticPct / 100);
+
+    return {
+      energyContributionMJ,
+      rdfBurntTons,
+      potentialTons
+    };
+  }, [formData.clinker_production, formData.energy_percentage, formData.conversion_factor, formData.calorific_value, formData.plastic_percent, fetchedConversionFactor]);
   
   // Table Filters
   const [dateFilter, setDateFilter] = useState('all');
@@ -62,8 +102,12 @@ export default function ProductionEntryPage() {
         to_date: formData.to_date,
         clinker_production: parseFloat(formData.clinker_production) || 0,
         energy_percentage: parseFloat(formData.energy_percentage) || 0,
-        energy_contribution_mj: parseFloat(formData.energy_contribution_mj) || 0,
-        qualifying_feed_mt: parseFloat(formData.qualifying_feed_mt) || 0,
+        conversion_factor: parseFloat(formData.conversion_factor) || parseFloat(fetchedConversionFactor) || 0,
+        calorific_value: parseFloat(formData.calorific_value) || 0,
+        calorific_unit: formData.calorific_unit || 'KJ/Kg',
+        plastic_percent: parseFloat(formData.plastic_percent) || 0,
+        energy_contribution_mj: calculated.energyContributionMJ || 0,
+        qualifying_feed_mt: calculated.rdfBurntTons || 0,
         cat_i: parseFloat(formData.cat_i) || 0,
         cat_ii: parseFloat(formData.cat_ii) || 0,
         cat_iii: parseFloat(formData.cat_iii) || 0,
@@ -102,6 +146,10 @@ export default function ProductionEntryPage() {
       to_date: record.to_date || '',
       clinker_production: record.clinker_production?.toString() || '',
       energy_percentage: record.energy_percentage?.toString() || '',
+      conversion_factor: record.conversion_factor?.toString() || '',
+      calorific_value: record.calorific_value?.toString() || '',
+      calorific_unit: record.calorific_unit || 'KJ/Kg',
+      plastic_percent: record.plastic_percent?.toString() || '',
       energy_contribution_mj: record.energy_contribution_mj?.toString() || '',
       qualifying_feed_mt: record.qualifying_feed_mt?.toString() || '',
       cat_i: record.cat_i?.toString() || '',
@@ -396,7 +444,46 @@ export default function ProductionEntryPage() {
                   <input type="number" step="any" name="energy_percentage" required value={formData.energy_percentage} onChange={handleInputChange} className="input" placeholder="0" />
                 </div>
 
+                <div>
+                  <label className="label">Energy consumption per ton (MJ)</label>
+                  <input type="number" step="any" name="conversion_factor" value={formData.conversion_factor || fetchedConversionFactor} onChange={handleInputChange} className="input bg-slate-50 cursor-not-allowed" placeholder="0" disabled title="Value fetched from Conversion Factor" />
+                </div>
+                <div>
+                  <label className="label">Calorific value of RDF (Average NCV)</label>
+                  <div className="flex bg-white rounded-lg border border-slate-200 overflow-hidden focus-within:ring-2 focus-within:ring-teal-500/20 focus-within:border-teal-500 transition-all">
+                    <input type="number" step="any" name="calorific_value" value={formData.calorific_value} onChange={handleInputChange} className="flex-1 px-3 py-2 text-sm border-none focus:ring-0 outline-none w-full" placeholder="0" />
+                    <select name="calorific_unit" value={formData.calorific_unit} onChange={handleInputChange} className="bg-slate-50 border-l border-slate-200 text-sm font-medium text-slate-700 px-2 py-2 focus:outline-none cursor-pointer">
+                      <option value="KJ/Kg">KJ/Kg</option>
+                      <option value="Kcal/Kg">Kcal/Kg</option>
+                    </select>
+                  </div>
+                </div>
+                <div>
+                  <label className="label">Plastic %</label>
+                  <input type="number" step="any" name="plastic_percent" value={formData.plastic_percent} onChange={handleInputChange} className="input" placeholder="0" />
+                </div>
+
               </div>
+              
+              <div className="bg-emerald-50/50 border border-emerald-100 rounded-xl p-4 mt-2">
+                <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                  <div>
+                    <span className="block text-[10px] uppercase font-bold text-emerald-600 mb-1">Energy from RDF</span>
+                    <span className="font-semibold text-emerald-700 text-lg">{calculated.energyContributionMJ.toFixed(2)} <span className="text-xs font-normal opacity-75">MJ</span></span>
+                  </div>
+                  <div>
+                    <span className="block text-[10px] uppercase font-bold text-emerald-600 mb-1">Qualifying Feed (RDF Burnt)</span>
+                    <span className="font-semibold text-emerald-700 text-lg">{calculated.rdfBurntTons.toFixed(4)} <span className="text-xs font-normal opacity-75">Tons</span></span>
+                  </div>
+                  {formData.plastic_percent && (
+                    <div className="col-span-2 md:col-span-2">
+                      <span className="block text-[10px] uppercase font-bold text-emerald-600 mb-1">Potential (Plastic Only)</span>
+                      <span className="font-semibold text-emerald-700 text-lg">{calculated.potentialTons.toFixed(4)} <span className="text-xs font-normal opacity-75">Tons</span></span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
               <div className="flex gap-3 pt-4 border-t border-slate-100 mt-4">
                 <button type="button" onClick={() => { setShowSingleModal(false); setEditingId(null); setFormData({ ...emptyForm }); }} className="flex-1 btn-secondary">Cancel</button>
                 <button type="submit" className="flex-1 btn-primary">{editingId ? 'Update Entry' : 'Save Entry'}</button>

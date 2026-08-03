@@ -14,34 +14,14 @@ export default function EprInventoryData() {
   }, [selectedYear]);
 
   const loadData = async () => {
+    if (!window.pwp || !window.pwp.eprData) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
-      let data = [];
-      let debugMsg = "";
-      if (window.pwp && window.pwp.scraper && window.pwp.scraper.getInventory) {
-        data = await window.pwp.scraper.getInventory();
-        debugMsg = "Tried getInventory. Result length: " + (data ? data.length : 'null');
-      } else if (window.pwp && window.pwp.fs && window.pwp.fs.readFileBase64) {
-        const filePath = 'C:/Users/itcli/Documents/GitHub/PWP-Cement-Automation/data/inventory.json';
-        const fileContent = await window.pwp.fs.readFileBase64(filePath);
-        if (fileContent) {
-           const binaryString = atob(fileContent);
-           const bytes = new Uint8Array(binaryString.length);
-           for (let i = 0; i < binaryString.length; i++) {
-               bytes[i] = binaryString.charCodeAt(i);
-           }
-           const text = new TextDecoder('utf-8').decode(bytes);
-           data = JSON.parse(text);
-           debugMsg = "Tried readFileBase64. Success, parsed " + (data ? data.length : 0) + " items.";
-        } else {
-           debugMsg = "Tried readFileBase64 but it returned null for path: " + filePath;
-        }
-      }
-      
-      if (!data || data.length === 0) {
-        console.warn("Debug Info: " + debugMsg);
-      }
-      
+      const data = await window.pwp.eprData.getInventory();
       setRecords(data || []);
     } catch (e) {
       console.error("Failed to fetch EPR Inventory Data:", e);

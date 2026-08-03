@@ -1588,13 +1588,14 @@ export function registerIpcHandlers() {
     const created_at = new Date().toISOString();
     const info = await db.run(
       `INSERT INTO local_productions 
-      (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, created_at) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, conversion_factor, calorific_value, calorific_unit, plastic_percent, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         data.company_id || null, data.from_date || '', data.to_date || '',
         data.clinker_production || 0, data.energy_percentage || 0,
         data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
         data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
         created_at
       ]
     );
@@ -1612,13 +1613,14 @@ export function registerIpcHandlers() {
       for (const data of rows) {
         await db.run(
           `INSERT INTO local_productions 
-          (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, created_at) 
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, conversion_factor, calorific_value, calorific_unit, plastic_percent, created_at) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
           [
             data.company_id || null, data.from_date || '', data.to_date || '',
             data.clinker_production || 0, data.energy_percentage || 0,
             data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
             data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+            data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
             created_at
           ]
         );
@@ -1637,13 +1639,15 @@ export function registerIpcHandlers() {
     await db.run(
       `UPDATE local_productions SET 
         company_id=?, from_date=?, to_date=?, clinker_production=?, energy_percentage=?, 
-        energy_contribution_mj=?, qualifying_feed_mt=?, cat_i=?, cat_ii=?, cat_iii=?, cat_iv=?
+        energy_contribution_mj=?, qualifying_feed_mt=?, cat_i=?, cat_ii=?, cat_iii=?, cat_iv=?,
+        conversion_factor=?, calorific_value=?, calorific_unit=?, plastic_percent=?
       WHERE id=?`,
       [
         data.company_id || null, data.from_date || '', data.to_date || '',
         data.clinker_production || 0, data.energy_percentage || 0,
         data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
         data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
         data.id
       ]
     );
