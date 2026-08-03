@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { Database, Filter, ChevronLeft, ChevronRight, Download, Calendar, MapPin, Building2, User, Phone, CheckCircle2, Clock } from 'lucide-react';
+import { usePageHeader } from '../context/PageHeaderContext.jsx';
 
 export default function EprProcurementData() {
   const [records, setRecords] = useState([]);
@@ -49,36 +49,39 @@ export default function EprProcurementData() {
     return () => window.removeEventListener('refresh-epr-data', handleRefresh);
   }, []);
 
-  const [portalNode, setPortalNode] = useState(null);
+  const { setPageHeader, clearPageHeader } = usePageHeader();
 
   useEffect(() => {
-    setPortalNode(document.getElementById('header-actions-portal'));
-  }, []);
-
-  const filterContent = (
-    <div className="flex items-center gap-4">
-      <div className="flex items-center gap-2">
-        <Filter size={16} className="text-slate-400" />
-        <select 
-          value={selectedYear} 
-          onChange={(e) => setSelectedYear(e.target.value)} 
-          className="h-9 px-3 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 min-w-[120px] bg-white text-slate-700"
-        >
-          <option value="">All Years</option>
-          <option value="2026">2026-27</option>
-          <option value="2025">2025-26</option>
-          <option value="2024">2024-25</option>
-          <option value="2023">2023-24</option>
-          <option value="2022">2022-23</option>
-        </select>
-      </div>
-      <p className="text-slate-500 text-sm border-l border-slate-200 pl-4">{filteredRecords.length} records — Qty: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
-    </div>
-  );
+    const id = setPageHeader({
+      title: 'EPR Procurement Data',
+      subtitle: 'Data synced from CPCB portal',
+      actions: (
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-slate-400" />
+            <select 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(e.target.value)} 
+              className="h-9 px-3 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 min-w-[120px] bg-white text-slate-700"
+            >
+              <option value="">All Years</option>
+              <option value="2026">2026-27</option>
+              <option value="2025">2025-26</option>
+              <option value="2024">2024-25</option>
+              <option value="2023">2023-24</option>
+              <option value="2022">2022-23</option>
+              <option value="2021">2021-22</option>
+            </select>
+          </div>
+          <p className="text-slate-500 text-sm border-l border-slate-200 pl-4">{filteredRecords.length} records — Qty: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
+        </div>
+      )
+    });
+    return () => clearPageHeader(id);
+  }, [selectedYear, filteredRecords.length, totalQuantity, setPageHeader, clearPageHeader]);
 
   return (
     <div className="space-y-4">
-      {portalNode && createPortal(filterContent, portalNode)}
 
       {loading ? (
         <div className="flex justify-center py-20">

@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ArrowRight, Folder, CheckCircle } from 'lucide-react';
+import { Package, ArrowRight, Folder, CheckCircle, Factory } from 'lucide-react';
 
 const categories = [
   {
@@ -21,23 +21,35 @@ const categories = [
     textDark: 'text-blue-700',
     icon: Folder,
   },
+  {
+    type: 'production',
+    title: 'Production',
+    description: 'Cement Co-processing production details',
+    color: 'from-amber-500 to-orange-400',
+    bgLight: 'bg-amber-50',
+    textDark: 'text-amber-700',
+    icon: Factory,
+    route: '/production-entry'
+  },
 ];
 
 export default function DocProcessor() {
   const navigate = useNavigate();
-  const [counts, setCounts] = useState({ purchase: 0, sale: 0 });
+  const [counts, setCounts] = useState({ purchase: 0, sale: 0, production: 0 });
 
   useEffect(() => {
     const load = async () => {
       if (!window.pwp) return;
       try {
-        const [purchases, sales] = await Promise.all([
+        const [purchases, sales, productions] = await Promise.all([
           window.pwp.purchases.getAll(),
           window.pwp.sales.getAll(),
+          window.pwp.localProduction ? window.pwp.localProduction.getAll() : Promise.resolve([]),
         ]);
         setCounts({
           purchase: purchases?.length || 0,
           sale: sales?.length || 0,
+          production: productions?.length || 0,
         });
       } catch {
         /* ignore */
@@ -46,7 +58,7 @@ export default function DocProcessor() {
     load();
   }, []);
 
-  const totalRecords = counts.purchase + counts.sale;
+  const totalRecords = counts.purchase + counts.sale + counts.production;
 
   return (
     <div className="space-y-6 max-w-6xl mx-auto py-2">
@@ -109,7 +121,10 @@ export default function DocProcessor() {
 
                 <button
                   type="button"
-                  onClick={() => navigate('/doc-table', { state: { type: cat.type } })}
+                  onClick={() => {
+                    if (cat.route) navigate(cat.route);
+                    else navigate('/doc-table', { state: { type: cat.type } });
+                  }}
                   className={`inline-flex items-center gap-2 rounded-xl bg-slate-50 px-5 py-2.5 text-sm font-semibold ${cat.textDark} transition-all duration-300 hover:scale-105 active:scale-95 border border-slate-100 group-hover:border-transparent`}
                 >
                   View table

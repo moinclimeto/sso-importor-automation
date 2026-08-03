@@ -16,6 +16,8 @@ import EprProcurementData from '../pages/EprProcurementData.jsx';
 import EprProductionData from '../pages/EprProductionData.jsx';
 import EprInventoryData from '../pages/EprInventoryData.jsx';
 import CpcbDashboard from '../pages/CpcbDashboard.jsx';
+import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
+import CreditCalculations from '../pages/CreditCalculations.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -49,6 +51,8 @@ export default function AppRoutes() {
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />
           <Route path="doc-table" element={<DocTable />} />
+          <Route path="production-entry" element={<ProductionEntryPage />} />
+          <Route path="credit-calculations" element={<CreditCalculations />} />
         </Route>
       </Routes>
     </BrowserRouter>

@@ -86,4 +86,20 @@ contextBridge.exposeInMainWorld('pwp', {
     getSales: () => ipcRenderer.invoke('eprData:getSales'),
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
   },
+  // Local Production (User Entries)
+  localProduction: {
+    getAll: (filters) => ipcRenderer.invoke('localProduction:getAll', filters),
+    add: (data) => ipcRenderer.invoke('localProduction:add', data),
+    bulkAdd: (rows) => ipcRenderer.invoke('localProduction:bulkAdd', rows),
+    update: (data) => ipcRenderer.invoke('localProduction:update', data),
+    delete: (id) => ipcRenderer.invoke('localProduction:delete', id),
+    updateQualifyingFeed: (data) => ipcRenderer.invoke('localProduction:updateQualifyingFeed', data),
+  },
+  // Credit Calculations
+  creditCalculations: {
+    getAll: () => ipcRenderer.invoke('creditCalculations:getAll'),
+    add: (data) => ipcRenderer.invoke('creditCalculations:add', data),
+    update: (data) => ipcRenderer.invoke('creditCalculations:update', data),
+    delete: (id) => ipcRenderer.invoke('creditCalculations:delete', id),
+  },
 });

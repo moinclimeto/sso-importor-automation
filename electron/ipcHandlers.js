@@ -1455,4 +1455,163 @@ export function registerIpcHandlers() {
     } catch (e) { console.error("Error reading inventory.json", e); }
     return [];
   });
+  // ─── LOCAL PRODUCTION (USER ENTRIES) ────────────────────────
+  ipcMain.handle('localProduction:getAll', async (_, filters) => {
+    const db = getDb();
+    let query = 'SELECT p.*, c.name as company_name FROM local_productions p LEFT JOIN companies c ON p.company_id = c.id WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND p.company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND p.from_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND p.to_date <= ?'; params.push(filters.to_date); }
+    query += ' ORDER BY p.created_at DESC';
+    return await db.all(query, params);
+  });
+
+  ipcMain.handle('localProduction:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    const info = await db.run(
+      `INSERT INTO local_productions 
+      (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        data.company_id || null, data.from_date || '', data.to_date || '',
+        data.clinker_production || 0, data.energy_percentage || 0,
+        data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+        data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        created_at
+      ]
+    );
+    return { id: info.lastID, ...data, created_at };
+  });
+
+  ipcMain.handle('localProduction:bulkAdd', async (_, rows) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    let inserted = 0;
+    
+    // Using a transaction for bulk insert
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const data of rows) {
+        await db.run(
+          `INSERT INTO local_productions 
+          (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, created_at) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            data.company_id || null, data.from_date || '', data.to_date || '',
+            data.clinker_production || 0, data.energy_percentage || 0,
+            data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+            data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+            created_at
+          ]
+        );
+        inserted++;
+      }
+      await db.run('COMMIT');
+      return { success: true, count: inserted };
+    } catch (e) {
+      await db.run('ROLLBACK');
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('localProduction:update', async (_, data) => {
+    const db = getDb();
+    await db.run(
+      `UPDATE local_productions SET 
+        company_id=?, from_date=?, to_date=?, clinker_production=?, energy_percentage=?, 
+        energy_contribution_mj=?, qualifying_feed_mt=?, cat_i=?, cat_ii=?, cat_iii=?, cat_iv=?
+      WHERE id=?`,
+      [
+        data.company_id || null, data.from_date || '', data.to_date || '',
+        data.clinker_production || 0, data.energy_percentage || 0,
+        data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+        data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        data.id
+      ]
+    );
+    return { success: true };
+  });
+
+  ipcMain.handle('localProduction:delete', async (_, id) => {
+    const db = getDb();
+    await db.run('DELETE FROM local_productions WHERE id=?', [id]);
+    return { success: true };
+  });
+
+  // Update qualifying_feed_mt for all production records matching a given month/year (by to_date)
+  ipcMain.handle('localProduction:updateQualifyingFeed', async (_, { month, year, qualifying_feed_mt }) => {
+    const db = getDb();
+    // Get all records and filter in JS (same logic as frontend)
+    const allRows = await db.all('SELECT id, to_date FROM local_productions');
+    let updated = 0;
+    for (const row of allRows) {
+      if (!row.to_date) continue;
+      const d = new Date(row.to_date);
+      if (d.getMonth() === month && d.getFullYear() === year) {
+        await db.run('UPDATE local_productions SET qualifying_feed_mt=? WHERE id=?', [qualifying_feed_mt, row.id]);
+        updated++;
+      }
+    }
+    return { success: true, updated };
+  });
+
+  // ─── CREDIT CALCULATIONS (SQLITE) ────────────────────────
+  ipcMain.handle('creditCalculations:getAll', async () => {
+    const db = getDb();
+    return await db.all('SELECT * FROM credit_calculations ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('creditCalculations:add', async (_, data) => {
+    const db = getDb();
+    try {
+      const info = await db.run(
+        `INSERT INTO credit_calculations 
+        (month, energy_contribution_percent, energy_consumption_mj, calorific_value_unit, calorific_value_input, calorific_value_kj, clinker_produced_tons, energy_contribution_mj, rdf_burnt_tons, plastic_percent, potential_tons) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.month, data.energy_contribution_percent, data.energy_consumption_mj,
+          data.calorific_value_unit, data.calorific_value_input, data.calorific_value_kj,
+          data.clinker_produced_tons, data.energy_contribution_mj, data.rdf_burnt_tons,
+          data.plastic_percent, data.potential_tons
+        ]
+      );
+      return { success: true, id: info.lastID };
+    } catch (e) {
+      if (e.message.includes('UNIQUE constraint failed')) {
+        return { success: false, error: 'Calculations for this month already exist.' };
+      }
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('creditCalculations:update', async (_, data) => {
+    const db = getDb();
+    try {
+      await db.run(
+        `UPDATE credit_calculations SET
+          month=?, energy_contribution_percent=?, energy_consumption_mj=?, calorific_value_unit=?, calorific_value_input=?, calorific_value_kj=?, clinker_produced_tons=?, energy_contribution_mj=?, rdf_burnt_tons=?, plastic_percent=?, potential_tons=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`,
+        [
+          data.month, data.energy_contribution_percent, data.energy_consumption_mj,
+          data.calorific_value_unit, data.calorific_value_input, data.calorific_value_kj,
+          data.clinker_produced_tons, data.energy_contribution_mj, data.rdf_burnt_tons,
+          data.plastic_percent, data.potential_tons, data.id
+        ]
+      );
+      return { success: true };
+    } catch (e) {
+      if (e.message.includes('UNIQUE constraint failed')) {
+        return { success: false, error: 'Calculations for this month already exist.' };
+      }
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('creditCalculations:delete', async (_, id) => {
+    const db = getDb();
+    await db.run('DELETE FROM credit_calculations WHERE id=?', [id]);
+    return { success: true };
+  });
 }

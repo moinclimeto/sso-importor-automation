@@ -1574,7 +1574,7 @@ export default function DocTable() {
   }, [excelMenuOpen]);
 
   useEffect(() => {
-    setPageHeader({
+    const id = setPageHeader({
       sectionTitle: title,
       onBack: () => navigate('/doc-processor'),
       uploadState: { type },
@@ -1687,8 +1687,8 @@ export default function DocTable() {
         </>
       ),
     });
-    return () => clearPageHeader();
-  }, [title, type, rows, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
+    return () => clearPageHeader(id);
+  }, [title, type, rows.length, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
 
   return (
     <div className="space-y-5 max-w-full">

@@ -23,10 +23,11 @@ const navLinks = [
     icon: Database,
     label: 'EPR Data',
     subLinks: [
-      { to: '/epr-production', label: 'Production Data' },
+      { to: '/production-entry', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
+      { to: '/credit-calculations', label: 'Credit Calculations' },
     ]
   },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
@@ -55,6 +56,10 @@ const pageHeaders = {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
     showUpload: true,
+  },
+  '/production-entry': {
+    title: 'Production Data',
+    subtitle: 'Manage production entries',
   },
 };
 
@@ -249,10 +254,9 @@ function MainLayoutInner() {
               </div>
             )}
             <div className="min-w-0">
-<<<<<<< HEAD
               <div className="flex items-center gap-3">
                 <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
-                  {header.title}
+                  {headerTitle}
                 </h1>
                 {myCompany && (
                   <div className="hidden sm:inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-md">
@@ -262,36 +266,14 @@ function MainLayoutInner() {
                   </div>
                 )}
               </div>
-              {header.subtitle && (
-                <p className="text-sm text-slate-500 mt-0.5 truncate">{header.subtitle}</p>
-=======
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
-                {headerTitle}
-              </h1>
               {headerSubtitle && (
                 <p className="text-sm text-slate-500 mt-0.5 truncate">{headerSubtitle}</p>
->>>>>>> 4572f21c8c0ae5aa9cb90a968914c36d1653cf11
               )}
             </div>
           </div>
 
-<<<<<<< HEAD
-          <div id="header-actions-portal" className="flex-1 flex items-center justify-end gap-4 px-2"></div>
-
-          {header.showUpload && (
-            <button
-              type="button"
-              onClick={() => navigate('/doc-upload')}
-              className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
-            >
-              <Upload size={16} />
-              Upload
-            </button>
-          )}
-=======
           <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
             {pageHeader?.actions}
->>>>>>> 4572f21c8c0ae5aa9cb90a968914c36d1653cf11
 
             {baseHeader.showUpload && (
               <button

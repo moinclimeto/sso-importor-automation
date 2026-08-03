@@ -1,12 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Upload, Plus, FileSpreadsheet, Trash2, Filter, X } from 'lucide-react';
+import { Upload, Plus, FileSpreadsheet, Trash2, Filter, X, Pencil } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
 import * as XLSX from 'xlsx';
 import { useToast, Toast } from '../components/Toast.jsx';
+import { usePageHeader } from '../context/PageHeaderContext.jsx';
+
+const emptyForm = {
+  from_date: '', to_date: '', clinker_production: '', energy_percentage: '',
+  energy_contribution_mj: '', qualifying_feed_mt: '', cat_i: '', cat_ii: '', cat_iii: '', cat_iv: ''
+};
 
 export default function ProductionEntryPage() {
   const navigate = useNavigate();
   const { toast, showToast, hideToast } = useToast();
+  const { setPageHeader, clearPageHeader } = usePageHeader();
   
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(false);
@@ -14,12 +21,10 @@ export default function ProductionEntryPage() {
   // Modals
   const [showSingleModal, setShowSingleModal] = useState(false);
   const [showBulkModal, setShowBulkModal] = useState(false);
+  const [editingId, setEditingId] = useState(null);
   
   // Single Entry Form State
-  const [formData, setFormData] = useState({
-    from_date: '', to_date: '', clinker_production: '', energy_percentage: '',
-    energy_contribution_mj: '', qualifying_feed_mt: '', cat_i: '', cat_ii: '', cat_iii: '', cat_iv: ''
-  });
+  const [formData, setFormData] = useState({ ...emptyForm });
   
   // Bulk Entry State
   const [bulkFile, setBulkFile] = useState(null);
@@ -65,19 +70,46 @@ export default function ProductionEntryPage() {
         cat_iv: parseFloat(formData.cat_iv) || 0,
       };
       
-      const res = await window.pwp.localProduction.add(dataToSave);
-      if (res && res.id) {
-        showToast('Production entry saved successfully!', 'success');
-        setFormData({
-          from_date: '', to_date: '', clinker_production: '', energy_percentage: '',
-          energy_contribution_mj: '', qualifying_feed_mt: '', cat_i: '', cat_ii: '', cat_iii: '', cat_iv: ''
-        });
-        setShowSingleModal(false);
-        loadRecords();
+      if (editingId) {
+        // Update existing record
+        const res = await window.pwp.localProduction.update({ id: editingId, ...dataToSave });
+        if (res && res.success) {
+          showToast('Production entry updated successfully!', 'success');
+          setFormData({ ...emptyForm });
+          setEditingId(null);
+          setShowSingleModal(false);
+          loadRecords();
+        }
+      } else {
+        // Add new record
+        const res = await window.pwp.localProduction.add(dataToSave);
+        if (res && res.id) {
+          showToast('Production entry saved successfully!', 'success');
+          setFormData({ ...emptyForm });
+          setShowSingleModal(false);
+          loadRecords();
+        }
       }
     } catch (err) {
       showToast('Error saving entry: ' + err.message, 'error');
     }
+  };
+
+  const handleEdit = (record) => {
+    setEditingId(record.id);
+    setFormData({
+      from_date: record.from_date || '',
+      to_date: record.to_date || '',
+      clinker_production: record.clinker_production?.toString() || '',
+      energy_percentage: record.energy_percentage?.toString() || '',
+      energy_contribution_mj: record.energy_contribution_mj?.toString() || '',
+      qualifying_feed_mt: record.qualifying_feed_mt?.toString() || '',
+      cat_i: record.cat_i?.toString() || '',
+      cat_ii: record.cat_ii?.toString() || '',
+      cat_iii: record.cat_iii?.toString() || '',
+      cat_iv: record.cat_iv?.toString() || '',
+    });
+    setShowSingleModal(true);
   };
 
   const handleDelete = async (id) => {
@@ -100,14 +132,32 @@ export default function ProductionEntryPage() {
     reader.onload = (evt) => {
       try {
         const bstr = evt.target.result;
-        const wb = XLSX.read(bstr, { type: 'binary' });
+        const wb = XLSX.read(bstr, { type: 'binary', cellDates: true });
         const wsname = wb.SheetNames[0];
         const ws = wb.Sheets[wsname];
         const data = XLSX.utils.sheet_to_json(ws);
         
+        const formatExcelDate = (val) => {
+          if (!val) return '';
+          if (val instanceof Date) {
+            const y = val.getFullYear();
+            const m = String(val.getMonth() + 1).padStart(2, '0');
+            const d = String(val.getDate()).padStart(2, '0');
+            return `${y}-${m}-${d}`;
+          }
+          if (typeof val === 'number') {
+            const d = new Date((val - 25569) * 86400 * 1000);
+            const y = d.getFullYear();
+            const mo = String(d.getMonth() + 1).padStart(2, '0');
+            const da = String(d.getDate()).padStart(2, '0');
+            return `${y}-${mo}-${da}`;
+          }
+          return val.toString();
+        };
+
         const mapped = data.map(row => ({
-          from_date: row['From Date'] || '',
-          to_date: row['To Date'] || '',
+          from_date: formatExcelDate(row['From Date']),
+          to_date: formatExcelDate(row['To Date']),
           clinker_production: parseFloat(row['Clinker production (T)']) || 0,
           energy_percentage: parseFloat(row['Percentage of energy contribution by Alternate fuel (MSW/RDF)']) || 0,
           energy_contribution_mj: 0,
@@ -121,6 +171,27 @@ export default function ProductionEntryPage() {
       }
     };
     reader.readAsBinaryString(file);
+  };
+
+  const displayDate = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }).replace(/ /g, '-');
+  };
+
+  const displayMonthName = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return dateStr;
+    return d.toLocaleDateString('en-US', { month: 'long' });
+  };
+
+  const displayYear = (dateStr) => {
+    if (!dateStr) return '';
+    const d = new Date(dateStr);
+    if (isNaN(d.getTime())) return '';
+    return d.getFullYear().toString();
   };
 
   const submitBulk = async () => {
@@ -175,82 +246,81 @@ export default function ProductionEntryPage() {
     return acc;
   }, { clinker: 0, qualifying: 0 });
 
+  // Expose header actions to the global MainLayout Header
+  useEffect(() => {
+    const id = setPageHeader({
+      title: 'Production Data',
+      subtitle: `${filteredRecords.length} records found`,
+      onBack: () => navigate(-1),
+      actions: (
+        <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
+          {/* Date Filters */}
+          <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-lg">
+            <Filter size={16} className="text-slate-400" />
+            <select
+              value={dateFilter}
+              onChange={(e) => setDateFilter(e.target.value)}
+              className="bg-transparent border-none text-sm font-medium text-slate-700 focus:outline-none focus:ring-0 cursor-pointer outline-none"
+            >
+              <option value="all">All Time</option>
+              <option value="today">Today</option>
+              <option value="this_week">This Week</option>
+              <option value="this_month">This Month</option>
+              <option value="custom">Custom Range</option>
+            </select>
+          </div>
+
+          {dateFilter === 'custom' && (
+            <div className="flex items-center gap-2 bg-white border border-slate-200 px-2 py-1 rounded-lg">
+              <input type="date" value={customRange.start} max={customRange.end || undefined} onChange={(e) => setCustomRange({...customRange, start: e.target.value})} className="text-sm border-none focus:ring-0 cursor-pointer w-28 bg-transparent" />
+              <span className="text-slate-400">to</span>
+              <input type="date" value={customRange.end} min={customRange.start || undefined} onChange={(e) => setCustomRange({...customRange, end: e.target.value})} className="text-sm border-none focus:ring-0 cursor-pointer w-28 bg-transparent" />
+            </div>
+          )}
+          
+          {/* Totals Highlight in Header */}
+          <div className="flex items-center bg-[#f0f4ff] border border-[#e2e8f0] px-4 py-1.5 rounded-lg ml-2 shadow-sm">
+             <div className="flex flex-col pr-4">
+               <span className="text-[10px] uppercase font-bold text-[#7c3aed]">Total Clinker</span>
+               <span className="font-bold text-[#4f46e5] text-[15px] leading-tight">{totals.clinker.toFixed(2)} MT</span>
+             </div>
+             <div className="w-px h-8 bg-[#cbd5e1] mx-1"></div>
+             <div className="flex flex-col pl-4">
+               <span className="text-[10px] uppercase font-bold text-[#7c3aed]">Qualifying Feed</span>
+               <span className="font-bold text-[#4f46e5] text-[15px] leading-tight">{totals.qualifying.toFixed(2)} MT</span>
+             </div>
+          </div>
+          
+          <button onClick={() => { setEditingId(null); setFormData({ ...emptyForm }); setShowSingleModal(true); }} className="bg-[#10b981] hover:bg-[#059669] text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
+            <Plus size={16} /> Single
+          </button>
+          <button onClick={() => setShowBulkModal(true)} className="bg-white hover:bg-slate-50 border border-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 shadow-sm transition-colors">
+            <Upload size={16} /> Bulk
+          </button>
+        </div>
+      )
+    });
+
+    return () => clearPageHeader(id);
+  }, [dateFilter, customRange, totals.clinker, totals.qualifying, filteredRecords.length, setPageHeader, clearPageHeader, navigate]);
+
   return (
     <div className="space-y-5">
       <Toast toast={toast} onClose={hideToast} />
-      
-      {/* Page Action Buttons */}
-      <div className="flex items-center justify-end">
-        <div className="flex items-center gap-3">
-          <button onClick={() => setShowSingleModal(true)} className="btn-primary flex items-center gap-2">
-            <Plus size={18} /> Single Entry
-          </button>
-          <button onClick={() => setShowBulkModal(true)} className="btn-secondary flex items-center gap-2">
-            <Upload size={18} /> Bulk Entry
-          </button>
-        </div>
-      </div>
-
-      {/* Filters Area */}
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-wrap gap-4 items-end">
-        <div className="flex items-center gap-2 text-slate-500">
-          <Filter size={16} />
-          <span className="text-sm font-medium">Filter:</span>
-        </div>
-        
-        <div>
-          <label className="label">Date Range</label>
-          <select 
-            value={dateFilter} 
-            onChange={e => setDateFilter(e.target.value)}
-            className="input w-40"
-          >
-            <option value="all">All Time</option>
-            <option value="day">Today</option>
-            <option value="week">This Week</option>
-            <option value="month">This Month</option>
-            <option value="custom">Custom Range</option>
-          </select>
-        </div>
-        
-        {dateFilter === 'custom' && (
-          <div className="flex gap-3">
-            <div>
-              <label className="label">From</label>
-              <input type="date" value={customRange.start} onChange={e => setCustomRange({...customRange, start: e.target.value})} className="input w-40" />
-            </div>
-            <div>
-              <label className="label">To</label>
-              <input type="date" value={customRange.end} onChange={e => setCustomRange({...customRange, end: e.target.value})} className="input w-40" />
-            </div>
-          </div>
-        )}
-        
-        <div className="ml-auto flex items-center gap-6 text-sm">
-           <div className="flex flex-col text-right">
-             <span className="text-slate-500 text-xs">Total Clinker (MT)</span>
-             <span className="font-bold text-blue-700">{totals.clinker.toFixed(2)}</span>
-           </div>
-           <div className="flex flex-col text-right">
-             <span className="text-slate-500 text-xs">Total Qualifying Feed (MT)</span>
-             <span className="font-bold text-blue-700">{totals.qualifying.toFixed(2)}</span>
-           </div>
-        </div>
-      </div>
 
       {/* Main Table */}
-      <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-2">
         <div className="overflow-x-auto">
           <table className="w-full text-sm min-w-[900px]">
             <thead>
-              <tr className="bg-slate-50 border-b border-slate-100">
-                <th className="th">Sr. No.</th>
-                <th className="th">From Date</th>
-                <th className="th">To Date</th>
-                <th className="th text-right">Clinker (MT)</th>
-                <th className="th text-right">Energy %</th>
-                <th className="th text-right">Qualifying Feed (MT)</th>
-                <th className="th text-center">Actions</th>
+              <tr className="bg-slate-50 border-b border-slate-200">
+                <th className="th py-3 px-4 text-left font-semibold text-slate-600">Sr. No.</th>
+                <th className="th py-3 px-4 text-left font-semibold text-slate-600">Year</th>
+                <th className="th py-3 px-4 text-left font-semibold text-slate-600">Month</th>
+                <th className="th py-3 px-4 text-right font-semibold text-slate-600">Clinker (MT)</th>
+                <th className="th py-3 px-4 text-right font-semibold text-slate-600">Energy %</th>
+                <th className="th py-3 px-4 text-right font-semibold text-slate-600">Qualifying Feed (MT)</th>
+                <th className="th py-3 px-4 text-center font-semibold text-slate-600">Actions</th>
               </tr>
             </thead>
             <tbody>
@@ -264,24 +334,29 @@ export default function ProductionEntryPage() {
                 </tr>
               ) : filteredRecords.length === 0 ? (
                 <tr>
-                  <td colSpan="7" className="px-4 py-16 text-center text-slate-500">
+                  <td colSpan="7" className="px-4 py-16 text-center text-slate-500 bg-slate-50/50">
                     <FileSpreadsheet size={32} className="mx-auto text-slate-300 mb-3" />
-                    No records found.
+                    No records found for the selected dates.
                   </td>
                 </tr>
               ) : (
                 filteredRecords.map((r, i) => (
-                  <tr key={r.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
-                    <td className="td text-slate-400">{i + 1}</td>
-                    <td className="td font-medium">{r.from_date}</td>
-                    <td className="td font-medium">{r.to_date}</td>
-                    <td className="td text-right">{r.clinker_production}</td>
-                    <td className="td text-right">{r.energy_percentage}</td>
-                    <td className="td text-right">{r.qualifying_feed_mt}</td>
-                    <td className="td text-center flex items-center justify-center">
-                      <button onClick={() => handleDelete(r.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
-                        <Trash2 size={16} />
-                      </button>
+                  <tr key={r.id} className="border-b border-slate-100 hover:bg-slate-50/80 transition-colors">
+                    <td className="td py-3 px-4 text-slate-500">{i + 1}</td>
+                    <td className="td py-3 px-4 text-slate-500 text-xs">{displayYear(r.to_date)}</td>
+                    <td className="td py-3 px-4 font-medium text-slate-700">{displayMonthName(r.to_date)}</td>
+                    <td className="td py-3 px-4 text-right text-slate-600">{r.clinker_production}</td>
+                    <td className="td py-3 px-4 text-right text-slate-600">{r.energy_percentage}</td>
+                    <td className="td py-3 px-4 text-right text-slate-600">{r.qualifying_feed_mt}</td>
+                    <td className="td py-3 px-4 text-center">
+                      <div className="flex items-center justify-center gap-1">
+                        <button onClick={() => handleEdit(r)} className="p-1.5 text-slate-400 hover:text-teal-600 hover:bg-teal-50 rounded-lg transition-colors" title="Edit">
+                          <Pencil size={16} />
+                        </button>
+                        <button onClick={() => handleDelete(r.id)} className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors" title="Delete">
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))
@@ -291,13 +366,13 @@ export default function ProductionEntryPage() {
         </div>
       </div>
 
-      {/* SINGLE ENTRY MODAL */}
+      {/* SINGLE ENTRY / EDIT MODAL */}
       {showSingleModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-4">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
-              <h2 className="font-semibold text-lg text-slate-800">Add Production Entry</h2>
-              <button onClick={() => setShowSingleModal(false)} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
+              <h2 className="font-semibold text-lg text-slate-800">{editingId ? 'Edit Production Entry' : 'Add Production Entry'}</h2>
+              <button onClick={() => { setShowSingleModal(false); setEditingId(null); setFormData({ ...emptyForm }); }} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">
                 <X size={20} />
               </button>
             </div>
@@ -305,11 +380,11 @@ export default function ProductionEntryPage() {
               <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <div>
                   <label className="label">From Date *</label>
-                  <input type="date" name="from_date" required value={formData.from_date} onChange={handleInputChange} className="input" />
+                  <input type="date" name="from_date" required max={formData.to_date || undefined} value={formData.from_date} onChange={handleInputChange} className="input" />
                 </div>
                 <div>
                   <label className="label">To Date *</label>
-                  <input type="date" name="to_date" required value={formData.to_date} onChange={handleInputChange} className="input" />
+                  <input type="date" name="to_date" required min={formData.from_date || undefined} value={formData.to_date} onChange={handleInputChange} className="input" />
                 </div>
                 
                 <div>
@@ -321,35 +396,10 @@ export default function ProductionEntryPage() {
                   <input type="number" step="any" name="energy_percentage" required value={formData.energy_percentage} onChange={handleInputChange} className="input" placeholder="0" />
                 </div>
 
-                <div>
-                  <label className="label">Energy Contribution from Feed (MJ)</label>
-                  <input type="number" step="any" name="energy_contribution_mj" value={formData.energy_contribution_mj} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
-                <div>
-                  <label className="label">Qualifying Feed (MT)</label>
-                  <input type="number" step="any" name="qualifying_feed_mt" value={formData.qualifying_feed_mt} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
-
-                <div>
-                  <label className="label">Qty processed Cat I (MT)</label>
-                  <input type="number" step="any" name="cat_i" value={formData.cat_i} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
-                <div>
-                  <label className="label">Qty processed Cat II (MT)</label>
-                  <input type="number" step="any" name="cat_ii" value={formData.cat_ii} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
-                <div>
-                  <label className="label">Qty processed Cat III (MT)</label>
-                  <input type="number" step="any" name="cat_iii" value={formData.cat_iii} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
-                <div>
-                  <label className="label">Qty processed Cat IV (MT)</label>
-                  <input type="number" step="any" name="cat_iv" value={formData.cat_iv} onChange={handleInputChange} className="input" placeholder="0" />
-                </div>
               </div>
               <div className="flex gap-3 pt-4 border-t border-slate-100 mt-4">
-                <button type="button" onClick={() => setShowSingleModal(false)} className="flex-1 btn-secondary">Cancel</button>
-                <button type="submit" className="flex-1 btn-primary">Save Entry</button>
+                <button type="button" onClick={() => { setShowSingleModal(false); setEditingId(null); setFormData({ ...emptyForm }); }} className="flex-1 btn-secondary">Cancel</button>
+                <button type="submit" className="flex-1 btn-primary">{editingId ? 'Update Entry' : 'Save Entry'}</button>
               </div>
             </form>
           </div>
@@ -369,7 +419,7 @@ export default function ProductionEntryPage() {
             <div className="p-5 space-y-6">
               <div className="flex items-center justify-between">
                 <p className="text-sm text-slate-500">Upload your completed Excel template.</p>
-                <a href="c:/Users/PC/Climeto/PWP-Cement-Automation/cement-co-processing-production-bulk-entry-template.xlsx" download className="text-blue-600 hover:underline text-sm flex items-center gap-1 font-medium">
+                <a href="/cement-co-processing-production-bulk-entry-template.xlsx" download className="text-blue-600 hover:underline text-sm flex items-center gap-1 font-medium">
                   <FileSpreadsheet size={16} /> Download Template
                 </a>
               </div>
@@ -393,8 +443,7 @@ export default function ProductionEntryPage() {
                     <table className="w-full text-sm text-left">
                       <thead className="bg-slate-100 text-slate-600 sticky top-0">
                         <tr>
-                          <th className="px-4 py-2">From Date</th>
-                          <th className="px-4 py-2">To Date</th>
+                          <th className="px-4 py-2">Month</th>
                           <th className="px-4 py-2 text-right">Clinker (MT)</th>
                           <th className="px-4 py-2 text-right">Energy %</th>
                         </tr>
@@ -402,8 +451,7 @@ export default function ProductionEntryPage() {
                       <tbody className="divide-y divide-slate-100">
                         {bulkPreview.map((r, i) => (
                           <tr key={i}>
-                            <td className="px-4 py-2">{r.from_date}</td>
-                            <td className="px-4 py-2">{r.to_date}</td>
+                            <td className="px-4 py-2">{displayMonthName(r.to_date)}</td>
                             <td className="px-4 py-2 text-right">{r.clinker_production}</td>
                             <td className="px-4 py-2 text-right">{r.energy_percentage}</td>
                           </tr>
@@ -415,9 +463,9 @@ export default function ProductionEntryPage() {
               )}
             </div>
             
-            <div className="p-5 border-t border-slate-100 bg-slate-50 flex justify-end gap-3 rounded-b-2xl">
-              <button onClick={() => {setShowBulkModal(false); setBulkPreview([]); setBulkFile(null);}} className="btn-secondary">Cancel</button>
-              <button onClick={submitBulk} disabled={!bulkPreview.length} className="btn-primary disabled:opacity-50 disabled:cursor-not-allowed">
+            <div className="p-5 border-t border-slate-100 bg-white flex justify-end gap-3 rounded-b-2xl">
+              <button onClick={() => {setShowBulkModal(false); setBulkPreview([]); setBulkFile(null);}} className="bg-slate-100 hover:bg-slate-200 text-slate-700 px-4 py-2 rounded-lg text-sm font-medium transition-colors">Cancel</button>
+              <button onClick={submitBulk} disabled={!bulkPreview.length} className="bg-[#10b981] hover:bg-[#059669] text-white px-5 py-2 rounded-lg text-sm font-semibold shadow-sm transition-colors disabled:opacity-50 disabled:cursor-not-allowed">
                 Import Records
               </button>
             </div>
