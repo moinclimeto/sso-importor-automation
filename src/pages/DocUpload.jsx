@@ -4,7 +4,6 @@ import {
   Calendar,
   CheckCircle2,
   FileText,
-  FolderOpen,
   Loader2,
   Sparkles,
   Trash2,
@@ -17,6 +16,8 @@ import InvoiceDetailsModal, {
 } from '../components/InvoiceDetailsModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import { applyCompanyRoutingToResults } from '../utils/companyInvoiceMatch.js';
+import { Toast, useToast } from '../components/Toast.jsx';
+import ZipPreviewModal from '../components/ZipPreviewModal.jsx';
 function getFyOptions() {
   const now = new Date();
   const year = now.getMonth() >= 3 ? now.getFullYear() : now.getFullYear() - 1;
@@ -63,6 +64,7 @@ function FileRow({ file, onRemove, status, statusTone }) {
       <div className="min-w-0 flex-1">
         <p className="truncate text-sm font-medium text-slate-800">{file.name}</p>
         <p className={`text-xs ${tone}`}>
+          {file.fromZip ? `From ${file.fromZip} · ` : ''}
           {pages} page{pages === 1 ? '' : 's'}
           {file.size ? ` · ${(file.size / 1024).toFixed(1)} KB` : ''}
           {status ? ` · ${status}` : ''}
@@ -199,6 +201,7 @@ function outcomeLabel(outcome, r) {
 export default function DocUpload() {
   const navigate = useNavigate();
   const location = useLocation();
+  const { toast, showToast, hideToast } = useToast();
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
   const fyOptions = useMemo(() => getFyOptions(), []);
@@ -216,6 +219,8 @@ export default function DocUpload() {
   const [detailRow, setDetailRow] = useState(null);
   const [pageJobs, setPageJobs] = useState([]);
   const [inspecting, setInspecting] = useState(false);
+  const [zipPreview, setZipPreview] = useState(null);
+  const [resolving, setResolving] = useState(false);
 
   const totalPages = useMemo(() => {
     if (pageJobs.length) return pageJobs.length;
@@ -273,116 +278,160 @@ export default function DocUpload() {
       cancelled = true;
     };
   }, [files.map((f) => f.path || f.name).join('|')]);
-  const addBrowserFiles = (list) => {
-    const next = Array.from(list || [])
-      .filter((f) => {
-        const name = f.name.toLowerCase();
-        return (
-          name.endsWith('.pdf') ||
-          name.endsWith('.png') ||
-          name.endsWith('.jpg') ||
-          name.endsWith('.jpeg') ||
-          name.endsWith('.webp')
-        );
-      })
-      .map((f) => {
-        let realPath = f.path;
-        if ((!realPath || realPath === '') && window.pwp?.webUtils?.getPathForFile) {
-          try {
-            realPath = window.pwp.webUtils.getPathForFile(f);
-          } catch (e) {
-            console.warn('Failed to get path via webUtils', e);
-          }
+  const notifySkipped = (skipped = []) => {
+    if (!skipped.length) return;
+    const rar = skipped.filter((s) => /rar/i.test(s.reason || '') || /\.rar$/i.test(s.name || ''));
+    const other = skipped.filter((s) => !rar.includes(s));
+    if (rar.length) {
+      const names = rar.slice(0, 3).map((s) => s.name).join(', ');
+      showToast(
+        `RAR skipped (${rar.length}): ${names}${rar.length > 3 ? '…' : ''}\nOnly ZIP archives are supported.`,
+        'warning',
+        { duration: 5000 }
+      );
+    }
+    if (other.length) {
+      const lines = other.slice(0, 4).map((s) => `• ${s.name}: ${s.reason}`).join('\n');
+      showToast(
+        `Skipped ${other.length} file(s)\n${lines}${other.length > 4 ? '\n…' : ''}`,
+        'warning',
+        { duration: 5500 }
+      );
+    }
+  };
+
+  const mergeIntoQueue = (incoming = []) => {
+    if (!incoming.length) return 0;
+    let addedCount = 0;
+    let dupCount = 0;
+    setFiles((prev) => {
+      const seen = new Set(prev.map((f) => String(f.path || f.name).toLowerCase()));
+      const nameSeen = new Set(prev.map((f) => String(f.name).toLowerCase()));
+      const added = [];
+      for (const f of incoming) {
+        const pathKey = String(f.path || f.name).toLowerCase();
+        const nameKey = String(f.name).toLowerCase();
+        if (seen.has(pathKey) || nameSeen.has(nameKey)) {
+          dupCount += 1;
+          continue;
         }
-        return {
+        seen.add(pathKey);
+        nameSeen.add(nameKey);
+        added.push({
           name: f.name,
-          path: realPath || null,
-          size: f.size,
-          file: f,
-        };
+          path: f.path || null,
+          size: f.size || 0,
+          fromZip: f.fromZip || null,
+          zipEntry: f.zipEntry || null,
+        });
+      }
+      addedCount = added.length;
+      return added.length ? [...prev, ...added] : prev;
+    });
+    if (dupCount > 0) {
+      showToast(
+        `Duplicate file(s) skipped (${dupCount}) — already in queue.`,
+        'warning',
+        { duration: 4000 }
+      );
+    }
+    return addedCount;
+  };
+
+  const ingestResolved = (resolved, { showZipModal = true } = {}) => {
+    const nextFiles = resolved?.files || [];
+    const skipped = resolved?.skipped || [];
+    const zipSummaries = resolved?.zipSummaries || [];
+
+    notifySkipped(skipped);
+
+    if (showZipModal && zipSummaries.length) {
+      setZipPreview({
+        summaries: zipSummaries,
+        skipped,
+        pendingFiles: nextFiles,
       });
-    if (!next.length) {
-      setError('Please select PDF, JPG, or PNG files.');
       return;
     }
-    setFiles((prev) => {
-      const seen = new Set(prev.map((f) => String(f.name).toLowerCase()));
-      const added = [];
-      for (const f of next) {
-        const key = String(f.name).toLowerCase();
-        if (seen.has(key)) continue;
-        seen.add(key);
-        added.push(f);
-      }
-      if (!added.length) {
-        setError('Duplicate file(s) already in queue — skipped.');
-        return prev;
-      }
-      setError('');
-      return [...prev, ...added];
-    });
+
+    if (!nextFiles.length && !skipped.length) {
+      showToast('No PDF / image / ZIP files found.', 'warning');
+      return;
+    }
+    mergeIntoQueue(nextFiles);
   };
-  const handleSelectFiles = async () => {
-    if (!window.pwp?.ocr?.selectFiles) {
+
+  const resolvePaths = async (paths) => {
+    if (!paths?.length) return;
+    if (!window.pwp?.ocr?.resolveUploads) {
+      showToast('ZIP / upload resolve needs the Electron app.', 'error');
+      return;
+    }
+    setResolving(true);
+    try {
+      const resolved = await window.pwp.ocr.resolveUploads(paths);
+      ingestResolved(resolved, { showZipModal: false });
+    } catch (err) {
+      showToast(err?.message || 'Failed to read uploads', 'error');
+    } finally {
+      setResolving(false);
+    }
+  };
+
+  const addBrowserFiles = async (list) => {
+    const arr = Array.from(list || []);
+    if (!arr.length) return;
+
+    const paths = [];
+    const noPath = [];
+    for (const f of arr) {
+      let realPath = f.path;
+      if ((!realPath || realPath === '') && window.pwp?.webUtils?.getPathForFile) {
+        try {
+          realPath = window.pwp.webUtils.getPathForFile(f);
+        } catch {
+          realPath = null;
+        }
+      }
+      if (realPath) paths.push(realPath);
+      else noPath.push(f.name);
+    }
+
+    if (noPath.length) {
+      const names = noPath.slice(0, 3).join(', ');
+      showToast(
+        `Could not read path for: ${names}${noPath.length > 3 ? '…' : ''}\nUse Browse inside the Electron app.`,
+        'warning'
+      );
+    }
+    if (!paths.length) return;
+    await resolvePaths(paths);
+  };
+
+  const handleBrowse = async () => {
+    if (!window.pwp?.ocr?.selectUploads && !window.pwp?.ocr?.selectFiles) {
       inputRef.current?.click();
       return;
     }
     try {
-      const paths = await window.pwp.ocr.selectFiles();
+      const picker = window.pwp.ocr.selectUploads || window.pwp.ocr.selectFiles;
+      const paths = await picker();
       if (!paths?.length) return;
-      setFiles((prev) => {
-        const seen = new Set(prev.map((f) => String(f.name).toLowerCase()));
-        const added = [];
-        for (const p of paths) {
-          const name = p.split(/[/\\]/).pop();
-          const key = String(name).toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          added.push({ name, path: p, size: 0 });
-        }
-        if (!added.length) {
-          setError('Duplicate file(s) already in queue — skipped.');
-          return prev;
-        }
-        setError('');
-        return [...prev, ...added];
-      });
+      await resolvePaths(paths);
     } catch (err) {
-      setError(err?.message || 'Failed to select files');
+      showToast(err?.message || 'Failed to browse uploads', 'error');
     }
   };
-  const handleSelectFolder = async () => {
-    if (!window.pwp?.ocr?.selectFolder) {
-      setError('Folder browse needs the Electron app. Run with npm run electron:dev');
-      return;
-    }
-    try {
-      const paths = await window.pwp.ocr.selectFolder();
-      if (!paths?.length) return;
-      setFiles((prev) => {
-        const seen = new Set(prev.map((f) => String(f.name).toLowerCase()));
-        const added = [];
-        for (const p of paths) {
-          const name = p.split(/[/\\]/).pop();
-          const key = String(name).toLowerCase();
-          if (seen.has(key)) continue;
-          seen.add(key);
-          added.push({ name, path: p, size: 0 });
-        }
-        if (!added.length) {
-          setError('Duplicate file(s) already in queue — skipped.');
-          return prev;
-        }
-        setError('');
-        return [...prev, ...added];
-      });
-    } catch (err) {
-      setError(err?.message || 'Failed to select folder');
-    }
-  };
+
   const handleDrop = (e) => {
     e.preventDefault();
     addBrowserFiles(e.dataTransfer.files);
+  };
+
+  const confirmZipPreview = () => {
+    if (!zipPreview) return;
+    mergeIntoQueue(zipPreview.pendingFiles || []);
+    setZipPreview(null);
   };
 
   const buildSavePayload = (data, sourceRow) => {
@@ -710,6 +759,19 @@ export default function DocUpload() {
       setResults(finalResults);
       setSavedCount(savedPurchase + savedSale);
       setStage('results');
+      const dupSkipped = finalResults.filter(
+        (r) =>
+          r?.skipped &&
+          /(duplicate|already extracted)/i.test(String(r.message || r.reason || ''))
+      );
+      if (dupSkipped.length) {
+        const names = dupSkipped.slice(0, 4).map((r) => `• ${r.fileName || 'file'}`).join('\n');
+        showToast(
+          `Duplicate invoice(s) skipped (${dupSkipped.length})\n${names}${dupSkipped.length > 4 ? '\n…' : ''}`,
+          'warning',
+          { duration: 5500 }
+        );
+      }
       setProgress((prev) => ({
         ...(prev || {}),
         trackId: batch.trackId || prev?.trackId,
@@ -754,14 +816,11 @@ export default function DocUpload() {
   const saleSaved = savedResults.filter((r) => r.decidedType === 'sale').length;
 
   return (
-    <div className="space-y-5 max-w-6xl">
+    <div className="space-y-3 max-w-6xl">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">
             {isPurchase ? 'Procurement' : 'Post Consumer'} · multi-invoice
-          </p>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Auto-save matched invoices · reject others · listing only
           </p>
         </div>
         <button
@@ -839,54 +898,41 @@ export default function DocUpload() {
                 </div>
                 <div className="min-w-0">
                   <p className="text-sm font-semibold text-slate-800">
-                    Drag &amp; drop multiple invoices
+                    Drag &amp; drop files, folder, or ZIP
                   </p>
                   <p className="text-xs text-slate-500 mt-1">
-                    PDF / JPG / PNG · match company → auto-save Purchase / Sale
+                    Auto-detects PDF / images / ZIP / folder · RAR skipped
                   </p>
                 </div>
               </div>
               <div className="flex items-center gap-2 flex-shrink-0">
                 <button
                   type="button"
-                  disabled={stage === 'processing'}
-                  onClick={handleSelectFiles}
+                  disabled={stage === 'processing' || resolving}
+                  onClick={handleBrowse}
                   className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-60"
                 >
-                  Browse files
+                  <Upload size={15} />
+                  Browse
                 </button>
-                <button
-                  type="button"
-                  disabled={stage === 'processing'}
-                  onClick={handleSelectFolder}
-                  className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white hover:bg-slate-50 text-slate-700 text-sm font-medium px-4 py-2.5 disabled:opacity-60"
-                >
-                  <FolderOpen size={15} />
-                  Browse folder
-                </button>
-                {stage === 'upload' && (
-                  <button
-                    type="button"
-                    onClick={handleExtract}
-                    disabled={inspecting || !totalPages}
-                    className="btn-primary inline-flex items-center gap-2 disabled:opacity-60"
-                  >
-                    <Sparkles size={16} />
-                    Start extraction ({totalPages} page{totalPages === 1 ? '' : 's'})
-                  </button>
-                )}
               </div>
             </div>
             <input
               ref={inputRef}
               type="file"
-              accept=".pdf,.png,.jpg,.jpeg,.webp"
+              accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
               multiple
               className="hidden"
               onChange={(e) => addBrowserFiles(e.target.files)}
             />
           </div>
           {stage === 'processing' && <ProgressPanel progress={progress} />}
+          {resolving && (
+            <div className="flex items-center gap-2 text-sm text-slate-500">
+              <Loader2 size={16} className="animate-spin text-green-600" />
+              Reading ZIP / files…
+            </div>
+          )}
           {files.length > 0 && (
             <div className="space-y-2">
               <div className="flex flex-wrap items-center justify-between gap-2">
@@ -896,23 +942,30 @@ export default function DocUpload() {
                     {inspecting ? '…' : totalPages} page{totalPages === 1 ? '' : 's'}
                   </span>
                 </p>
-                <p className="text-[11px] text-slate-400">
-                  Multi-page PDF = multiple invoices (1 page each)
-                </p>
+                <button
+                  type="button"
+                  disabled={stage === 'processing'}
+                  onClick={() => setFiles([])}
+                  className="text-[11px] font-medium text-red-500 hover:text-red-600 hover:underline disabled:opacity-50 transition"
+                >
+                  Clear all
+                </button>
               </div>
-              {files.map((f, idx) => (
-                <FileRow
-                  key={`${f.name}-${idx}`}
-                  file={f}
-                  status={fileStatus[f.name]?.label}
-                  statusTone={fileStatus[f.name]?.tone}
-                  onRemove={
-                    stage === 'processing'
-                      ? undefined
-                      : () => setFiles((prev) => prev.filter((_, i) => i !== idx))
-                  }
-                />
-              ))}
+              <div className="max-h-[50vh] overflow-y-auto space-y-2 pr-1">
+                {files.map((f, idx) => (
+                  <FileRow
+                    key={`${f.name}-${idx}`}
+                    file={f}
+                    status={fileStatus[f.name]?.label}
+                    statusTone={fileStatus[f.name]?.tone}
+                    onRemove={
+                      stage === 'processing'
+                        ? undefined
+                        : () => setFiles((prev) => prev.filter((_, i) => i !== idx))
+                    }
+                  />
+                ))}
+              </div>
               {stage === 'processing' && (
                 <div className="flex flex-col items-center gap-2 pt-4">
                   <Loader2 className="animate-spin text-green-600" size={28} />
@@ -1079,6 +1132,14 @@ export default function DocUpload() {
           </div>
         </div>
       )}
+      <ZipPreviewModal
+        open={Boolean(zipPreview)}
+        summaries={zipPreview?.summaries}
+        skipped={zipPreview?.skipped}
+        onConfirm={confirmZipPreview}
+        onCancel={() => setZipPreview(null)}
+      />
+      <Toast toast={toast} onClose={hideToast} />
       <InvoiceDetailsModal
         open={Boolean(detailRow)}
         invoice={detailRow}
