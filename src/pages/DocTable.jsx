@@ -11,6 +11,8 @@ import {
   SALE_TABLE_COLUMNS,
   PURCHASE_TABLE_COLUMNS,
 } from '../utils/excelImport.js';
+
+import CpcbConfirmationModal from '../components/CpcbConfirmationModal.jsx';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import InvoiceDetailsModal, {
@@ -1164,6 +1166,7 @@ export default function DocTable() {
 
 
   const [cpcbOpen, setCpcbOpen] = useState(false);
+  const [cpcbConfirmOpen, setCpcbConfirmOpen] = useState(false);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
   const excelMenuRef = useRef(null);
 
@@ -1685,7 +1688,7 @@ export default function DocTable() {
           </div>
           <button
             type="button"
-            onClick={() => setCpcbOpen(true)}
+            onClick={() => setCpcbConfirmOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-green-600 text-green-700 bg-white hover:bg-green-50 text-sm font-medium px-3 py-2 transition-colors"
           >
             <UploadCloud size={16} />
@@ -2051,6 +2054,18 @@ export default function DocTable() {
 
 
 
+
+      {cpcbConfirmOpen && (
+        <CpcbConfirmationModal
+          rows={rows}
+          type={type}
+          onClose={() => setCpcbConfirmOpen(false)}
+          onConfirm={() => {
+            setCpcbConfirmOpen(false);
+            setCpcbOpen(true);
+          }}
+        />
+      )}
 
       {cpcbOpen && (
 
