@@ -74,16 +74,40 @@ function Field({ label, required, hint, children, className = '' }) {
   );
 }
 
-export default function SingleRecordModal({ type, onClose, onSaved }) {
+export default function SingleRecordModal({ type, initialData, onClose, onSaved }) {
   const isPurchase = type !== 'sale';
-  const title = isPurchase ? 'Add Procurement Details' : 'Add Post Consumer';
-  const [form, setForm] = useState(isPurchase ? emptyPurchase() : emptySale());
+  const isEdit = Boolean(initialData?.id);
+  const title = isPurchase 
+    ? (isEdit ? 'Edit Procurement Details' : 'Add Procurement Details') 
+    : (isEdit ? 'Edit Post Consumer' : 'Add Post Consumer');
+
+  const [form, setForm] = useState(() => {
+    if (initialData) {
+      if (isPurchase) {
+        return {
+          ...emptyPurchase(),
+          ...initialData,
+          invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
+          invoice_number: initialData.invoice_number || initialData.invoice_no || '',
+          supplier_name: initialData.supplier_name || initialData.vendor_name || '',
+          supplier_gst_number: initialData.supplier_gst_number || initialData.vendor_gstin || '',
+        };
+      } else {
+        return {
+          ...emptySale(),
+          ...initialData,
+        };
+      }
+    }
+    return isPurchase ? emptyPurchase() : emptySale();
+  });
+  
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
 
   useEffect(() => {
-    if (!isPurchase) return;
+    if (!isPurchase || isEdit) return;
     (async () => {
       try {
         const companies = await getApi().companies.getAll();
@@ -93,7 +117,7 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
         /* ignore */
       }
     })();
-  }, [isPurchase]);
+  }, [isPurchase, isEdit]);
 
   const set = (key, value) => {
     setForm((prev) => {
@@ -124,7 +148,7 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
     const fe = {};
 
     if (isPurchase) {
-      if (!form.invoice_filename?.trim() && !form.invoice_file) {
+      if (!isEdit && !form.invoice_filename?.trim() && !form.invoice_file) {
         fe.invoice_filename = 'Please upload invoice / GST e-invoice';
       }
       if (!form.category_of_plastic) fe.category_of_plastic = 'Please Select Categories of Plastic';
@@ -133,10 +157,10 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
       if (!form.state) fe.state = 'Please Select State';
       if (!form.city.trim()) fe.city = 'Please Select City';
       if (!form.pin_code.trim()) fe.pin_code = 'Please Enter PIN Code';
-      if (!form.is_supplier_gst_available) {
+      if (!isEdit && !form.is_supplier_gst_available) {
         fe.is_supplier_gst_available = 'Please Select Is Supplier GST Available?';
       }
-      if (form.is_supplier_gst_available === 'Yes' && !form.supplier_gst_number.trim()) {
+      if (!isEdit && form.is_supplier_gst_available === 'Yes' && !form.supplier_gst_number.trim()) {
         fe.supplier_gst_number = 'Please Enter Supplier GST';
       }
       if (!form.hsn_code.trim()) fe.hsn_code = 'Please Enter HSN Code';
@@ -188,9 +212,22 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
         total_amount: 0,
       };
 
+      if (isEdit && initialData) {
+        payload.lineItems = initialData.line_items || initialData.lineItems;
+        payload.extraction = initialData.extraction;
+        payload._source_fields = initialData._source_fields;
+        payload._routing = initialData._routing;
+        payload.fileHash = initialData.file_hash || initialData.fileHash;
+      }
+
       setSaving(true);
       try {
-        await getApi().purchases.add(payload);
+        if (isEdit) {
+          payload.id = initialData.id;
+          await getApi().purchases.update(payload);
+        } else {
+          await getApi().purchases.add(payload);
+        }
         onSaved?.();
         onClose();
       } catch (err) {
@@ -207,7 +244,6 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
       return;
     }
     if (!form.entity_name.trim()) return setError('Name of the Entity is required.');
-    if (!form.invoice_file_name.trim()) return setError('Invoice File Name is required.');
 
     const sold = parseFloat(form.quantity_sold_mt) || 0;
     const payload = {
@@ -240,9 +276,22 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
       total_amount: parseFloat(form.gst_other_charges) || 0,
     };
 
+    if (isEdit && initialData) {
+      payload.lineItems = initialData.line_items || initialData.lineItems;
+      payload.extraction = initialData.extraction;
+      payload._source_fields = initialData._source_fields;
+      payload._routing = initialData._routing;
+      payload.fileHash = initialData.file_hash || initialData.fileHash;
+    }
+
     setSaving(true);
     try {
-      await getApi().sales.add(payload);
+      if (isEdit) {
+        payload.id = initialData.id;
+        await getApi().sales.update(payload);
+      } else {
+        await getApi().sales.add(payload);
+      }
       onSaved?.();
       onClose();
     } catch (err) {
@@ -286,25 +335,27 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
 
           {isPurchase ? (
             <div className="space-y-4">
-              {/* Full width: Upload Invoice */}
-              <Field
-                label="Upload Invoice / GST E-Invoice"
-                required
-                hint="# As Applicable As Per GST Act 2017 (As Amended)"
-              >
-                <input
-                  type="file"
-                  accept=".pdf,.png,.jpg,.jpeg,.webp"
-                  className={errCls('invoice_filename')}
-                  onChange={(e) => set('invoice_file', e.target.files?.[0] || null)}
-                />
-                {form.invoice_filename && (
-                  <p className="text-xs text-slate-500 mt-1">Selected: {form.invoice_filename}</p>
-                )}
-                {fieldErrors.invoice_filename && (
-                  <p className="text-xs text-red-500 mt-1">{fieldErrors.invoice_filename}</p>
-                )}
-              </Field>
+              {/* Full width: Upload Invoice (Hidden in edit mode) */}
+              {!isEdit && (
+                <Field
+                  label="Upload Invoice / GST E-Invoice"
+                  required
+                  hint="# As Applicable As Per GST Act 2017 (As Amended)"
+                >
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg,.webp"
+                    className={errCls('invoice_filename')}
+                    onChange={(e) => set('invoice_file', e.target.files?.[0] || null)}
+                  />
+                  {form.invoice_filename && (
+                    <p className="text-xs text-slate-500 mt-1">Selected: {form.invoice_filename}</p>
+                  )}
+                  {fieldErrors.invoice_filename && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.invoice_filename}</p>
+                  )}
+                </Field>
+              )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Categories of Plastic" required>
@@ -407,21 +458,23 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
                   />
                 </Field>
 
-                <Field label="Is Supplier GST Available?" required>
-                  <select
-                    className={errCls('is_supplier_gst_available')}
-                    value={form.is_supplier_gst_available}
-                    onChange={(e) => set('is_supplier_gst_available', e.target.value)}
-                  >
-                    <option value="">Select</option>
-                    {GST_OPTIONS.map((o) => (
-                      <option key={o} value={o}>{o}</option>
-                    ))}
-                  </select>
-                  {fieldErrors.is_supplier_gst_available && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.is_supplier_gst_available}</p>
-                  )}
-                </Field>
+                {!isEdit && (
+                  <Field label="Is Supplier GST Available?" required>
+                    <select
+                      className={errCls('is_supplier_gst_available')}
+                      value={form.is_supplier_gst_available}
+                      onChange={(e) => set('is_supplier_gst_available', e.target.value)}
+                    >
+                      <option value="">Select</option>
+                      {GST_OPTIONS.map((o) => (
+                        <option key={o} value={o}>{o}</option>
+                      ))}
+                    </select>
+                    {fieldErrors.is_supplier_gst_available && (
+                      <p className="text-xs text-red-500 mt-1">{fieldErrors.is_supplier_gst_available}</p>
+                    )}
+                  </Field>
+                )}
 
                 <Field label="HSN Code" required>
                   <input
@@ -435,8 +488,8 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
                   )}
                 </Field>
 
-                {form.is_supplier_gst_available === 'Yes' && (
-                  <Field label="Supplier GST" required className="sm:col-span-2">
+                {(isEdit || form.is_supplier_gst_available === 'Yes') && (
+                  <Field label="Supplier GST" className="sm:col-span-2">
                     <input
                       className={errCls('supplier_gst_number')}
                       placeholder="Enter Supplier GST"
@@ -460,17 +513,6 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
                   {fieldErrors.invoice_number && (
                     <p className="text-xs text-red-500 mt-1">{fieldErrors.invoice_number}</p>
                   )}
-                </Field>
-
-                <Field label="IRN No.">
-                  <input
-                    className="input bg-slate-100 text-slate-600"
-                    placeholder="Enter IRN No."
-                    value={form.irn_no}
-                    onChange={(e) => set('irn_no', e.target.value)}
-                    disabled
-                    readOnly
-                  />
                 </Field>
 
                 <Field label="Qty. of Waste Plastic (MT)" required>
@@ -523,9 +565,6 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="S-No.">
-                <input className="input" placeholder="1" value={form.s_no} onChange={(e) => set('s_no', e.target.value)} />
-              </Field>
               <Field label="Category of Plastic" required>
                 <select className="input" value={form.category_of_plastic} onChange={(e) => set('category_of_plastic', e.target.value)}>
                   <option value="">Select Category</option>
@@ -540,7 +579,20 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
                 <input className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)} />
               </Field>
               <Field label="Product Type">
-                <input className="input" value={form.product_type} onChange={(e) => set('product_type', e.target.value)} />
+                <select className="input" value={form.product_type} onChange={(e) => set('product_type', e.target.value)}>
+                  <option value="">Select Product Type</option>
+                  <option value="Cement">Cement</option>
+                  <option value="Clinker">Clinker</option>
+                </select>
+              </Field>
+              <Field label="(%) of Recycled Plastic">
+                <input type="number" step="any" className="input" value={form.recycled_plastic_percent} onChange={(e) => set('recycled_plastic_percent', e.target.value)} />
+              </Field>
+              <Field label="Conversion Factor">
+                <input type="number" step="any" className="input" value={form.conversion_factor} onChange={(e) => set('conversion_factor', e.target.value)} />
+              </Field>
+              <Field label="Available Quantity (MT)">
+                <input type="number" step="any" className="input" value={form.available_quantity_mt} onChange={(e) => set('available_quantity_mt', e.target.value)} />
               </Field>
               <Field label="Quantity Sold (MT)">
                 <input type="number" step="any" className="input" value={form.quantity_sold_mt} onChange={(e) => set('quantity_sold_mt', e.target.value)} />
@@ -569,9 +621,6 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
               </Field>
               <Field label="Application Number">
                 <input className="input" value={form.application_number} onChange={(e) => set('application_number', e.target.value)} />
-              </Field>
-              <Field label="Invoice File Name" required className="sm:col-span-2">
-                <input className="input" placeholder="Must match PDF in ZIP" value={form.invoice_file_name} onChange={(e) => set('invoice_file_name', e.target.value)} />
               </Field>
             </div>
           )}

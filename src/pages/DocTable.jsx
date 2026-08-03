@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight,
+  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Edit2
 } from 'lucide-react';
 import {
   downloadExcelTemplate,
@@ -11,12 +11,15 @@ import {
   SALE_TABLE_COLUMNS,
   PURCHASE_TABLE_COLUMNS,
 } from '../utils/excelImport.js';
+
+import CpcbConfirmationModal from '../components/CpcbConfirmationModal.jsx';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import InvoiceDetailsModal, {
   ViewInvoiceButton,
 } from '../components/InvoiceDetailsModal.jsx';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
+import { Toast, useToast } from '../components/Toast.jsx';
 import * as XLSX from 'xlsx';
 
 
@@ -884,6 +887,7 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
     onToggleSelectAll,
     onMove,
     moveLabel,
+    onEdit,
   } = extras;
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds?.has(r.id));
   const someSelected = rows.some((r) => selectedIds?.has(r.id));
@@ -953,6 +957,16 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
                       title={moveLabel || 'Move'}
                     >
                       <ArrowLeftRight size={15} />
+                    </button>
+                  )}
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(r)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600"
+                      title="Edit"
+                    >
+                      <Edit2 size={15} />
                     </button>
                   )}
                   <button
@@ -1143,7 +1157,7 @@ export default function DocTable() {
 
 
 
-  const [message, setMessage] = useState('');
+  const { toast, showToast, hideToast } = useToast();
 
 
 
@@ -1152,10 +1166,12 @@ export default function DocTable() {
 
 
   const [cpcbOpen, setCpcbOpen] = useState(false);
+  const [cpcbConfirmOpen, setCpcbConfirmOpen] = useState(false);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
   const excelMenuRef = useRef(null);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null);
 
 
 
@@ -1396,16 +1412,14 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
     downloadExcelTemplate(type);
 
 
-
-    setMessage(`${title} Excel template downloaded.`);
-
+    showToast(`${title} Excel template downloaded.`, 'success');
 
 
   };
@@ -1424,7 +1438,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1492,7 +1506,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1523,9 +1537,7 @@ export default function DocTable() {
       }
 
 
-
-      setMessage(msg);
-
+      showToast(msg, 'success');
 
 
       await load();
@@ -1676,7 +1688,7 @@ export default function DocTable() {
           </div>
           <button
             type="button"
-            onClick={() => setCpcbOpen(true)}
+            onClick={() => setCpcbConfirmOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-green-600 text-green-700 bg-white hover:bg-green-50 text-sm font-medium px-3 py-2 transition-colors"
           >
             <UploadCloud size={16} />
@@ -1748,11 +1760,8 @@ export default function DocTable() {
         />
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          {message}
-        </div>
-      )}
+      <Toast toast={toast} onClose={hideToast} />
+
 
       {error && (
         <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line mb-4">
@@ -1845,6 +1854,7 @@ export default function DocTable() {
 
           renderWideTable(rows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
+            onEdit: setEditRow,
 
 
 
@@ -1974,6 +1984,7 @@ export default function DocTable() {
 
           renderWideTable(rows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
+            onEdit: setEditRow,
 
 
 
@@ -2044,6 +2055,18 @@ export default function DocTable() {
 
 
 
+      {cpcbConfirmOpen && (
+        <CpcbConfirmationModal
+          rows={rows}
+          type={type}
+          onClose={() => setCpcbConfirmOpen(false)}
+          onConfirm={() => {
+            setCpcbConfirmOpen(false);
+            setCpcbOpen(true);
+          }}
+        />
+      )}
+
       {cpcbOpen && (
 
 
@@ -2077,41 +2100,26 @@ export default function DocTable() {
 
 
       {addOpen && (
-
-
-
         <SingleRecordModal
-
-
-
           type={type}
-
-
-
           onClose={() => setAddOpen(false)}
-
-
-
           onSaved={() => {
-
-
-
-            setMessage(`${title} record added successfully.`);
-
-
-
+            showToast(`${title} record added successfully.`, 'success');
             load();
-
-
-
           }}
-
-
-
         />
+      )}
 
-
-
+      {editRow && (
+        <SingleRecordModal
+          type={type}
+          initialData={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => {
+            showToast(`${title} record updated successfully.`, 'success');
+            load();
+          }}
+        />
       )}
 
       {monthDetail && (
@@ -2140,6 +2148,7 @@ export default function DocTable() {
             <div className="p-0 overflow-y-auto flex-1">
               {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras({
                 onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename || r.invoice_file_name }),
+                onEdit: setEditRow,
               }))}
             </div>
           </div>
