@@ -932,13 +932,26 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
               {columns.map((col) => {
                 let value = r[col.key];
                 if (getValue) value = getValue(r, col, idx, value);
+                const isTooltipCol = ['supplier_name', 'entity_name', 'address_line_1', 'address_line_2', 'address'].includes(col.key);
                 return (
                   <td
                     key={col.key}
-                    className="td whitespace-nowrap max-w-[220px] truncate"
-                    title={String(cell(value))}
+                    className={`td max-w-[220px] ${isTooltipCol ? 'relative group' : 'whitespace-nowrap truncate'}`}
+                    title={isTooltipCol ? '' : String(cell(value))}
                   >
-                    {cell(value)}
+                    {isTooltipCol ? (
+                      <>
+                        <div className="whitespace-nowrap truncate">{cell(value)}</div>
+                        {cell(value) && String(cell(value)).trim() !== '-' && String(cell(value)).trim() !== '' && (
+                          <div className="absolute z-[100] invisible group-hover:visible opacity-0 group-hover:opacity-100 transition-all duration-300 bottom-full left-1/2 -translate-x-1/2 mb-2 px-3 py-2 bg-emerald-600 text-white text-xs font-medium rounded-lg shadow-xl whitespace-normal w-max max-w-xs text-center pointer-events-none">
+                            {cell(value)}
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-emerald-600" />
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      cell(value)
+                    )}
                   </td>
                 );
               })}
