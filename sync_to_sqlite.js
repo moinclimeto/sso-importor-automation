@@ -318,6 +318,12 @@ async function syncToSqlite(memoryDataMap = null) {
                 targetData = jsonData;
             }
         }
+        // 5.7 Inventory
+        else if (file === 'inventory.json') {
+            if (Array.isArray(jsonData)) {
+                targetData = jsonData;
+            }
+        }
         // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
         else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
             const headers = jsonData.tables[0][0].map(h => {

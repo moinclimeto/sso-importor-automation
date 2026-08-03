@@ -134,31 +134,31 @@ export default function EprInventoryData() {
                 {currentRecords.map((r, i) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
-                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['S.N'] || globalIndex}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['Production Date'] || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qualifying Feed(MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat I (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat II (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat III (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat IV (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Production ID'] || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {r['Available Quantity (MT)'] || '0'}
-                    </td>
-                  </tr>
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['s_n'] || r['S.N'] || globalIndex}</td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['production_date'] || r['Production Date'] || 'N/A'}</td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qualifying_feed_mt_'] || r['Qualifying Feed(MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_i__mt_'] || r['Qty of PW processed for Cat I (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_ii__mt_'] || r['Qty of PW processed for Cat II (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_iii__mt_'] || r['Qty of PW processed for Cat III (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_iv__mt_'] || r['Qty of PW processed for Cat IV (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['production_id'] || r['Production ID'] || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
+                        {r['available_quantity_mt_'] || r['Available Quantity (MT)'] || '0'}
+                      </td>
+                    </tr>
                 )})}
               </tbody>
             </table>
