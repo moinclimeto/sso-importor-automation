@@ -30,19 +30,19 @@ function createWindow() {
   win.once('ready-to-show', () => win.show());
 
   if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:5173');
+    win.loadURL('http://localhost:5180');
     win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Windows taskbar grouping / custom icon
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.climeto.pwp');
   }
-  initDatabase();
+  await initDatabase();
   registerIpcHandlers();
   createWindow();
 });

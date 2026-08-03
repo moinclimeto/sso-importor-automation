@@ -113,8 +113,7 @@ export function buildExtractionPrompt(type, financialYear = 'all') {
 
 
   const productsHint =
-
-    'products:max15 lines only (skip freight/tax/totals). d=desc h=HSN m=polymer(PP|HDPE|LDPE|PET|PS|PVC|LLDPE|MLP|"" ) q=qty+unit a=lineAmt ga=gstAmt gr=gst% c=plasticCat rp=recycled%';
+    'products:max15 lines only (skip freight/tax/totals). d=desc h=HSN m=productType(if h=25231000 then Clinker else Cement) q=qty+unit a=lineAmt ga=gstAmt gr=gst% c=plasticCat rp=recycled%';
 
 
 
@@ -128,7 +127,7 @@ ${fy}
 
 {"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/a*/city/st/pin/mob=seller(supplier).sg/sn=seller GST/name.bg/bn=buyer GST/name.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.m only if printed else "".${productsHint}`;
+RULES:name/gst/a*/city/st/pin/mob=seller(supplier).sg/sn=seller GST/name.bg/bn=buyer GST/name.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.${productsHint}`;
 
   }
 
@@ -142,7 +141,7 @@ ${fy}
 
 {"inv":"","dt":"YYYY-MM-DD","name":"","gst":"","sg":"","sn":"","bg":"","bn":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 
-RULES:name/gst/addr/st/dist=buyer.sg/sn=seller GST/name.bg/bn=buyer GST/name.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.m/c/rp/pc/reg only if printed else "".${productsHint}`;
+RULES:name/gst/addr/st/dist=buyer.sg/sn=seller GST/name.bg/bn=buyer GST/name.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.c/rp/pc/reg only if printed else "".${productsHint}`;
 
 }
 

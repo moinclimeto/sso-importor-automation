@@ -74,8 +74,13 @@ async function extractOneInvoice({
 }) {
   loadEnvFile();
   const log = parentLog || createLogger(trackId || createTrackId('ocr'));
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const apiKeys = [];
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k.startsWith('GEMINI_API_KEY') && v) {
+      apiKeys.push(v.trim());
+    }
+  }
+  if (!apiKeys.length) {
     log.error('GEMINI_API_KEY missing');
     return {
       success: false,
@@ -84,6 +89,8 @@ async function extractOneInvoice({
       trackId: log.trackId,
     };
   }
+  const sNoIndex = sNo ? Number(sNo) : Math.floor(Math.random() * 100);
+  const apiKey = apiKeys[sNoIndex % apiKeys.length];
   if (!filePath || !fs.existsSync(filePath)) {
     log.error('File not found', { filePath });
     return { success: false, message: 'File not found.', trackId: log.trackId };

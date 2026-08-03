@@ -3,12 +3,13 @@ import { app } from 'electron';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
 import fs from 'fs'; // Import fs
-import { fileURLToPath } from 'url'; // Added
+import { fileURLToPath } from 'url';
 
 const currentModuleUrl = import.meta.url;
 const __dirname = fileURLToPath(new URL('.', currentModuleUrl));
 
 let db = null;
+let sqliteDb = null; // Added for the scraped data database
 let dbFilePath = '';
 export let dbJsonPath = '';
 
@@ -22,7 +23,7 @@ function getDbFilePath() {
   return path.join(dbDir, 'app.db'); // Changed to .db
 }
 
-// Initialize database connection
+// Initialize main application database connection
 export async function initDatabase(onDbReadyCallback) {
   dbFilePath = getDbFilePath();
   dbJsonPath = path.join(path.dirname(dbFilePath), 'db.json');
@@ -34,20 +35,52 @@ export async function initDatabase(onDbReadyCallback) {
   // Enable foreign keys
   await db.exec('PRAGMA foreign_keys = ON;');
 
-  // Run migrations
+  // Run migrations for the main app.db
   await runMigrations();
 
   if (onDbReadyCallback) {
     await onDbReadyCallback(db);
   }
+
+  // Initialize separate database for scraped data (from 'dev' branch)
+  const sqlitePath = path.join(__dirname, '..', 'database.sqlite');
+  try {
+    sqliteDb = await open({
+      filename: sqlitePath,
+      driver: sqlite3.Database
+    });
+    console.log("✅ Connected to SQLite database for scraped data at", sqlitePath);
+
+    // Auto-create scraper tables to prevent UI crashes if data isn't synced yet
+    await sqliteDb.exec(`
+      CREATE TABLE IF NOT EXISTS epr_dashboard (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, raw_text TEXT, tables_dump TEXT);
+      CREATE TABLE IF NOT EXISTS epr_profile (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT, gstin TEXT);
+      CREATE TABLE IF NOT EXISTS epr_payment (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE IF NOT EXISTS wallet_wallet_potentials (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE IF NOT EXISTS wallet_certificate_transaction (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+      CREATE TABLE IF NOT EXISTS procurement_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER, source_year INTEGER);
+      CREATE TABLE IF NOT EXISTS sales_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
+      CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
+    `);
+  } catch (error) {
+    console.error("⚠️ Failed to connect to SQLite scraped database (it may not exist yet).", error.message);
+  }
 }
 
-// Get database instance
+// Get main application database instance
 export function getDb() {
   if (!db) {
-    throw new Error('Database not initialized. Call initDatabase() first.');
+    throw new Error('Main application database not initialized. Call initDatabase() first.');
   }
   return db;
+}
+
+// Get scraped data database instance
+export function getSqliteDb() {
+  if (!sqliteDb) {
+    throw new Error('Scraped data database not initialized. Call initDatabase() first.');
+  }
+  return sqliteDb;
 }
 
 // --- Migrations System ---
@@ -81,7 +114,7 @@ async function runMigrations() {
   }
 }
 
-// We will also need a saveDb function for fileHashes in case we still need to store them in database directly, this is a placeholder.
+// Placeholder for saveDb
 export async function saveDb() {
   // In a SQLite context, changes are saved via explicit INSERT/UPDATE/DELETE. No global saveDb needed.
   // This function might be removed or adapted depending on final data access patterns.

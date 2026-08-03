@@ -1,12 +1,25 @@
-const { contextBridge, ipcRenderer } = require('electron');
+const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('pwp', {
+  // webUtils
+  webUtils: {
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+  },
+  // FS
+  fs: {
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+  },
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
     add: (data) => ipcRenderer.invoke('companies:add', data),
     update: (data) => ipcRenderer.invoke('companies:update', data),
     delete: (id) => ipcRenderer.invoke('companies:delete', id),
   },
+  // Invoices Export
+  invoices: {
+    exportZip: (payload) => ipcRenderer.invoke('invoices:exportZip', payload),
+  },
+  // Purchases
   purchases: {
     getAll: (filters) => ipcRenderer.invoke('purchases:getAll', filters),
     add: (data) => ipcRenderer.invoke('purchases:add', data),
@@ -14,6 +27,7 @@ contextBridge.exposeInMainWorld('pwp', {
     delete: (id) => ipcRenderer.invoke('purchases:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('purchases:getSummary', filters),
   },
+  // Sales
   sales: {
     getAll: (filters) => ipcRenderer.invoke('sales:getAll', filters),
     add: (data) => ipcRenderer.invoke('sales:add', data),
@@ -21,9 +35,11 @@ contextBridge.exposeInMainWorld('pwp', {
     delete: (id) => ipcRenderer.invoke('sales:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('sales:getSummary', filters),
   },
+  // Dashboard
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
   },
+  // OCR (Gemini)
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
     selectFolder: () => ipcRenderer.invoke('ocr:select-folder'),
@@ -36,8 +52,18 @@ contextBridge.exposeInMainWorld('pwp', {
       return () => ipcRenderer.removeListener('ocr:progress', handler);
     },
   },
+  // Scraper
   scraper: {
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
+    getProfile: () => ipcRenderer.invoke('scraper:getProfile'),
+    getDashboardCards: () => ipcRenderer.invoke('scraper:getDashboardCards'),
+    getPayments: () => ipcRenderer.invoke('scraper:getPayments'),
+    getWallet: () => ipcRenderer.invoke('scraper:getWallet'),
+    getWalletHistory: () => ipcRenderer.invoke('scraper:getWalletHistory'),
+    getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
+    getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
+    getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
+    getInventory: () => ipcRenderer.invoke('scraper:getInventory'),
     openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
     checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
     waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),
@@ -51,5 +77,11 @@ contextBridge.exposeInMainWorld('pwp', {
       ipcRenderer.on('scraper:log', handler);
       return () => ipcRenderer.removeListener('scraper:log', handler);
     },
+  },
+  // EPR Scraped Data (SQLite)
+  eprData: {
+    getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
+    getSales: () => ipcRenderer.invoke('eprData:getSales'),
+    getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
   },
 });

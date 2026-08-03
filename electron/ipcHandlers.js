@@ -1,7 +1,7 @@
-import { app, ipcMain } from 'electron';
+import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
+import { initDatabase, getDb, getSqliteDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
-import { initDatabase, getDb, dbJsonPath } from './database.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from './dataMigration.js';
 import path from 'path';
@@ -12,7 +12,10 @@ import {
   prepareDummyProcurementBulk,
   runProcurementBulkFill,
   CPCB_ONBOARDING_URL,
+  createZipStore,
+  MINIMAL_PDF,
 } from './cpcbProcurementBulk.js';
+import * as XLSX from 'xlsx';
 import {
   runSalesBulkFill,
 } from './cpcbSalesBulk.js';
@@ -21,6 +24,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
+const { extractEprDashboard } = require("../src/extractors/epr/dashboard.extractor.cjs");
 const { extractEprProfile } = require("../src/extractors/epr/profile.extractor.cjs");
 const { extractEprApplication } = require("../src/extractors/epr/application.extractor.cjs");
 const { extractEprMaterial } = require("../src/extractors/epr/material.extractor.cjs");
@@ -35,6 +39,77 @@ export function registerIpcHandlers() {
   }).catch(err => console.error("Failed to initialize database:", err));
   registerOcrHandlers();
   warmupQrScanner().catch(() => {});
+
+  // ─── EPR SCRAPED DATA (SQLITE) ────────────────────────────────
+  ipcMain.handle('eprData:getProcurement', async () => {
+    const sqliteDb = getSqliteDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='procurement_details'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM procurement_details ORDER BY year DESC`);
+        rows.forEach(r => { r.source_year = r.year; });
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching procurement_details:", err);
+    }
+    return [];
+  });
+
+  ipcMain.handle('eprData:getSales', async () => {
+    const sqliteDb = getSqliteDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='sales_details'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM sales_details ORDER BY year DESC`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching sales_details:", err);
+    }
+    return [];
+  });
+
+  ipcMain.handle('eprData:getProduction', async () => {
+    const sqliteDb = getSqliteDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='production_details'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM production_details ORDER BY year DESC`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching production_details:", err);
+    }
+    return [];
+  });
+
+  // ─── FILE SYSTEM ───────────────────────────────────────────────
+  ipcMain.handle('fs:readFileBase64', async (_, filePath) => {
+    try {
+      if (!filePath || !fs.existsSync(filePath)) return null;
+      const data = fs.readFileSync(filePath);
+      return data.toString('base64');
+    } catch (e) {
+      console.error('Failed to read file as base64', e);
+      return null;
+    }
+  });
 
   // ─── COMPANIES ───────────────────────────────────────────────
   ipcMain.handle('companies:getAll', async () => {
@@ -65,6 +140,46 @@ export function registerIpcHandlers() {
     await db.run('DELETE FROM companies WHERE id = ?', id);
     return { success: true };
   });
+
+  async function storeInvoicePdfLocally(data) {
+    if (!data._page || !data._page.sourceFileName) return data;
+    const source = data._page.sourceFileName;
+    if (!fs.existsSync(source)) return data;
+
+    const companyName = data.company_name || 'Unknown_Company';
+    const invoiceDate = data.invoice_date || data.procurement_date || data.date_of_entry || new Date().toISOString().split('T')[0];
+
+    let dateObj = new Date(invoiceDate);
+    if (isNaN(dateObj)) dateObj = new Date();
+    const yearMonth = `${dateObj.getFullYear()}-${String(dateObj.getMonth() + 1).padStart(2, '0')}`;
+
+    const destDir = path.join(app.getPath('userData'), 'processed_invoices', companyName, yearMonth);
+    if (!fs.existsSync(destDir)) {
+      fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    const invoiceFileName = data.invoice_filename || data.invoice_file_name || path.basename(source);
+    const safeName = invoiceFileName.replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const destPath = path.join(destDir, safeName);
+
+    try {
+      fs.copyFileSync(source, destPath);
+      data.local_pdf_path = destPath;
+    } catch (err) {
+      console.error('Failed to copy PDF invoice locally:', err);
+    }
+    return data;
+  }
+
+  function withLocalPdfInSourceFields(data) {
+    if (!data.local_pdf_path) return data;
+    const base =
+      data._source_fields && typeof data._source_fields === 'object' ? data._source_fields : {};
+    return {
+      ...data,
+      _source_fields: { ...base, local_pdf_path: data.local_pdf_path },
+    };
+  }
 
   // ─── PURCHASES ───────────────────────────────────────────────
   ipcMain.handle('purchases:getAll', async (_, filters) => {
@@ -114,6 +229,9 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
+    let processedData = withLocalPdfInSourceFields(
+      await storeInvoicePdfLocally({ ...data })
+    );
     const stmt = await db.prepare(`
       INSERT INTO purchases (
         company_id, record_type, category_of_plastic, supplier_name, address_line_1,
@@ -126,47 +244,46 @@ export function registerIpcHandlers() {
     `);
 
     const result = await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.category_of_plastic,
-      data.supplier_name,
-      data.address_line_1,
-      data.address_line_2,
-      data.state,
-      data.city,
-      data.pin_code,
-      data.buyer_gst,
-      data.is_supplier_gst_available,
-      data.supplier_gst_number,
-      data.supplier_mobile_number,
-      data.procurement_date,
-      data.quantity_mt,
-      data.invoice_number,
-      data.hsn_code,
-      data.invoice_filename,
-      data.vendor_name,
-      data.vendor_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
+      processedData.company_id,
+      processedData.record_type,
+      processedData.category_of_plastic,
+      processedData.supplier_name,
+      processedData.address_line_1,
+      processedData.address_line_2,
+      processedData.state,
+      processedData.city,
+      processedData.pin_code,
+      processedData.buyer_gst,
+      processedData.is_supplier_gst_available,
+      processedData.supplier_gst_number,
+      processedData.supplier_mobile_number,
+      processedData.procurement_date,
+      processedData.quantity_mt,
+      processedData.invoice_number,
+      processedData.hsn_code,
+      processedData.invoice_filename,
+      processedData.vendor_name,
+      processedData.vendor_gstin,
+      processedData.invoice_no,
+      processedData.invoice_date,
+      processedData.item_name,
+      processedData.quantity,
+      processedData.unit,
+      processedData.total_amount,
+      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
+      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
+      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
+      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      processedData.fileHash || null,
       new Date().toISOString()
     );
     await stmt.finalize();
 
-    // Add fileHash to the fileHashes table
-    if (data.fileHash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (processedData.fileHash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', processedData.fileHash);
     }
 
-    return { id: result.lastID, ...data };
+    return { id: result.lastID, ...processedData };
   });
 
   ipcMain.handle('purchases:update', async (_, data) => {
@@ -328,6 +445,9 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('sales:add', async (_, data) => {
     const db = getDb();
+    let processedData = withLocalPdfInSourceFields(
+      await storeInvoicePdfLocally({ ...data })
+    );
     const stmt = await db.prepare(`
       INSERT INTO sales (
         company_id, record_type, s_no, category_of_plastic, process_code,
@@ -341,50 +461,49 @@ export function registerIpcHandlers() {
     `);
 
     const result = await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.s_no,
-      data.category_of_plastic,
-      data.process_code,
-      data.plastic_type,
-      data.product_type,
-      data.recycled_plastic_percent,
-      data.conversion_factor,
-      data.available_quantity_mt,
-      data.quantity_sold_mt,
-      data.registration_type,
-      data.entity_name,
-      data.address,
-      data.state,
-      data.district,
-      data.account_number,
-      data.ifsc_code,
-      data.gst_other_charges,
-      data.invoice_file_name,
-      data.application_number,
-      data.customer_name,
-      data.customer_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
+      processedData.company_id,
+      processedData.record_type,
+      processedData.s_no,
+      processedData.category_of_plastic,
+      processedData.process_code,
+      processedData.plastic_type,
+      processedData.product_type,
+      processedData.recycled_plastic_percent,
+      processedData.conversion_factor,
+      processedData.available_quantity_mt,
+      processedData.quantity_sold_mt,
+      processedData.registration_type,
+      processedData.entity_name,
+      processedData.address,
+      processedData.state,
+      processedData.district,
+      processedData.account_number,
+      processedData.ifsc_code,
+      processedData.gst_other_charges,
+      processedData.invoice_file_name,
+      processedData.application_number,
+      processedData.customer_name,
+      processedData.customer_gstin,
+      processedData.invoice_no,
+      processedData.invoice_date,
+      processedData.item_name,
+      processedData.quantity,
+      processedData.unit,
+      processedData.total_amount,
+      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
+      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
+      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
+      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      processedData.fileHash || null,
       new Date().toISOString()
     );
     await stmt.finalize();
 
-    // Add fileHash to the file_hashes table
-    if (data.fileHash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (processedData.fileHash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', processedData.fileHash);
     }
 
-    return { id: result.lastID, ...data };
+    return { id: result.lastID, ...processedData };
   });
 
   ipcMain.handle('sales:update', async (_, data) => {
@@ -1058,13 +1177,69 @@ export function registerIpcHandlers() {
   ipcMain.handle('scraper:runEpr', async () => {
     try {
       console.log("Starting EPR scraper...");
-      const browser = await chromium.launch({ headless: false });
-      const context = await browser.newContext({ acceptDownloads: true });
-      const page = await context.newPage();
+      const userDataDir = path.join(__dirname, '..', 'playwright_session');
+      const context = await chromium.launchPersistentContext(userDataDir, { 
+          headless: false,
+          acceptDownloads: true,
+          channel: 'chrome' // Use system Chrome to bypass AppLocker policies
+      });
+      const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
+      await page.bringToFront();
 
-      await page.goto('https://epr.cpcb.gov.in/login');
-      // In a real scenario, you'd wait for login here
+      await page.goto('https://epr.cpcb.gov.in');
       
+      console.log("⏳ Waiting for you to login... (Please login manually. Script will continue when URL changes to dashboard)");
+      try {
+          await page.waitForURL('**/*dashboard*', { timeout: 300000 }); // 5 minutes to login
+          console.log("🔓 Login detected! Proceeding with extraction...");
+  
+          console.log("🖱️ Clicking the first 'Open' button on Waste Category card...");
+          const firstOpenBtn = page.locator('app-waste-category button').filter({ hasText: /Open/i }).first();
+          await firstOpenBtn.waitFor({ state: 'visible', timeout: 15000 });
+          await firstOpenBtn.click();
+          await page.waitForTimeout(1000);
+  
+          console.log("🔘 Selecting the 'PWP' application radio button...");
+          try {
+            // Find the radio button explicitly by XPath
+            const pwpRadioBtn = page.locator('xpath=/html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr[2]/td[1]/div/input');
+            await pwpRadioBtn.waitFor({ state: 'visible', timeout: 3000 });
+            await pwpRadioBtn.click();
+          } catch (e) {
+            console.log("⚠️ PWP radio button not found by XPath, falling back to first radio button...");
+            const firstRadioBtn = page.locator('app-modal-frame input[type="radio"]').first();
+            await firstRadioBtn.click();
+          }
+          await page.waitForTimeout(1000);
+  
+          console.log("🖱️ Clicking the 'Proceed/Open' button in the modal...");
+          // In the modal, find the button that is inside an app-button component
+          const modalOpenBtn = page.locator('app-modal-frame app-button button').first();
+          await modalOpenBtn.click();
+          await page.waitForTimeout(3000); // Give it a moment to load the next page
+  
+          console.log("🖱️ Checking if 'Select Unit' dropdown exists...");
+          // We use try/catch because if a PWP user only has 1 unit, this dropdown won't exist!
+          try {
+              const selectUnitBtn = page.locator('button[title="Select Unit"]').first();
+              // Short timeout because it might not exist
+              await selectUnitBtn.waitFor({ state: 'visible', timeout: 8000 });
+              await selectUnitBtn.click();
+              await page.waitForTimeout(1500);
+      
+              console.log("🖱️ Clicking the specific unit card...");
+              const unitCard = page.locator('button.unit-card').first();
+              await unitCard.waitFor({ state: 'visible', timeout: 5000 });
+              await unitCard.click();
+              await page.waitForTimeout(3000); // Wait for the dashboard to refresh
+          } catch (e) {
+              console.log("⏭️ No 'Select Unit' dropdown found (likely single-unit user). Skipping unit selection...");
+          }
+  
+      } catch (e) {
+          console.error("❌ Error during login or post-login clicks:", e.message);
+          console.log("Let's try running extractors anyway...");
+      }
       const allData = {};
       const dataDir = path.join(__dirname, '..', 'data');
       if (!fs.existsSync(dataDir)) {
@@ -1074,6 +1249,9 @@ export function registerIpcHandlers() {
       const saveJson = (filename, data) => {
           fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
       };
+
+      allData.dashboard = await extractEprDashboard(page);
+      saveJson('epr_dashboard.json', allData.dashboard);
 
       allData.profile = await extractEprProfile(page);
       saveJson('epr_profile.json', allData.profile);
@@ -1085,7 +1263,7 @@ export function registerIpcHandlers() {
       saveJson('epr_material.json', allData.material);
 
       allData.production = await extractEprProduction(page);
-      saveJson('epr_production.json', allData.production);
+      await saveJson('epr_production.json', allData.production);
 
       allData.sales = await extractEprSales(page);
       saveJson('epr_sales.json', allData.sales);
@@ -1098,12 +1276,180 @@ export function registerIpcHandlers() {
 
       saveJson('scraped_data_latest.json', allData);
 
-      await browser.close();
+      // Commenting out close so you can inspect the browser
+      // await browser.close();
       console.log("EPR Scraping completed successfully.");
+      
+      // Auto-sync JSONs to SQLite
+      await new Promise((resolve, reject) => {
+         const { exec } = require('child_process');
+         exec('node sync_to_sqlite.js', { cwd: path.join(__dirname, '..') }, (error, stdout, stderr) => {
+            if (error) {
+               console.error("Failed to sync to SQLite:", error);
+               reject(error);
+            } else {
+               console.log("Synced to SQLite:", stdout);
+               resolve();
+            }
+         });
+      });
+
       return { success: true, data: allData };
     } catch (error) {
       console.error("Scraper failed:", error);
       return { success: false, error: error.message };
     }
+  });
+
+  // ─── SQLITE SCRAPER DATA ──────────────────────────────────────────────
+  ipcMain.handle('scraper:getProfile', async () => {
+    const sdb = getSqliteDb();
+    if (!sdb) return null;
+    try {
+      return await sdb.get('SELECT * FROM epr_profile LIMIT 1');
+    } catch (e) {
+      // Fallback: Try getting company name from epr_dashboard
+      try {
+        const dashboard = await sdb.get('SELECT * FROM epr_dashboard LIMIT 1');
+        if (dashboard && dashboard.company_name) {
+           return { company_name: dashboard.company_name };
+        }
+      } catch (err2) {}
+      return null;
+    }
+  });
+
+  ipcMain.handle('scraper:getDashboardCards', async () => {
+    const sdb = getSqliteDb();
+    if (!sdb) return null;
+    try {
+      const row = await sdb.get('SELECT * FROM epr_dashboard LIMIT 1');
+      if (row && row.tables_dump) {
+         try {
+           row.tables_dump = JSON.parse(row.tables_dump);
+         } catch(e) {}
+      }
+      return row;
+    } catch (e) {
+      console.error(e);
+      return null;
+    }
+  });
+
+  ipcMain.handle('scraper:getPayments', async () => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      return await sdb.all('SELECT * FROM epr_payment');
+    } catch (e) {
+      // Table doesn't exist yet if user has no payments
+      return [];
+    }
+  });
+
+  ipcMain.handle('scraper:getWallet', async () => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      return await sdb.all('SELECT * FROM wallet_wallet_potentials');
+    } catch (e) {
+      return [];
+    }
+  });
+
+  ipcMain.handle('scraper:getWalletHistory', async () => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      const rows = await sdb.all('SELECT * FROM wallet_certificate_transaction');
+      if (rows.length > 0 && rows[0].items) {
+          try {
+              return JSON.parse(rows[0].items);
+          } catch(e) {}
+      }
+      return rows;
+    } catch (e) {
+      return [];
+    }
+  });
+
+  ipcMain.handle('scraper:getProcurement', async (e, year) => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      return await sdb.all(`SELECT * FROM procurement_details WHERE year = ?`, [year || 2025]);
+    } catch (err) {
+      return [];
+    }
+  });
+
+  ipcMain.handle('scraper:getSales', async (e, year) => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      return await sdb.all(`SELECT * FROM sales_details WHERE year = ?`, [year || 2025]);
+    } catch (err) {
+      return [];
+    }
+  });
+
+  ipcMain.handle('scraper:getProduction', async (e, year) => {
+    const sdb = getSqliteDb();
+    if (!sdb) return [];
+    try {
+      return await sdb.all(`SELECT * FROM production_details WHERE year = ?`, [year || 2025]);
+    } catch (err) {
+      return [];
+    }
+  });
+
+  ipcMain.handle('invoices:exportZip', async (_, { type, label, exportRows, headers, pdfFiles }) => {
+    try {
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Save Invoices ZIP',
+        defaultPath: `${type}_Invoices_${label.replace(/ /g, '_')}.zip`,
+        filters: [{ name: 'ZIP Archives', extensions: ['zip'] }]
+      });
+      if (canceled || !filePath) return { success: false, canceled: true };
+
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(exportRows, { header: headers });
+      XLSX.utils.book_append_sheet(wb, ws, label.substring(0, 31));
+      const excelBuf = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+
+      const entries = [
+        { name: `${type}_Invoices_${label.replace(/ /g, '_')}.xlsx`, data: excelBuf }
+      ];
+
+      for (const pdfFile of pdfFiles) {
+        if (pdfFile && pdfFile.name) {
+          let pdfData = MINIMAL_PDF;
+          if (pdfFile.localPath && fs.existsSync(pdfFile.localPath)) {
+            try {
+              pdfData = fs.readFileSync(pdfFile.localPath);
+            } catch (err) {
+              console.error('Failed to read local PDF for ZIP:', err);
+            }
+          }
+          entries.push({ name: pdfFile.name, data: pdfData });
+        }
+      }
+
+      const zipBuf = createZipStore(entries);
+      fs.writeFileSync(filePath, zipBuf);
+      return { success: true, filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('scraper:getInventory', async () => {
+    try {
+      const invPath = path.join(__dirname, '..', 'data', 'inventory.json');
+      if (fs.existsSync(invPath)) {
+        return JSON.parse(fs.readFileSync(invPath, 'utf8'));
+      }
+    } catch (e) { console.error("Error reading inventory.json", e); }
+    return [];
   });
 }

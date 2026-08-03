@@ -1,6 +1,14 @@
-import { contextBridge, ipcRenderer } from 'electron';
+import { contextBridge, ipcRenderer, webUtils } from 'electron';
 
 contextBridge.exposeInMainWorld('pwp', {
+  // webUtils
+  webUtils: {
+    getPathForFile: (file) => webUtils.getPathForFile(file),
+  },
+  // FS
+  fs: {
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+  },
   // Companies
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
@@ -16,6 +24,13 @@ contextBridge.exposeInMainWorld('pwp', {
     delete: (id) => ipcRenderer.invoke('purchases:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('purchases:getSummary', filters),
   },
+  // EPR Scraped Data (SQLite)
+  eprData: {
+    getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
+    getSales: () => ipcRenderer.invoke('eprData:getSales'),
+    getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
+  },
+
   // Sales
   sales: {
     getAll: (filters) => ipcRenderer.invoke('sales:getAll', filters),
@@ -44,6 +59,15 @@ contextBridge.exposeInMainWorld('pwp', {
   // Scraper
   scraper: {
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
+    getProfile: () => ipcRenderer.invoke('scraper:getProfile'),
+    getDashboardCards: () => ipcRenderer.invoke('scraper:getDashboardCards'),
+    getPayments: () => ipcRenderer.invoke('scraper:getPayments'),
+    getWallet: () => ipcRenderer.invoke('scraper:getWallet'),
+    getWalletHistory: () => ipcRenderer.invoke('scraper:getWalletHistory'),
+    getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
+    getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
+    getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
+    getInventory: () => ipcRenderer.invoke('scraper:getInventory'),
     openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
     checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
     waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),

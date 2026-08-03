@@ -92,5 +92,16 @@ export function getApi() {
       },
       getSummary: async () => ({ total_records: 0 }),
     },
+    scraper: {
+      runEpr: async () => ({ success: false, error: 'Not available in browser' }),
+      getProfile: async () => null,
+      getDashboardCards: async () => null,
+      getPayments: async () => [],
+      getWallet: async () => [],
+      getWalletHistory: async () => [],
+      getProcurement: async () => [],
+      getSales: async () => [],
+      getProduction: async () => [],
+    }
   };
 }

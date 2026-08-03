@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
-import { Plus, Pencil, Trash2, Building2, X, Loader2 } from 'lucide-react';
+import { Plus, Pencil, Trash2, Building2, X, Loader2, LayoutDashboard } from 'lucide-react';
 import { Toast, useToast } from '../components/Toast.jsx';
 import { getApi } from '../utils/pwpApi.js';
+import ScrapedDashboard from '../components/ScrapedDashboard.jsx';
 
 const EMPTY = { name: '', gstin: '', pan: '' };
 
@@ -125,15 +126,45 @@ function CompanyModal({ company, onSave, onClose, saving }) {
 export default function Companies() {
   const [companies, setCompanies] = useState([]);
   const [modal, setModal] = useState(null);
+  const [selectedCompany, setSelectedCompany] = useState(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const { toast, showToast, hideToast } = useToast();
 
   const load = async () => {
     try {
-      const data = await getApi().companies.getAll();
+      const api = getApi();
+      let data = await api.companies.getAll();
+      console.log("Initial JSON data:", data);
+      
+      // Auto-sync from SQLite scraped profile
+      const scrapedProfile = await api.scraper.getProfile();
+      console.log("Scraped Profile:", scrapedProfile);
+      if (scrapedProfile) {
+        // Find if this scraped company already exists in local JSON db
+        const exists = data.find(c => c.name === scrapedProfile.company_name);
+        if (!exists) {
+           console.log("Auto-adding missing company...");
+           // Auto-add it to local JSON DB
+           const pan = extractPanFromGstin(scrapedProfile.company_name) || "AUTO12345X"; // Default fallback PAN if missing
+           await api.companies.add({
+             name: scrapedProfile.company_name,
+             gstin: "", // It might not be in profile, but we add it if found
+             pan: pan,
+             isScraped: true
+           });
+           data = await api.companies.getAll();
+           console.log("Data after auto-add:", data);
+        } else {
+           console.log("Company already exists in JSON.");
+           // Tag it as scraped for UI highlighting
+           exists.isScraped = true; 
+        }
+      }
+
       setCompanies(data || []);
-    } catch {
+    } catch (err) {
+      console.error("Failed to load companies:", err);
       setCompanies([]);
     }
     setLoading(false);
@@ -182,21 +213,28 @@ export default function Companies() {
     }
   };
 
+  // If a company is selected for the dashboard, show the detail view
+  if (selectedCompany) {
+    return <ScrapedDashboard company={selectedCompany} onBack={() => setSelectedCompany(null)} />;
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="space-y-5 animate-in fade-in">
       <Toast toast={toast} onClose={hideToast} />
 
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-slate-500 text-sm">{companies.length} companies registered</p>
         </div>
-        <button
-          type="button"
-          onClick={openAddModal}
-          className="btn-primary flex items-center gap-2"
-        >
-          <Plus size={18} /> Add Company
-        </button>
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={openAddModal}
+            className="btn-primary flex items-center gap-2"
+          >
+            <Plus size={18} /> Add Company
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
@@ -228,16 +266,28 @@ export default function Companies() {
                   companies.map((c, i) => (
                     <tr key={c.id} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
                       <td className="td text-slate-400">{i + 1}</td>
-                      <td className="td font-medium text-slate-800">{c.name}</td>
+                      <td className="td font-medium text-slate-800 flex items-center gap-2">
+                        {c.name}
+                        {c.isScraped && (
+                           <span className="text-[10px] bg-green-100 text-green-700 px-2 py-0.5 rounded-full font-bold">SCRAPED DATA</span>
+                        )}
+                      </td>
                       <td className="td font-mono text-xs">{c.gstin || '—'}</td>
                       <td className="td font-mono text-xs">
                         {c.pan || extractPanFromGstin(c.gstin) || '—'}
                       </td>
-                      <td className="td text-right">
+                      <td className="td text-right flex justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => setSelectedCompany(c)}
+                          className="p-1.5 text-slate-400 hover:text-green-600 hover:bg-green-50 rounded-lg transition-colors flex items-center gap-1 font-medium text-xs px-2"
+                        >
+                          <LayoutDashboard size={15} /> Dashboard
+                        </button>
                         <button
                           type="button"
                           onClick={() => setModal(c)}
-                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg mr-1 transition-colors"
+                          className="p-1.5 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
                         >
                           <Pencil size={15} />
                         </button>

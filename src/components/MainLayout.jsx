@@ -2,19 +2,44 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
+import { getApi } from '../utils/pwpApi.js';
+import { Toast, useToast } from '../components/Toast.jsx';
+import { RefreshCw } from 'lucide-react';
 
 const navLinks = [
-  { to: '/companies', icon: Building2, label: 'Company Profile' },
+  {
+    icon: LayoutDashboard,
+    label: 'Overview',
+    subLinks: [
+      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
+      { to: '/companies', label: 'Company Profile' },
+    ]
+  },
+  {
+    icon: Database,
+    label: 'EPR Data',
+    subLinks: [
+      { to: '/epr-production', label: 'Production Data' },
+      { to: '/epr-sales', label: 'Sales Data' },
+      { to: '/epr-procurement', label: 'Procurement Data' },
+      { to: '/epr-inventory', label: 'Inventory Data' },
+    ]
+  },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  // { to: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
 ];
 
 const pageHeaders = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Overview of your purchase & sale activity' },
+  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
+  '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-inventory': { title: 'EPR Inventory Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -32,11 +57,96 @@ const pageHeaders = {
   },
 };
 
+const NavItem = ({ item, sidebarOpen }) => {
+  const location = useLocation();
+  const [isOpen, setIsOpen] = useState(
+    item.subLinks?.some(sub => location.pathname.startsWith(sub.to)) || false
+  );
+
+  const isDocSection =
+    location.pathname.startsWith('/doc-processor') ||
+    location.pathname.startsWith('/doc-upload') ||
+    location.pathname.startsWith('/doc-table');
+    
+  const Icon = item.icon;
+
+  if (item.subLinks) {
+    const isChildActive = item.subLinks.some(sub => location.pathname.startsWith(sub.to));
+    return (
+      <div className="mb-0.5">
+        <button
+          onClick={() => setIsOpen(!isOpen)}
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors text-sm font-medium ${isChildActive ? 'bg-green-50 text-green-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+        >
+          <div className="flex items-center gap-3">
+            {Icon && <Icon size={18} className="flex-shrink-0" />}
+            {sidebarOpen && <span>{item.label}</span>}
+          </div>
+          {sidebarOpen && (
+            isOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />
+          )}
+        </button>
+        {sidebarOpen && isOpen && (
+          <div className="mt-1 ml-9 flex flex-col gap-1">
+            {item.subLinks.map(sub => (
+              <NavLink
+                key={sub.to}
+                to={sub.to}
+                className={({ isActive }) => `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
+              >
+                {sub.label}
+              </NavLink>
+            ))}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <NavLink
+      to={item.to}
+      className={({ isActive }) => {
+        const active = isActive || (item.to === '/doc-processor' && isDocSection);
+        return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
+        ${active
+          ? 'bg-green-50 text-green-700'
+          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+        }`;
+      }}
+    >
+      {Icon && <Icon size={18} className="flex-shrink-0" />}
+      {sidebarOpen && <span>{item.label}</span>}
+    </NavLink>
+  );
+};
+
 export default function MainLayout() {
   const { user, logout } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [syncingEpr, setSyncingEpr] = useState(false);
+  const { toast, showToast, hideToast } = useToast();
+
+  const handleSyncEpr = async () => {
+    setSyncingEpr(true);
+    showToast('Starting EPR Scraper... Please wait.', 'info');
+    try {
+      const api = getApi();
+      const res = await api.scraper.runEpr();
+      if (res.success) {
+         showToast('EPR Portal successfully synced!', 'success');
+         setTimeout(() => window.location.reload(), 1500);
+      } else {
+         showToast('EPR Sync failed: ' + res.error, 'error');
+      }
+    } catch (err) {
+      showToast('EPR Sync failed: ' + err.message, 'error');
+    } finally {
+      setSyncingEpr(false);
+    }
+  };
 
   const isDocSection =
     location.pathname.startsWith('/doc-processor') ||
@@ -71,24 +181,8 @@ export default function MainLayout() {
         </div>
 
         <nav className="flex-1 py-3 overflow-y-auto px-2">
-          {navLinks.map(({ to, icon: Icon, label }) => (
-            <NavLink
-              key={to}
-              to={to}
-              className={({ isActive }) => {
-                const active =
-                  isActive ||
-                  (to === '/doc-processor' && isDocSection);
-                return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
-                ${active
-                  ? 'bg-green-50 text-green-700'
-                  : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-                }`;
-              }}
-            >
-              <Icon size={18} className="flex-shrink-0" />
-              {sidebarOpen && <span>{label}</span>}
-            </NavLink>
+          {navLinks.map((item) => (
+            <NavItem key={item.label} item={item} sidebarOpen={sidebarOpen} />
           ))}
         </nav>
 
@@ -137,9 +231,33 @@ export default function MainLayout() {
               Upload
             </button>
           )}
+
+          {header.showEprRefresh && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event('refresh-epr-data'))}
+              className="flex items-center gap-2 border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex-shrink-0"
+            >
+              <RefreshCw size={18} /> 
+              Refresh
+            </button>
+          )}
+
+          {header.showSync && (
+            <button
+              type="button"
+              onClick={handleSyncEpr}
+              disabled={syncingEpr}
+              className="flex items-center gap-2 border border-green-200 text-green-700 bg-white hover:bg-green-50 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {syncingEpr ? <Loader2 size={18} className="animate-spin" /> : <Building2 size={18} />} 
+              {syncingEpr ? 'Syncing...' : 'Sync EPR Portal'}
+            </button>
+          )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-6 relative">
+          <Toast toast={toast} onClose={hideToast} />
           <Outlet />
         </div>
       </main>
