@@ -90,7 +90,7 @@ export function registerIpcHandlers() {
     try {
       const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='production_details'`);
       if (tableCheck) {
-        const rows = await sqliteDb.all(`SELECT * FROM production_details ORDER BY year DESC`);
+        const rows = await sqliteDb.all(`SELECT * FROM production_details`);
         return rows;
       }
     } catch (err) {
@@ -136,6 +136,44 @@ export function registerIpcHandlers() {
       console.error('settings:set error', err);
       return false;
     }
+  });
+
+  ipcMain.handle('eprData:getInventory', async () => {
+    const sqliteDb = getDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='inventory'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM inventory`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching inventory:", err);
+    }
+    return [];
+  });
+
+  ipcMain.handle('eprData:getConversionFactor', async () => {
+    const sqliteDb = getDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='conversion_factor'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM conversion_factor`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching conversion_factor:", err);
+    }
+    return [];
   });
 
   // ─── FILE SYSTEM ───────────────────────────────────────────────
@@ -1234,8 +1272,27 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:runEpr', async () => {
+    let originalWriteFileSync;
     try {
       console.log("Starting EPR scraper...");
+      
+      const memoryDataMap = {};
+      originalWriteFileSync = fs.writeFileSync;
+      fs.writeFileSync = (filePath, data, ...args) => {
+          if (typeof filePath === 'string' && filePath.endsWith('.json') && (filePath.includes('data') || filePath.includes('\\data\\'))) {
+              const filename = path.basename(filePath);
+              console.log(`\n--- [SCRAPED DATA] ${filename} ---`);
+              let parsed = data;
+              try {
+                  parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                  console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
+              } catch(e) {}
+              memoryDataMap[filename] = parsed;
+          } else {
+              originalWriteFileSync(filePath, data, ...args);
+          }
+      };
+
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
       const context = await chromium.launchPersistentContext(userDataDir, { 
           headless: false,
@@ -1306,7 +1363,7 @@ export function registerIpcHandlers() {
       }
 
       const saveJson = (filename, data) => {
-          fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
+        fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
       };
 
       allData.dashboard = await extractEprDashboard(page);
@@ -1340,23 +1397,25 @@ export function registerIpcHandlers() {
       console.log("EPR Scraping completed successfully.");
       
       // Auto-sync JSONs to SQLite
-      await new Promise((resolve, reject) => {
-         const { exec } = require('child_process');
-         exec('node sync_to_sqlite.js', { cwd: path.join(__dirname, '..') }, (error, stdout, stderr) => {
-            if (error) {
-               console.error("Failed to sync to SQLite:", error);
-               reject(error);
-            } else {
-               console.log("Synced to SQLite:", stdout);
-               resolve();
-            }
-         });
-      });
+      try {
+          const syncPath = path.join(__dirname, '..', 'sync_to_sqlite.js');
+          const syncModule = await import('file://' + syncPath.replace(/\\/g, '/'));
+          if (syncModule.default) {
+              await syncModule.default(memoryDataMap);
+          }
+      } catch (err) {
+          console.error("Failed to sync to SQLite:", err);
+          throw err;
+      }
 
       return { success: true, data: allData };
     } catch (error) {
       console.error("Scraper failed:", error);
       return { success: false, error: error.message };
+    } finally {
+      if (originalWriteFileSync) {
+          fs.writeFileSync = originalWriteFileSync;
+      }
     }
   });
 

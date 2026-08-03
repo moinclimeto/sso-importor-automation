@@ -16,6 +16,7 @@ import EprSalesData from '../pages/EprSalesData.jsx';
 import EprProcurementData from '../pages/EprProcurementData.jsx';
 import EprProductionData from '../pages/EprProductionData.jsx';
 import EprInventoryData from '../pages/EprInventoryData.jsx';
+import EprConversionFactorData from '../pages/EprConversionFactorData.jsx';
 import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
@@ -49,6 +50,7 @@ export default function AppRoutes() {
           <Route path="epr-procurement" element={<EprProcurementData />} />
           <Route path="epr-production" element={<EprProductionData />} />
           <Route path="epr-inventory" element={<EprInventoryData />} />
+          <Route path="epr-conversion-factor" element={<EprConversionFactorData />} />
           <Route path="cpcb-dashboard" element={<CpcbDashboard />} />
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />

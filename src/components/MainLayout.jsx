@@ -16,18 +16,19 @@ const navLinks = [
     label: 'Overview',
     subLinks: [
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
-      
+
     ]
   },
   {
     icon: Database,
     label: 'EPR Data',
     subLinks: [
-      { to: '/production-entry', label: 'Production Data' },
+      // { to: '/production-entry', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
       { to: '/credit-calculations', label: 'Credit Calculations' },
+      { to: '/epr-conversion-factor', label: 'Conversion Factor' },
     ]
   },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
@@ -41,6 +42,7 @@ const pageHeaders = {
   '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -72,7 +74,7 @@ const NavItem = ({ item, sidebarOpen }) => {
     location.pathname.startsWith('/doc-processor') ||
     location.pathname.startsWith('/doc-upload') ||
     location.pathname.startsWith('/doc-table');
-    
+
   const Icon = item.icon;
 
   if (item.subLinks) {
@@ -115,9 +117,9 @@ const NavItem = ({ item, sidebarOpen }) => {
         const active = isActive || (item.to === '/doc-processor' && isDocSection);
         return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
         ${active
-          ? 'bg-green-50 text-green-700'
-          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-        }`;
+            ? 'bg-green-50 text-green-700'
+            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+          }`;
       }}
     >
       {Icon && <Icon size={18} className="flex-shrink-0" />}
@@ -161,10 +163,10 @@ function MainLayoutInner() {
       const api = getApi();
       const res = await api.scraper.runEpr();
       if (res.success) {
-         showToast('EPR Portal successfully synced!', 'success');
-         setTimeout(() => window.location.reload(), 1500);
+        showToast('EPR Portal successfully synced!', 'success');
+        setTimeout(() => window.location.reload(), 1500);
       } else {
-         showToast('EPR Sync failed: ' + res.error, 'error');
+        showToast('EPR Sync failed: ' + res.error, 'error');
       }
     } catch (err) {
       showToast('EPR Sync failed: ' + err.message, 'error');

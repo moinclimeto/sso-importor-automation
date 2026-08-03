@@ -46,6 +46,7 @@ export async function initDatabase(onDbReadyCallback) {
     CREATE TABLE IF NOT EXISTS procurement_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER, source_year INTEGER);
     CREATE TABLE IF NOT EXISTS sales_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
     CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
+    CREATE TABLE IF NOT EXISTS conversion_factor (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
   `);
 }
 

@@ -61,7 +61,7 @@ export default function DocProcessor() {
   const totalRecords = counts.purchase + counts.sale + counts.production;
 
   return (
-    <div className="space-y-6 max-w-6xl mx-auto py-2">
+    <div className="space-y-6 w-full py-2">
       <div className="flex items-center justify-between mb-4 px-1 mt-2">
         <h2 className="text-xs font-bold tracking-widest text-slate-400 uppercase">
           Document Categories
@@ -77,7 +77,7 @@ export default function DocProcessor() {
         </div>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {categories.map((cat) => {
           const count = counts[cat.type] || 0;
           const Icon = cat.icon;

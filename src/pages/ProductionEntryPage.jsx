@@ -369,7 +369,7 @@ export default function ProductionEntryPage() {
       {/* SINGLE ENTRY / EDIT MODAL */}
       {showSingleModal && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4 overflow-y-auto">
-          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl my-4">
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl my-4">
             <div className="flex items-center justify-between p-5 border-b border-slate-100">
               <h2 className="font-semibold text-lg text-slate-800">{editingId ? 'Edit Production Entry' : 'Add Production Entry'}</h2>
               <button onClick={() => { setShowSingleModal(false); setEditingId(null); setFormData({ ...emptyForm }); }} className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100">

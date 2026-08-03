@@ -1850,7 +1850,7 @@ export default function DocTable() {
 
             getValue: (r, col, _idx, value) => {
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
 
               if (col.key === 'supplier_name' && !value) return r.vendor_name;
 
@@ -1979,15 +1979,15 @@ export default function DocTable() {
 
             getValue: (r, col, idx, value) => {
 
-
-
               if (col.key === 's_no' && (value === undefined || value === '')) return idx + 1;
-
-
 
               if (col.key === 'entity_name' && !value) return r.customer_name;
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
+              if (col.key === 'product_type') {
+                const hsn = String(r.hsn_code || r.hsn || '').trim();
+                return hsn === '25231000' ? 'Clinker' : 'Cement';
+              }
 
               // Handle invoice_date for sales
 

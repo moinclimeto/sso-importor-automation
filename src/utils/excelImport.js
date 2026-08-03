@@ -520,7 +520,12 @@ export async function exportExcelData(type, rows) {
     const mapped = {};
     const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
     for (const col of columns) {
-      if (col.key === 'quantity_mt' && !r[col.key] && r.quantity) {
+      if (col.key === 'category_of_plastic') {
+        mapped[col.label] = 'Cat-II';
+      } else if (col.key === 'product_type') {
+        const hsn = String(r.hsn_code || r.hsn || '').trim();
+        mapped[col.label] = hsn === '25231000' ? 'Clinker' : 'Cement';
+      } else if (col.key === 'quantity_mt' && !r[col.key] && r.quantity) {
         mapped[col.label] = r.quantity;
       } else if (col.key === 'quantity_kg' && !r[col.key] && r.quantity_mt) {
         mapped[col.label] = r.quantity_mt * 1000;

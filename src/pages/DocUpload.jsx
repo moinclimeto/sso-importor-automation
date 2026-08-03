@@ -895,7 +895,7 @@ export default function DocUpload() {
   const saleSaved = savedResults.filter((r) => r.decidedType === 'sale').length;
 
   return (
-    <div className="space-y-3 max-w-6xl">
+    <div className="space-y-3 w-full">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">

@@ -27,6 +27,7 @@ export default function CreditCalculations() {
   
   // User inputs
   const [energyConsumption, setEnergyConsumption] = useState('');
+  const [fetchedConversionFactor, setFetchedConversionFactor] = useState('');
   const [calorificValue, setCalorificValue] = useState('');
   const [calorificUnit, setCalorificUnit] = useState('KJ/Kg');
   const [plasticPercent, setPlasticPercent] = useState('');
@@ -58,7 +59,7 @@ export default function CreditCalculations() {
     setClinkerProduction('');
     setEnergyPercentage('');
     setDataSource('manual');
-    setEnergyConsumption('');
+    setEnergyConsumption(fetchedConversionFactor);
     setCalorificValue('');
     setCalorificUnit('KJ/Kg');
     setPlasticPercent('');
@@ -69,6 +70,16 @@ export default function CreditCalculations() {
       if (window.pwp?.creditCalculations) {
         const data = await window.pwp.creditCalculations.getAll();
         setRecords(data || []);
+      }
+      if (window.pwp?.eprData?.getConversionFactor) {
+        const cfData = await window.pwp.eprData.getConversionFactor();
+        if (cfData && cfData.length > 0) {
+          const topValue = cfData[0].conversion_factor;
+          if (topValue) {
+            setFetchedConversionFactor(topValue.toString());
+            setEnergyConsumption(prev => prev || topValue.toString());
+          }
+        }
       }
     } catch (err) {
       console.error(err);
@@ -84,7 +95,19 @@ export default function CreditCalculations() {
       subtitle: 'Calculate potential credits based on production data',
       actions: (
         <button
-          onClick={() => { resetForm(); setShowModal(true); }}
+          onClick={() => {
+            setEditingId(null);
+            setFormMonth('April');
+            setFormYear(new Date().getFullYear().toString());
+            setClinkerProduction('');
+            setEnergyPercentage('');
+            setDataSource('manual');
+            setEnergyConsumption(fetchedConversionFactor);
+            setCalorificValue('');
+            setCalorificUnit('KJ/Kg');
+            setPlasticPercent('');
+            setShowModal(true);
+          }}
           className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-lg text-sm font-semibold flex items-center gap-1.5 shadow-sm transition-colors"
         >
           <Calculator size={16} /> Check credits
@@ -92,7 +115,7 @@ export default function CreditCalculations() {
       )
     });
     return () => clearPageHeader(id);
-  }, [setPageHeader, clearPageHeader]);
+  }, [setPageHeader, clearPageHeader, fetchedConversionFactor]);
 
   const getMonthYear = () => {
     const monthIndex = MONTHS.indexOf(formMonth);
@@ -211,7 +234,7 @@ export default function CreditCalculations() {
     setClinkerProduction((record.clinker_produced_tons || 0).toString());
     setEnergyPercentage((record.energy_contribution_percent || 0).toString());
     setDataSource('fetched');
-    setEnergyConsumption((record.energy_consumption_mj || 0).toString());
+    setEnergyConsumption((record.energy_consumption_mj || fetchedConversionFactor).toString());
     setCalorificValue((record.calorific_value_input || 0).toString());
     setCalorificUnit(record.calorific_value_unit || 'KJ/Kg');
     setPlasticPercent((record.plastic_percent || 0).toString());
@@ -311,7 +334,7 @@ export default function CreditCalculations() {
       {/* MODAL */}
       {showModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/40 backdrop-blur-sm p-4">
-          <div className="bg-white rounded-2xl shadow-xl w-full max-w-lg overflow-hidden flex flex-col max-h-[90vh]">
+          <div className="bg-white rounded-2xl shadow-xl w-full max-w-3xl overflow-hidden flex flex-col max-h-[90vh]">
             <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50">
               <h2 className="text-lg font-semibold text-slate-800">{editingId ? 'Edit Credits' : 'Check Credits'}</h2>
               <button onClick={() => setShowModal(false)} className="text-slate-400 hover:text-slate-600">
@@ -382,7 +405,8 @@ export default function CreditCalculations() {
                   <div>
                     <label className="block text-xs font-medium text-slate-500 mb-1">Energy consumption per ton of clinker (MJ)</label>
                     <input type="number" step="any" value={energyConsumption} onChange={e => setEnergyConsumption(e.target.value)}
-                      placeholder="e.g. 3071.05" className="w-full rounded-lg border-slate-300 border px-3 py-2 text-sm focus:ring-teal-500 focus:border-teal-500" />
+                      disabled
+                      placeholder="e.g. 3071.05" className="w-full rounded-lg border-slate-300 border px-3 py-2 text-sm bg-slate-100 text-slate-500 cursor-not-allowed focus:ring-0" />
                   </div>
                   
                   <div>

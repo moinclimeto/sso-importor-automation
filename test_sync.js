@@ -310,7 +310,6 @@ async function syncToSqlite(memoryDataMap = null) {
                 
                 console.log(`[Data] Successfully processed ${file}.`);
                 continue; // Skip the generic table creation for this file since we manually handled it
-            }
         }
         // 5.6 Conversion Factor
         else if (file === 'conversion_factor.json') {
@@ -358,7 +357,7 @@ async function syncToSqlite(memoryDataMap = null) {
     console.log("\n🎉 All done! Data synced to SQLite pwp.db file.");
 }
 
-export default syncToSqlite;
+
 
 if (import.meta.url === `file://${process.argv[1]}`) {
     syncToSqlite().catch(console.error);

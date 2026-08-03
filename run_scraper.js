@@ -18,6 +18,28 @@ const { extractEprAnnualFiling } = require("./src/extractors/epr/annual_filing.e
 const { extractEprDashboard } = require("./src/extractors/epr/dashboard.extractor.cjs");
 const { extractEprPaymentHistory } = require("./src/extractors/epr/payment.extractor.cjs");
 
+const memoryDataMap = {}; // Global store for synced data
+const dataDir = path.join(__dirname, 'data');
+
+// 🔥 OVERRIDE fs.writeFileSync globally to intercept all extractor JSON saves!
+const originalWriteFileSync = fs.writeFileSync;
+fs.writeFileSync = (filePath, data, ...args) => {
+    if (typeof filePath === 'string' && filePath.endsWith('.json') && filePath.includes('data')) {
+        const filename = path.basename(filePath);
+        console.log(`\n--- [SCRAPED DATA INTERCEPTED] ${filename} ---`);
+        let parsed = data;
+        try {
+            parsed = typeof data === 'string' ? JSON.parse(data) : data;
+            console.log(JSON.stringify(parsed, null, 2).substring(0, 500) + '... (truncated for console view)');
+        } catch(e) {
+            console.log(data.substring(0, 500) + '...');
+        }
+        memoryDataMap[filename] = parsed;
+    } else {
+        originalWriteFileSync(filePath, data, ...args);
+    }
+};
+
 async function runScraper() {
     console.log("🚀 Starting Standalone EPR scraper...");
     
@@ -115,12 +137,9 @@ async function runScraper() {
     }
 
     const allData = {};
-    const dataDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
 
     const saveJson = (filename, data) => {
+        // Will be intercepted by our global fs.writeFileSync override
         fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
     };
 
@@ -156,13 +175,12 @@ async function runScraper() {
     saveJson('scraped_data_latest.json', allData);
 
     console.log("✅ EPR Scraping completed successfully!");
-    console.log("📂 JSON files are saved in the 'data' directory.");
     
-    console.log("🔄 Auto-syncing JSON data to SQLite database...");
+    console.log("🚀 Auto-syncing JSON data to SQLite database...");
     try {
         const syncModule = await import('./sync_to_sqlite.js');
         if (syncModule.default) {
-            await syncModule.default();
+            await syncModule.default(memoryDataMap); // Pass in-memory data instead of reading from disk
         }
     } catch (e) {
         console.error("⚠️ Auto-sync to SQLite failed:", e.message);
