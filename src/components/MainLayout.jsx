@@ -26,6 +26,7 @@ const navLinks = [
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
+      { to: '/epr-conversion-factor', label: 'Conversion Factor' },
     ]
   },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
@@ -40,6 +41,7 @@ const pageHeaders = {
   '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',

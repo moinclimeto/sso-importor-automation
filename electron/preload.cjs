@@ -83,5 +83,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
     getSales: () => ipcRenderer.invoke('eprData:getSales'),
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
+    getInventory: () => ipcRenderer.invoke('eprData:getInventory'),
+    getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
   },
 });

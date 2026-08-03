@@ -30,18 +30,18 @@ async function extractEprSales(page) {
             await bulkEntryBtn.waitFor({ state: 'visible', timeout: 5000 });
 
             await bulkEntryBtn.click({ force: true });
-            await page.waitForTimeout(4000);
+            await page.waitForTimeout(8000);
 
             console.log(`✅ Bulk Entry opened. Scrolling to load all table data...`);
 
             // Fetch all data by scrolling the table container in the DOM
             const allInventoryData = await page.evaluate(async () => {
                 const extractRows = () => {
-                    const headers = Array.from(document.querySelectorAll('table thead th')).map(th => th.innerText.trim());
-                    const rows = document.querySelectorAll('table tbody tr');
+                    const headers = Array.from(document.querySelectorAll('table thead th, mat-header-row mat-header-cell')).map(th => th.innerText.trim());
+                    const rows = document.querySelectorAll('table tbody tr, mat-row');
                     const results = [];
                     rows.forEach(row => {
-                        const cells = row.querySelectorAll('td');
+                        const cells = row.querySelectorAll('td, mat-cell');
                         if (cells.length > 0) {
                             const rowData = {};
                             Array.from(cells).forEach((cell, idx) => {
@@ -56,7 +56,7 @@ async function extractEprSales(page) {
 
                 const uniqueRows = new Map();
                 
-                const table = document.querySelector('table');
+                const table = document.querySelector('table, mat-table');
                 if (!table) return [];
                 
                 const getScrollableParents = (node) => {
