@@ -31,7 +31,6 @@ export default function EprData() {
     <div className="space-y-5">
       <div className="flex items-center justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-800">EPR Procurement Data</h1>
           <p className="text-slate-500 text-sm">{records.length} records scraped — Total Quantity: <span className="font-semibold text-blue-600">{totalQuantity.toFixed(2)} MT</span></p>
         </div>
         <button onClick={loadData} className="btn-secondary h-9 px-4 text-sm flex items-center gap-2">

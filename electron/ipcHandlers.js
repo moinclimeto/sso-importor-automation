@@ -1111,6 +1111,7 @@ export function registerIpcHandlers() {
     }
   });
 
+<<<<<<< HEAD
   ipcMain.handle('invoices:exportZip', async (_, { type, label, exportRows, headers, pdfFiles }) => {
     try {
       const { canceled, filePath } = await dialog.showSaveDialog({
@@ -1149,5 +1150,15 @@ export function registerIpcHandlers() {
     } catch (err) {
       return { success: false, error: err.message };
     }
+=======
+  ipcMain.handle('scraper:getInventory', async () => {
+    try {
+      const invPath = path.join(__dirname, '..', 'data', 'inventory.json');
+      if (fs.existsSync(invPath)) {
+        return JSON.parse(fs.readFileSync(invPath, 'utf8'));
+      }
+    } catch (e) { console.error("Error reading inventory.json", e); }
+    return [];
+>>>>>>> ecd1498 (ui changes)
   });
 }

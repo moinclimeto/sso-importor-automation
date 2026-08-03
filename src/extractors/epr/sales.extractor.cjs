@@ -23,6 +23,120 @@ async function extractEprSales(page) {
         const dataDir = path.join(__dirname, '..', '..', '..', 'data');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
+        // === NEW: FETCH BULK ENTRY INVENTORY DATA ===
+        try {
+            console.log("🖱️ Clicking 'Bulk Entry' button to fetch Inventory Data...");
+            const bulkEntryBtn = page.locator('button').filter({ hasText: 'Bulk Entry' }).first();
+            await bulkEntryBtn.waitFor({ state: 'visible', timeout: 5000 });
+
+            await bulkEntryBtn.click({ force: true });
+            await page.waitForTimeout(4000);
+
+            console.log(`✅ Bulk Entry opened. Scrolling to load all table data...`);
+
+            // Fetch all data by scrolling the table container in the DOM
+            const allInventoryData = await page.evaluate(async () => {
+                const extractRows = () => {
+                    const headers = Array.from(document.querySelectorAll('table thead th')).map(th => th.innerText.trim());
+                    const rows = document.querySelectorAll('table tbody tr');
+                    const results = [];
+                    rows.forEach(row => {
+                        const cells = row.querySelectorAll('td');
+                        if (cells.length > 0) {
+                            const rowData = {};
+                            Array.from(cells).forEach((cell, idx) => {
+                                const key = headers[idx] || `col_${idx}`;
+                                rowData[key] = cell.innerText.trim();
+                            });
+                            results.push(rowData);
+                        }
+                    });
+                    return results;
+                };
+
+                const uniqueRows = new Map();
+                
+                const table = document.querySelector('table');
+                if (!table) return [];
+                
+                const getScrollableParents = (node) => {
+                    const parents = [window];
+                    let current = node;
+                    while (current && current !== document.body) {
+                        const style = window.getComputedStyle(current);
+                        if (style.overflowY === 'auto' || style.overflowY === 'scroll') {
+                            parents.push(current);
+                        }
+                        current = current.parentElement;
+                    }
+                    return parents;
+                };
+                
+                const scrollableNodes = getScrollableParents(table);
+                let retries = 0;
+                let lastCount = 0;
+                
+                // Keep scrolling and extracting until no new data appears for several attempts
+                while (retries < 10) {
+                    const currentData = extractRows();
+                    let newDataAdded = false;
+                    
+                    currentData.forEach(row => {
+                        const key = row['S.N'] || row['Production ID'] || JSON.stringify(row);
+                        if (!uniqueRows.has(key)) {
+                            uniqueRows.set(key, row);
+                            newDataAdded = true;
+                        }
+                    });
+                    
+                    if (!newDataAdded && uniqueRows.size === lastCount) {
+                        retries++;
+                    } else {
+                        retries = 0; 
+                    }
+                    lastCount = uniqueRows.size;
+                    
+                    // Scroll down
+                    scrollableNodes.forEach(node => {
+                        if (node === window) {
+                            window.scrollBy(0, 1000);
+                        } else {
+                            node.scrollTop += 1500;
+                        }
+                    });
+                    
+                    // Fallback: Scroll the last row into view
+                    const trs = document.querySelectorAll('table tbody tr');
+                    if (trs.length > 0) {
+                        try { trs[trs.length - 1].scrollIntoView({ behavior: 'smooth', block: 'end' }); } catch(e) {}
+                    }
+                    
+                    await new Promise(r => setTimeout(r, 1200));
+                }
+                
+                return Array.from(uniqueRows.values());
+            });
+
+            console.log(`✅ Fetched ${allInventoryData.length} records from Sales Inventory via DOM scrolling.`);
+            fs.writeFileSync(path.join(dataDir, 'inventory.json'), JSON.stringify(allInventoryData, null, 2));
+            console.log(`📂 Saved data/inventory.json`);
+
+            // Close the Bulk Entry modal or page by going back to dashboard
+            console.log("🖱️ Going back to Dashboard to reset view for Yearly extraction...");
+            const dashboardLinkBulk = page.locator('app-dashboard-sidebar').getByText('Dashboard').first();
+            await dashboardLinkBulk.click({ force: true });
+            await page.waitForTimeout(3000);
+
+            console.log("🖱️ Re-clicking 'View' button for Sales Details...");
+            const viewBtnBulk = page.locator("xpath=//*[contains(text(), 'Sales Details')]/following::button[contains(., 'View')][1]");
+            await viewBtnBulk.waitFor({ state: 'visible', timeout: 8000 });
+            await viewBtnBulk.click();
+            await page.waitForTimeout(3000);
+        } catch (bulkErr) {
+            console.log(`⏭️ Could not fetch Bulk Entry Inventory data: ${bulkErr.message}`);
+        }
+        // === END BULK ENTRY ===
+
         const years = ["2020", "2021", "2022", "2023", "2024", "2025", "2026"];
 
         for (const year of years) {
@@ -72,18 +186,64 @@ async function extractEprSales(page) {
                 // Click the table underlined data to trigger API
                 console.log("🖱️ Clicking the underlined data in the table...");
                 try {
-                    // Find the underlined number in the first column or any link inside the table
-                    const tableLink = page.locator('td u, td a, td [style*="underline"], td [class*="underline"]').first();
+                    // Find the underlined number in the table (could be inside td, mat-cell, or just an a/u tag)
+                    const tableLink = page.locator('td u, td a, mat-cell u, mat-cell a, .mat-cell u, .mat-cell a, a, u, [style*="underline"], [class*="underline"]').filter({ hasText: /\d/ }).first();
                     await tableLink.waitFor({ state: 'visible', timeout: 8000 });
                     await tableLink.click({ force: true });
 
                     // Wait for the API response
                     console.log("⏳ Waiting for API response (salesList)...");
-                    const apiResponse = await apiResponsePromise;
-                    if (apiResponse) {
-                        const apiJson = await apiResponse.json();
-                        console.log(`✅ API Response captured for ${year}!`);
-                        fs.writeFileSync(path.join(dataDir, `sales_${year}.json`), JSON.stringify(apiJson, null, 2));
+                    const apiReq = await apiResponsePromise;
+                    if (apiReq) {
+                        const urlObj = new URL(apiReq.url());
+                        const headers = apiReq.headers();
+                        const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
+                        
+                        // Extract all search parameters from the original request
+                        const searchParams = new URLSearchParams(urlObj.search);
+                        
+                        console.log(`✅ Caught salesList request. Fetching all pages...`);
+
+                        // Fetch all pages in browser context
+                        const allSalesData = await page.evaluate(async ({ baseUrl, headers, searchParamsStr }) => {
+                            let pageNum = 1;
+                            let results = [];
+                            
+                            // Reconstruct the search params
+                            const params = new URLSearchParams(searchParamsStr);
+                            
+                            while (true) {
+                                // Update page parameter
+                                params.set('page', pageNum.toString());
+                                // Ensure limit is set, default to 10 if not present
+                                if (!params.has('limit')) params.set('limit', '10');
+                                
+                                const url = `${baseUrl}?${params.toString()}`;
+                                try {
+                                    const res = await fetch(url, { headers });
+                                    if (!res.ok) break;
+                                    const json = await res.json();
+                                    
+                                    // Find the array in the response
+                                    const items = Array.isArray(json.data) ? json.data : 
+                                                  (json.data && Array.isArray(json.data.list)) ? json.data.list : 
+                                                  (json.data && Array.isArray(json.data.salesDetails)) ? json.data.salesDetails : [];
+                                                  
+                                    if (items.length === 0) break;
+                                    
+                                    results.push(...items);
+                                    if (items.length < parseInt(params.get('limit'))) break; // Last page reached
+                                    pageNum++;
+                                } catch (err) {
+                                    console.error("Fetch error on page " + pageNum, err);
+                                    break;
+                                }
+                            }
+                            return results;
+                        }, { baseUrl, headers, searchParamsStr: searchParams.toString() });
+
+                        console.log(`✅ API Response aggregated for ${year}! Total records: ${allSalesData.length}`);
+                        fs.writeFileSync(path.join(dataDir, `sales_${year}.json`), JSON.stringify(allSalesData, null, 2));
                         console.log(`📂 Saved data/sales_${year}.json`);
                     } else {
                         console.log(`⚠️ No API response caught for ${year} after clicking table button.`);
@@ -97,9 +257,6 @@ async function extractEprSales(page) {
                     console.log(`⏭️ No data/buttons found in table for year ${year}. Skipping...`);
                 }
                 
-                // Remove listener here inside try block where debugListener is in scope
-                page.removeListener('response', debugListener);
-
             } catch (err) {
                 console.error(`❌ Error processing year ${year}:`, err);
             } finally {

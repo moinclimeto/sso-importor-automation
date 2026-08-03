@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Database, Eye, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 
-export default function EprProductionData() {
+export default function EprInventoryData() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState('');
@@ -13,17 +13,38 @@ export default function EprProductionData() {
   }, [selectedYear]);
 
   const loadData = async () => {
-    if (!window.pwp || !window.pwp.eprData || !window.pwp.eprData.getProduction) {
-      setLoading(false);
-      return;
-    }
-    
     setLoading(true);
     try {
-      const data = await window.pwp.eprData.getProduction();
+      let data = [];
+      let debugMsg = "";
+      if (window.pwp && window.pwp.scraper && window.pwp.scraper.getInventory) {
+        data = await window.pwp.scraper.getInventory();
+        debugMsg = "Tried getInventory. Result length: " + (data ? data.length : 'null');
+      } else if (window.pwp && window.pwp.fs && window.pwp.fs.readFileBase64) {
+        const filePath = 'C:/Users/itcli/Documents/GitHub/PWP-Cement-Automation/data/inventory.json';
+        const fileContent = await window.pwp.fs.readFileBase64(filePath);
+        if (fileContent) {
+           const binaryString = atob(fileContent);
+           const bytes = new Uint8Array(binaryString.length);
+           for (let i = 0; i < binaryString.length; i++) {
+               bytes[i] = binaryString.charCodeAt(i);
+           }
+           const text = new TextDecoder('utf-8').decode(bytes);
+           data = JSON.parse(text);
+           debugMsg = "Tried readFileBase64. Success, parsed " + (data ? data.length : 0) + " items.";
+        } else {
+           debugMsg = "Tried readFileBase64 but it returned null for path: " + filePath;
+        }
+      }
+      
+      if (!data || data.length === 0) {
+        alert("Debug Info: " + debugMsg);
+      }
+      
       setRecords(data || []);
     } catch (e) {
-      console.error("Failed to fetch EPR Production Data:", e);
+      console.error("Failed to fetch EPR Inventory Data:", e);
+      alert("Error loading data: " + e.message);
     }
     setLoading(false);
   };
@@ -40,10 +61,10 @@ export default function EprProductionData() {
 
   const filteredRecords = records.filter(r => {
     if (!selectedYear) return true;
-    return String(r.year) === selectedYear;
+    return true; // Inventory data typically has its own date filter logic, simplified here for now
   });
 
-  const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r.qty_of_clinker_produced__mt_) || 0), 0);
+  const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r['Available Quantity (MT)']) || 0), 0);
 
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
   const currentRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
@@ -51,7 +72,7 @@ export default function EprProductionData() {
   return (
     <div className="space-y-3">
       <div>
-        <p className="text-slate-500 text-sm">{filteredRecords.length} records scraped — Total Product Qty: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
+        <p className="text-slate-500 text-sm">{filteredRecords.length} records scraped — Total Available Qty: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
       </div>
 
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-wrap gap-3 items-end">
@@ -82,7 +103,7 @@ export default function EprProductionData() {
       ) : records.length === 0 ? (
         <div className="bg-white rounded-xl p-16 text-center shadow-sm border border-slate-100">
           <Database size={40} className="mx-auto text-slate-300 mb-3" />
-          <p className="text-slate-500">No EPR production records found.</p>
+          <p className="text-slate-500">No EPR inventory records found.</p>
           <p className="text-slate-400 text-sm mt-1">Make sure you have run the scraper and synced to SQLite.</p>
         </div>
       ) : (
@@ -91,17 +112,15 @@ export default function EprProductionData() {
             <table className="w-full text-sm min-w-[1500px]">
               <thead>
                 <tr className="bg-teal-700 text-white">
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Sr. No.</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">From Date</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">To Date</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">QTY of Clinker Produced (MT)</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qualifying Feed (MT) / Solid Waste Burnt (MT)</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">S.N</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Production Date</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qualifying Feed(MT)</th>
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat I (MT)</th>
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat II (MT)</th>
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat III (MT)</th>
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty of PW processed for Cat IV (MT)</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Energy contibution by alternative fuel (MSW/RDF)</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Entry</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Production ID</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Available Quantity (MT)</th>
                 </tr>
               </thead>
               <tbody>
@@ -109,32 +128,28 @@ export default function EprProductionData() {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r.sr__no_ || globalIndex}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.from_date || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r.to_date || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['S.N'] || globalIndex}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['Production Date'] || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Qualifying Feed(MT)'] || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Qty of PW processed for Cat I (MT)'] || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Qty of PW processed for Cat II (MT)'] || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Qty of PW processed for Cat III (MT)'] || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Qty of PW processed for Cat IV (MT)'] || '0'}
+                    </td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                      {r['Production ID'] || 'N/A'}
+                    </td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {r.qty_of_clinker_produced__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.qualifying_feed__mt_____solid_waste_burnt__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.qty_of_pw_processed_for_cat_i__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.qty_of_pw_processed_for_cat_ii__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.qty_of_pw_processed_for_cat_iii__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.qty_of_pw_processed_for_cat_iv__mt_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r.energy_contibution_by_alternative_fuel__msw_rdf_ || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
-                      {r.date_of_entry || 'N/A'}
+                      {r['Available Quantity (MT)'] || '0'}
                     </td>
                   </tr>
                 )})}

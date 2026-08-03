@@ -67,6 +67,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
     getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
     getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
+    getInventory: () => ipcRenderer.invoke('scraper:getInventory'),
     openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
     checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
     waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),

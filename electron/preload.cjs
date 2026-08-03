@@ -5,6 +5,10 @@ contextBridge.exposeInMainWorld('pwp', {
   webUtils: {
     getPathForFile: (file) => webUtils.getPathForFile(file),
   },
+  // FS
+  fs: {
+    readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+  },
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
     add: (data) => ipcRenderer.invoke('companies:add', data),
@@ -59,6 +63,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: (year) => ipcRenderer.invoke('scraper:getProcurement', year),
     getSales: (year) => ipcRenderer.invoke('scraper:getSales', year),
     getProduction: (year) => ipcRenderer.invoke('scraper:getProduction', year),
+    getInventory: () => ipcRenderer.invoke('scraper:getInventory'),
     openCpcbPortal: (payload) => ipcRenderer.invoke('scraper:openCpcbPortal', payload),
     checkCpcbSession: (payload) => ipcRenderer.invoke('scraper:checkCpcbSession', payload),
     waitCpcbLogin: () => ipcRenderer.invoke('scraper:waitCpcbLogin'),

@@ -75,15 +75,17 @@ export default function ScrapedDashboard({ company, onBack }) {
 
   return (
     <div className="space-y-6 animate-in fade-in slide-in-from-bottom-4 duration-500">
-      <div className="flex items-center gap-4">
-        <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
-          <ArrowLeft size={20} />
-        </button>
-        <div>
-          <h2 className="text-2xl font-bold text-slate-800">{company.name} - EPR Dashboard</h2>
-          <p className="text-slate-500 text-sm">Automated scraped data from Central Pollution Control Board</p>
+      {company.name !== 'Your Company' && (
+        <div className="flex items-center gap-4">
+          <button onClick={onBack} className="p-2 hover:bg-slate-100 rounded-lg text-slate-500 transition-colors">
+            <ArrowLeft size={20} />
+          </button>
+          <div>
+            <h2 className="text-2xl font-bold text-slate-800">{company.name}</h2>
+            <p className="text-slate-500 text-sm">Automated scraped data from Central Pollution Control Board</p>
+          </div>
         </div>
-      </div>
+      )}
 
       {/* EPR Dashboard Structured Cards */}
       {dashboardCards && (
@@ -248,173 +250,6 @@ export default function ScrapedDashboard({ company, onBack }) {
             <h3 className="font-semibold text-slate-700">Total Sales</h3>
           </div>
           <p className="text-2xl font-bold text-slate-900">{totalSale.toFixed(2)} MT</p>
-        </div>
-      </div>
-
-      {/* Tabs */}
-      <div className="bg-white border border-slate-100 rounded-2xl shadow-sm overflow-hidden mt-6">
-        <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-slate-100 bg-slate-50 pr-4">
-          <div className="flex overflow-x-auto w-full sm:w-auto">
-            {['procurement', 'sales', 'wallet_history', 'payments'].map((tab) => (
-              <button
-                key={tab}
-                onClick={() => setActiveTab(tab)}
-                className={`px-4 py-3 font-medium text-sm whitespace-nowrap transition-colors border-b-2 ${
-                  activeTab === tab
-                    ? 'border-green-600 text-green-700'
-                    : 'border-transparent text-slate-500 hover:text-slate-700 hover:border-slate-300'
-                }`}
-              >
-                {tab.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-              </button>
-            ))}
-          </div>
-          
-          {['procurement', 'sales'].includes(activeTab) && (
-            <div className="p-2 sm:p-0 flex items-center gap-2">
-              <span className="text-sm text-slate-500 font-medium">Select Year:</span>
-              <select 
-                value={selectedYear} 
-                onChange={(e) => setSelectedYear(e.target.value)}
-                className="bg-white border border-slate-200 text-slate-700 text-sm rounded-lg focus:ring-green-500 focus:border-green-500 block px-3 py-1.5 shadow-sm"
-              >
-                {[2021, 2022, 2023, 2024, 2025, 2026].map(year => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </div>
-          )}
-        </div>
-
-        <div className="p-0 overflow-x-auto">
-          {activeTab === 'procurement' && (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-100 text-left text-slate-500">
-                <tr>
-                  <th className="p-4 font-medium">S.No</th>
-                  <th className="p-4 font-medium">Supplier Name</th>
-                  <th className="p-4 font-medium">Address</th>
-                  <th className="p-4 font-medium">City</th>
-                  <th className="p-4 font-medium">State</th>
-                  <th className="p-4 font-medium">Pincode</th>
-                  <th className="p-4 font-medium">Category</th>
-                  <th className="p-4 font-medium">Qty (MT)</th>
-                  <th className="p-4 font-medium">GST No</th>
-                  <th className="p-4 font-medium">Invoice No</th>
-                  <th className="p-4 font-medium">Procurement Date</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {procurement.map((p, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="p-4 font-medium text-slate-800">{i + 1}</td>
-                    <td className="p-4 text-slate-700">{p.supplier_name || 'N/A'}</td>
-                    <td className="p-4 text-slate-600 truncate max-w-xs">{p.supplier_addr_1 || 'N/A'}</td>
-                    <td className="p-4 text-slate-600">{p.supplier_city || 'N/A'}</td>
-                    <td className="p-4 text-slate-600">{p.supplier_state || 'N/A'}</td>
-                    <td className="p-4 text-slate-600">{p.supplier_pin_code || 'N/A'}</td>
-                    <td className="p-4 text-slate-700">{p.category_name || 'N/A'}</td>
-                    <td className="p-4 font-semibold text-slate-700">{p.qty_plastic_waste_mt || 0}</td>
-                    <td className="p-4 font-mono text-xs">{p.supplier_gst_no || 'N/A'}</td>
-                    <td className="p-4 font-medium text-slate-800">{p.invoice_no || 'N/A'}</td>
-                    <td className="p-4 text-slate-600">{p.procurement_date ? new Date(p.procurement_date).toLocaleDateString() : 'N/A'}</td>
-                  </tr>
-                ))}
-                {procurement.length === 0 && (
-                  <tr><td colSpan={11} className="p-8 text-center text-slate-500">No procurement data found</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
-
-          {activeTab === 'sales' && (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-100 text-left text-slate-500">
-                <tr>
-                  <th className="p-4 font-medium">Invoice No</th>
-                  <th className="p-4 font-medium">Date</th>
-                  <th className="p-4 font-medium">Buyer GSTIN</th>
-                  <th className="p-4 font-medium">Quantity (MT)</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {sales.map((s, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="p-4 font-medium text-slate-800">{s.invoicenumber || 'N/A'}</td>
-                    <td className="p-4 text-slate-600">{s.dateofsale ? new Date(s.dateofsale).toLocaleDateString() : 'N/A'}</td>
-                    <td className="p-4 font-mono text-xs">{s.buyergstno || 'N/A'}</td>
-                    <td className="p-4 font-semibold text-slate-700">{s.productionid_qty || 0}</td>
-                  </tr>
-                ))}
-                {sales.length === 0 && (
-                  <tr><td colSpan={4} className="p-8 text-center text-slate-500">No sales data found</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
-          
-
-
-          {activeTab === 'wallet_history' && (
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 border-b border-slate-100 text-left text-slate-500">
-                <tr>
-                  <th className="p-4 font-medium">Transaction ID</th>
-                  <th className="p-4 font-medium">Transfer Type</th>
-                  <th className="p-4 font-medium">Value</th>
-                  <th className="p-4 font-medium">Category</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {history.map((h, i) => (
-                  <tr key={i} className="hover:bg-slate-50">
-                    <td className="p-4 font-mono text-xs text-blue-600">{h.txId}</td>
-                    <td className="p-4 text-slate-700">{h.transferType}</td>
-                    <td className="p-4 font-semibold text-slate-700">{h.amount}</td>
-                    <td className="p-4 text-slate-600">{h.category}</td>
-                  </tr>
-                ))}
-                {history.length === 0 && (
-                  <tr><td colSpan={4} className="p-8 text-center text-slate-500">No wallet history found</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
-
-          {activeTab === 'payments' && (
-            <table className="w-full text-sm text-left animate-in fade-in">
-              <thead className="bg-slate-50 border-b border-slate-100 text-slate-500">
-                <tr>
-                  {payments.length > 0 ? (
-                    Object.keys(payments[0])
-                      .filter(k => k !== '_internal_id' && k !== 'file_source')
-                      .map((header, i) => (
-                        <th key={i} className="p-4 font-medium whitespace-nowrap">
-                          {header.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ')}
-                        </th>
-                      ))
-                  ) : (
-                    <th className="p-4 font-medium">Payment Data</th>
-                  )}
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100 text-slate-700">
-                {payments.length > 0 && payments.map((row, i) => (
-                  <tr key={i} className="hover:bg-slate-50 transition-colors">
-                    {Object.entries(row)
-                      .filter(([k]) => k !== '_internal_id' && k !== 'file_source')
-                      .map(([k, v], j) => (
-                        <td key={j} className="p-4">{v}</td>
-                      ))}
-                  </tr>
-                ))}
-                {(!payments || payments.length === 0) && (
-                  <tr><td colSpan={10} className="p-8 text-center text-slate-500">No payments history found</td></tr>
-                )}
-              </tbody>
-            </table>
-          )}
-
         </div>
       </div>
     </div>

@@ -2,9 +2,12 @@ import { useState } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
+import { getApi } from '../utils/pwpApi.js';
+import { Toast, useToast } from '../components/Toast.jsx';
+import { RefreshCw } from 'lucide-react';
 
 const navLinks = [
   {
@@ -22,6 +25,7 @@ const navLinks = [
       { to: '/epr-production', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
+      { to: '/epr-inventory', label: 'Inventory Data' },
     ]
   },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
@@ -29,9 +33,13 @@ const navLinks = [
 
 const pageHeaders = {
   '/dashboard': { title: 'Dashboard', subtitle: 'Overview of your purchase & sale activity' },
-  '/cpcb-dashboard': { title: 'CPCB Dashboard', subtitle: 'Dashboard stats from the CPCB portal' },
+  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
-  '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal' },
+  '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-inventory': { title: 'EPR Inventory Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -118,6 +126,27 @@ export default function MainLayout() {
   const navigate = useNavigate();
   const location = useLocation();
   const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [syncingEpr, setSyncingEpr] = useState(false);
+  const { toast, showToast, hideToast } = useToast();
+
+  const handleSyncEpr = async () => {
+    setSyncingEpr(true);
+    showToast('Starting EPR Scraper... Please wait.', 'info');
+    try {
+      const api = getApi();
+      const res = await api.scraper.runEpr();
+      if (res.success) {
+         showToast('EPR Portal successfully synced!', 'success');
+         setTimeout(() => window.location.reload(), 1500);
+      } else {
+         showToast('EPR Sync failed: ' + res.error, 'error');
+      }
+    } catch (err) {
+      showToast('EPR Sync failed: ' + err.message, 'error');
+    } finally {
+      setSyncingEpr(false);
+    }
+  };
 
   const isDocSection =
     location.pathname.startsWith('/doc-processor') ||
@@ -202,9 +231,33 @@ export default function MainLayout() {
               Upload
             </button>
           )}
+
+          {header.showEprRefresh && (
+            <button
+              type="button"
+              onClick={() => window.dispatchEvent(new Event('refresh-epr-data'))}
+              className="flex items-center gap-2 border border-teal-200 text-teal-700 bg-teal-50 hover:bg-teal-100 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm flex-shrink-0"
+            >
+              <RefreshCw size={18} /> 
+              Refresh
+            </button>
+          )}
+
+          {header.showSync && (
+            <button
+              type="button"
+              onClick={handleSyncEpr}
+              disabled={syncingEpr}
+              className="flex items-center gap-2 border border-green-200 text-green-700 bg-white hover:bg-green-50 px-4 py-2 rounded-lg font-medium transition-colors shadow-sm disabled:opacity-70 disabled:cursor-not-allowed"
+            >
+              {syncingEpr ? <Loader2 size={18} className="animate-spin" /> : <Building2 size={18} />} 
+              {syncingEpr ? 'Syncing...' : 'Sync EPR Portal'}
+            </button>
+          )}
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6">
+        <div className="flex-1 overflow-y-auto p-6 relative">
+          <Toast toast={toast} onClose={hideToast} />
           <Outlet />
         </div>
       </main>

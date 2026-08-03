@@ -526,16 +526,15 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
               <Field label="S-No.">
                 <input className="input" placeholder="1" value={form.s_no} onChange={(e) => set('s_no', e.target.value)} />
               </Field>
-              <Field label="Categories of Plastic" required>
+              <Field label="Category of Plastic" required>
                 <select className="input" value={form.category_of_plastic} onChange={(e) => set('category_of_plastic', e.target.value)}>
-                  <option value="">Select</option>
+                  <option value="">Select Category</option>
                   {PLASTIC_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>{c}</option>
+                    <option key={c} value={c}>
+                      {c}
+                    </option>
                   ))}
                 </select>
-              </Field>
-              <Field label="Process Code">
-                <input className="input" value={form.process_code} onChange={(e) => set('process_code', e.target.value)} />
               </Field>
               <Field label="Plastic Type">
                 <input className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)} />
@@ -543,24 +542,13 @@ export default function SingleRecordModal({ type, onClose, onSaved }) {
               <Field label="Product Type">
                 <input className="input" value={form.product_type} onChange={(e) => set('product_type', e.target.value)} />
               </Field>
-              <Field label="(%) of Recycled Plastic in Product">
-                <input type="number" step="any" className="input" value={form.recycled_plastic_percent} onChange={(e) => set('recycled_plastic_percent', e.target.value)} />
-              </Field>
-              <Field label="Conversion Factor">
-                <input type="number" step="any" className="input" value={form.conversion_factor} onChange={(e) => set('conversion_factor', e.target.value)} />
-              </Field>
-              <Field label="Available Quantity (MT)">
-                <input type="number" step="any" className="input" value={form.available_quantity_mt} onChange={(e) => set('available_quantity_mt', e.target.value)} />
-              </Field>
               <Field label="Quantity Sold (MT)">
                 <input type="number" step="any" className="input" value={form.quantity_sold_mt} onChange={(e) => set('quantity_sold_mt', e.target.value)} />
-              </Field>
-              <Field label="Registration type">
-                <input className="input" value={form.registration_type} onChange={(e) => set('registration_type', e.target.value)} />
               </Field>
               <Field label="Name of the Entity" required>
                 <input className="input" value={form.entity_name} onChange={(e) => set('entity_name', e.target.value)} />
               </Field>
+
               <Field label="Address" className="sm:col-span-2">
                 <input className="input" value={form.address} onChange={(e) => set('address', e.target.value)} />
               </Field>

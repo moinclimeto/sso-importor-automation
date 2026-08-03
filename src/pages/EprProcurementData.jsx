@@ -1,10 +1,16 @@
 import { useEffect, useState } from 'react';
-import { Database, Download, Calendar, MapPin, Eye, Filter } from 'lucide-react';
+import { Database, Download, Calendar, MapPin, Eye, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
 
 export default function EprProcurementData() {
   const [records, setRecords] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedYear, setSelectedYear] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const itemsPerPage = 5;
+
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [selectedYear]);
 
   const loadData = async () => {
     if (!window.pwp || !window.pwp.eprData) {
@@ -33,16 +39,19 @@ export default function EprProcurementData() {
 
   const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r.qty_plastic_waste_mt) || 0), 0);
 
+  const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
+  const currentRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+
+  useEffect(() => {
+    const handleRefresh = () => loadData();
+    window.addEventListener('refresh-epr-data', handleRefresh);
+    return () => window.removeEventListener('refresh-epr-data', handleRefresh);
+  }, []);
+
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <h1 className="text-2xl font-bold text-slate-800">EPR Procurement Data</h1>
-          <p className="text-slate-500 text-sm">{filteredRecords.length} records scraped — Total Quantity: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
-        </div>
-        <button onClick={loadData} className="bg-teal-600 hover:bg-teal-700 text-white h-9 px-4 rounded text-sm flex items-center gap-2">
-          <Database size={16} /> Refresh
-        </button>
+    <div className="space-y-3">
+      <div>
+        <p className="text-slate-500 text-sm">{filteredRecords.length} records scraped — Total Quantity: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
       </div>
 
       <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-wrap gap-3 items-end">
@@ -94,13 +103,14 @@ export default function EprProcurementData() {
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Qty. of Feed (MT)</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Procurement Date</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Entry</th>
-                  <th className="px-4 py-3 text-center font-medium whitespace-nowrap">Action</th>
                 </tr>
               </thead>
               <tbody>
-                {filteredRecords.map((r, i) => (
+                {currentRecords.map((r, i) => {
+                  const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
+                  return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{i + 1}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{globalIndex}</td>
                     <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800" title={r.supplier_name}>{r.supplier_name || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 truncate max-w-xs" title={r.supplier_addr_1}>{r.supplier_addr_1 || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 truncate max-w-xs" title={r.supplier_addr_2}>{r.supplier_addr_2 || ''}</td>
@@ -118,16 +128,36 @@ export default function EprProcurementData() {
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
                       {r.created_on ? new Date(r.created_on).toLocaleDateString('en-IN') : 'N/A'}
                     </td>
-                    <td className="px-4 py-3 text-center">
-                      <button className="text-teal-600 hover:text-teal-800 p-1 bg-teal-50 rounded-full transition-colors">
-                        <Eye size={16} />
-                      </button>
-                    </td>
                   </tr>
-                ))}
+                )})}
               </tbody>
             </table>
           </div>
+          
+          {totalPages > 1 && (
+            <div className="flex items-center justify-between px-4 py-3 border-t border-slate-100 bg-slate-50">
+              <div className="text-sm text-slate-500">
+                Showing <span className="font-medium text-slate-700">{(currentPage - 1) * itemsPerPage + 1}</span> to <span className="font-medium text-slate-700">{Math.min(currentPage * itemsPerPage, filteredRecords.length)}</span> of <span className="font-medium text-slate-700">{filteredRecords.length}</span> results
+              </div>
+              <div className="flex items-center gap-2">
+                <button 
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                  className="p-1 rounded-md text-slate-500 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronLeft size={20} />
+                </button>
+                <span className="text-sm text-slate-600 font-medium px-2">Page {currentPage} of {totalPages}</span>
+                <button 
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                  className="p-1 rounded-md text-slate-500 hover:bg-slate-200 disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <ChevronRight size={20} />
+                </button>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

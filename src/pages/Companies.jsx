@@ -213,27 +213,6 @@ export default function Companies() {
     }
   };
 
-  const [syncingEpr, setSyncingEpr] = useState(false);
-
-  const handleSyncEpr = async () => {
-    setSyncingEpr(true);
-    showToast('Starting EPR Scraper... Please wait.', 'info');
-    try {
-      const api = getApi();
-      const res = await api.scraper.runEpr();
-      if (res.success) {
-         showToast('EPR Portal successfully synced!', 'success');
-         await load();
-      } else {
-         showToast('EPR Sync failed: ' + res.error, 'error');
-      }
-    } catch (err) {
-      showToast('EPR Sync failed: ' + err.message, 'error');
-    } finally {
-      setSyncingEpr(false);
-    }
-  };
-
   // If a company is selected for the dashboard, show the detail view
   if (selectedCompany) {
     return <ScrapedDashboard company={selectedCompany} onBack={() => setSelectedCompany(null)} />;
@@ -248,15 +227,6 @@ export default function Companies() {
           <p className="text-slate-500 text-sm">{companies.length} companies registered</p>
         </div>
         <div className="flex gap-3">
-          <button
-            type="button"
-            onClick={handleSyncEpr}
-            disabled={syncingEpr}
-            className="btn-secondary flex items-center gap-2 border-green-200 text-green-700 hover:bg-green-50"
-          >
-            {syncingEpr ? <Loader2 size={18} className="animate-spin" /> : <Building2 size={18} />} 
-            {syncingEpr ? 'Syncing...' : 'Sync EPR Portal'}
-          </button>
           <button
             type="button"
             onClick={openAddModal}
