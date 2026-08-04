@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
-import { Database, Download, Calendar, MapPin } from 'lucide-react';
+import { Database, Download, Calendar, MapPin, Factory } from 'lucide-react';
 
 export default function EprData() {
   const [records, setRecords] = useState([]);
+  const [conversionFactorRecords, setConversionFactorRecords] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [activeTab, setActiveTab] = useState('procurement'); // 'procurement' | 'conversionFactor'
 
   const loadData = async () => {
     if (!window.pwp || !window.pwp.eprData) {
@@ -15,6 +17,9 @@ export default function EprData() {
     try {
       const data = await window.pwp.eprData.getProcurement();
       setRecords(data || []);
+      
+      const cfData = await window.pwp.eprData.getConversionFactor();
+      setConversionFactorRecords(cfData || []);
     } catch (e) {
       console.error("Failed to fetch EPR Data:", e);
     }
@@ -27,28 +32,27 @@ export default function EprData() {
 
   const totalQuantity = records.reduce((s, r) => s + (r.qty_plastic_waste_mt || 0), 0);
 
-  return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between">
-        <div>
-          <p className="text-slate-500 text-sm">{records.length} records scraped — Total Quantity: <span className="font-semibold text-blue-600">{totalQuantity.toFixed(2)} MT</span></p>
-        </div>
-        <button onClick={loadData} className="btn-secondary h-9 px-4 text-sm flex items-center gap-2">
-          <Database size={16} /> Refresh
-        </button>
-      </div>
-
-      {loading ? (
+  const renderContent = () => {
+    if (loading) {
+      return (
         <div className="flex justify-center py-20">
           <div className="w-8 h-8 border-4 border-blue-500/30 border-t-blue-500 rounded-full animate-spin" />
         </div>
-      ) : records.length === 0 ? (
-        <div className="bg-white rounded-xl p-16 text-center shadow-sm border border-slate-100">
-          <Database size={40} className="mx-auto text-slate-300 mb-3" />
-          <p className="text-slate-500">No EPR procurement records found.</p>
-          <p className="text-slate-400 text-sm mt-1">Make sure you have run the scraper and synced to SQLite.</p>
-        </div>
-      ) : (
+      );
+    }
+
+    if (activeTab === 'procurement') {
+      if (records.length === 0) {
+        return (
+          <div className="bg-white rounded-xl p-16 text-center shadow-sm border border-slate-100">
+            <Database size={40} className="mx-auto text-slate-300 mb-3" />
+            <p className="text-slate-500">No EPR procurement records found.</p>
+            <p className="text-slate-400 text-sm mt-1">Make sure you have run the scraper and synced to SQLite.</p>
+          </div>
+        );
+      }
+
+      return (
         <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm min-w-[1000px]">
@@ -97,7 +101,82 @@ export default function EprData() {
             </table>
           </div>
         </div>
-      )}
+      );
+    }
+
+    if (activeTab === 'conversionFactor') {
+      if (conversionFactorRecords.length === 0) {
+        return (
+          <div className="bg-white rounded-xl p-16 text-center shadow-sm border border-slate-100">
+            <Factory size={40} className="mx-auto text-slate-300 mb-3" />
+            <p className="text-slate-500">No Conversion Factor records found.</p>
+            <p className="text-slate-400 text-sm mt-1">Make sure you have run the scraper to fetch Conversion Factor.</p>
+          </div>
+        );
+      }
+
+      return (
+        <div className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="bg-slate-50 border-b border-slate-100">
+                  <th className="th w-24">Sr. No.</th>
+                  <th className="th">Conversion Factor</th>
+                  <th className="th">Last Updated</th>
+                </tr>
+              </thead>
+              <tbody>
+                {conversionFactorRecords.map((r, i) => (
+                  <tr key={i} className="border-b border-slate-50 hover:bg-slate-50 transition-colors">
+                    <td className="td text-slate-500 font-medium">{r.sr_no || r._internal_id || i + 1}</td>
+                    <td className="td font-semibold text-slate-800">{r.conversion_factor || 'N/A'}</td>
+                    <td className="td text-slate-600">{r.last_updated || 'N/A'}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      );
+    }
+
+    return null;
+  };
+
+  return (
+    <div className="space-y-5">
+      <div className="flex items-center justify-between">
+        <div>
+          <p className="text-slate-500 text-sm">{records.length} records scraped — Total Quantity: <span className="font-semibold text-blue-600">{totalQuantity.toFixed(2)} MT</span></p>
+        </div>
+        <button onClick={loadData} className="btn-secondary h-9 px-4 text-sm flex items-center gap-2">
+          <Database size={16} /> Refresh
+        </button>
+      </div>
+
+      <div className="flex border-b border-slate-200">
+        <button
+          className={`py-2 px-4 font-medium text-sm transition-colors relative ${activeTab === 'procurement' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+          onClick={() => setActiveTab('procurement')}
+        >
+          Procurement Data
+          {activeTab === 'procurement' && (
+            <div className="absolute bottom-[-1px] left-0 w-full h-[2px] bg-blue-600 rounded-t-full" />
+          )}
+        </button>
+        <button
+          className={`py-2 px-4 font-medium text-sm transition-colors relative ${activeTab === 'conversionFactor' ? 'text-blue-600' : 'text-slate-500 hover:text-slate-700'}`}
+          onClick={() => setActiveTab('conversionFactor')}
+        >
+          Conversion Factor
+          {activeTab === 'conversionFactor' && (
+            <div className="absolute bottom-[-1px] left-0 w-full h-[2px] bg-blue-600 rounded-t-full" />
+          )}
+        </button>
+      </div>
+
+      {renderContent()}
     </div>
   );
 }

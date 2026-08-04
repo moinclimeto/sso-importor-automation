@@ -221,6 +221,7 @@ export default function DocUpload() {
   const [inspecting, setInspecting] = useState(false);
   const [zipPreview, setZipPreview] = useState(null);
   const [resolving, setResolving] = useState(false);
+  const [globalBankDetails, setGlobalBankDetails] = useState(null);
 
   const totalPages = useMemo(() => {
     if (pageJobs.length) return pageJobs.length;
@@ -228,6 +229,7 @@ export default function DocUpload() {
   }, [files, pageJobs]);
 
   useEffect(() => {
+    window.pwp?.settings?.get('global_bank_details').then(setGlobalBankDetails);
     return () => {
       if (typeof unsubRef.current === 'function') unsubRef.current();
     };
@@ -305,18 +307,24 @@ export default function DocUpload() {
     let addedCount = 0;
     let dupCount = 0;
     setFiles((prev) => {
+      const getBase = (n) => String(n || '').replace(/\s*\(\d+\)\s*(?=\.\w+$)/, '').toLowerCase();
       const seen = new Set(prev.map((f) => String(f.path || f.name).toLowerCase()));
       const nameSeen = new Set(prev.map((f) => String(f.name).toLowerCase()));
+      const sigSeen = new Set(prev.map((f) => `${f.size || 0}_${getBase(f.name)}`));
+      
       const added = [];
       for (const f of incoming) {
         const pathKey = String(f.path || f.name).toLowerCase();
         const nameKey = String(f.name).toLowerCase();
-        if (seen.has(pathKey) || nameSeen.has(nameKey)) {
+        const sig = `${f.size || 0}_${getBase(f.name)}`;
+        
+        if (seen.has(pathKey) || nameSeen.has(nameKey) || sigSeen.has(sig)) {
           dupCount += 1;
           continue;
         }
         seen.add(pathKey);
         nameSeen.add(nameKey);
+        sigSeen.add(sig);
         added.push({
           name: f.name,
           path: f.path || null,
@@ -490,6 +498,9 @@ export default function DocUpload() {
 
     const entityName =
       data.entity_name || data.customer_name || parties.buyerName || '';
+      
+    const matchedCompany = sourceRow?.routing?.company || null;
+      
     return {
       ...data,
       company_id: companyId,
@@ -503,6 +514,8 @@ export default function DocUpload() {
       available_quantity_mt: parseFloat(data.available_quantity_mt) || 0,
       quantity_sold_mt: parseFloat(data.quantity_sold_mt || data.quantity_mt) || 0,
       gst_other_charges: parseFloat(data.gst_other_charges) || 0,
+      account_number: String(data.account_number || globalBankDetails?.account_number || '').trim(),
+      ifsc_code: String(data.ifsc_code || globalBankDetails?.ifsc_code || '').trim(),
       invoice_no:
         data.application_number ||
         data.invoice_number ||
@@ -522,6 +535,7 @@ export default function DocUpload() {
   };
 
   const validateRow = (data, sourceRow) => {
+    const parties = sourceRow?.data?._parties || data._parties || {};
     const decided =
       sourceRow?.decidedType ||
       sourceRow?.routing?.decidedType ||
@@ -530,7 +544,7 @@ export default function DocUpload() {
       return sourceRow?.routing?.reason || 'Invoice rejected — company not matched.';
     }
     if (decided === 'purchase') {
-      if (!String(data.supplier_name || data.vendor_name || '').trim()) {
+      if (!String(data.supplier_name || data.vendor_name || parties.sellerName || '').trim()) {
         return 'Name of Supplier is required.';
       }
       if (!String(data.invoice_number || data.invoice_no || '').trim()) {
@@ -561,6 +575,9 @@ export default function DocUpload() {
     let savedPurchase = 0;
     let savedSale = 0;
     let saveFailed = 0;
+    const grouped = new Map();
+    const unGrouped = [];
+
     for (const r of routed) {
       if (!r?.ok || r.skipped || r.rejected) {
         out.push(r);
@@ -573,26 +590,88 @@ export default function DocUpload() {
         out.push({ ...r, saved: false, saveError: v });
         continue;
       }
-      try {
-        const payload = buildSavePayload(data, r);
-        const decided = r.decidedType || (isPurchase ? 'purchase' : 'sale');
-        if (decided === 'purchase') {
-          await window.pwp.purchases.add(payload);
-          savedPurchase += 1;
-        } else {
-          await window.pwp.sales.add(payload);
-          savedSale += 1;
-        }
-        out.push({ ...r, saved: true, saveError: '' });
-      } catch (err) {
-        saveFailed += 1;
-        out.push({
-          ...r,
-          saved: false,
-          saveError: err?.message || 'Save failed',
-        });
+      const payload = buildSavePayload(data, r);
+      const decided = r.decidedType || (isPurchase ? 'purchase' : 'sale');
+      const invNo = String(payload.invoice_no || '').trim().toLowerCase();
+      const compId = payload.company_id || '';
+      
+      if (invNo && compId) {
+        const dupKey = `${decided}_${compId}_${invNo}`;
+        if (!grouped.has(dupKey)) grouped.set(dupKey, []);
+        grouped.get(dupKey).push({ r, payload, decided });
+      } else {
+        unGrouped.push({ r, payload, decided });
       }
     }
+
+    const processSave = async (item) => {
+      try {
+        if (item.decided === 'purchase') {
+          await window.pwp.purchases.add(item.payload);
+          savedPurchase += 1;
+        } else {
+          await window.pwp.sales.add(item.payload);
+          savedSale += 1;
+        }
+        out.push({ ...item.r, saved: true, saveError: '' });
+      } catch (err) {
+        saveFailed += 1;
+        out.push({ ...item.r, saved: false, saveError: err?.message || 'Save failed' });
+      }
+    };
+
+    for (const item of unGrouped) {
+      await processSave(item);
+    }
+
+    for (const [key, items] of grouped.entries()) {
+      const first = items[0];
+      if (items.length === 1) {
+        await processSave(first);
+        continue;
+      }
+      // Smart Merge for multi-page duplicates / continuations
+      let mergedPayload = { ...first.payload };
+      let allItems = [...(first.payload.lineItems || [])];
+      let maxTotal = Number(first.payload.total_amount) || 0;
+      let maxQty = Number(first.payload.quantity || first.payload.quantity_mt) || 0;
+      
+      const seenItemStrs = new Set(allItems.map(i => JSON.stringify({ ...i, lineNo: undefined })));
+
+      for (let i = 1; i < items.length; i++) {
+        const next = items[i];
+        const nextTotal = Number(next.payload.total_amount) || 0;
+        const nextQty = Number(next.payload.quantity || next.payload.quantity_mt) || 0;
+        if (nextTotal > maxTotal) maxTotal = nextTotal;
+        if (nextQty > maxQty) maxQty = nextQty;
+
+        const nextItems = next.payload.lineItems || [];
+        for (const item of nextItems) {
+          const str = JSON.stringify({ ...item, lineNo: undefined });
+          if (!seenItemStrs.has(str)) {
+            allItems.push(item);
+            seenItemStrs.add(str);
+          }
+        }
+        // Mark subsequent pages as merged
+        out.push({ ...next.r, skipped: true, saved: false, message: 'Merged into page 1' });
+      }
+      
+      mergedPayload.total_amount = maxTotal;
+      if (first.decided === 'purchase') {
+         mergedPayload.quantity_mt = maxQty;
+         mergedPayload.quantity = maxQty;
+      } else {
+         mergedPayload.quantity_sold_mt = maxQty;
+         mergedPayload.quantity = maxQty;
+      }
+      
+      // Fix line numbers
+      mergedPayload.lineItems = allItems.map((item, idx) => ({ ...item, lineNo: idx + 1 }));
+      
+      await processSave({ ...first, payload: mergedPayload });
+    }
+
     return { results: out, savedPurchase, savedSale, saveFailed };
   };
 
@@ -816,7 +895,7 @@ export default function DocUpload() {
   const saleSaved = savedResults.filter((r) => r.decidedType === 'sale').length;
 
   return (
-    <div className="space-y-3 max-w-6xl">
+    <div className="space-y-3 w-full">
       <div className="flex items-center justify-between gap-3">
         <div>
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-400">

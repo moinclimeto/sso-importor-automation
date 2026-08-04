@@ -1,6 +1,6 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
-import { initDatabase, getDb, getSqliteDb, dbJsonPath } from './database.js';
+import { initDatabase, getDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from './dataMigration.js';
@@ -42,7 +42,7 @@ export function registerIpcHandlers() {
 
   // ─── EPR SCRAPED DATA (SQLITE) ────────────────────────────────
   ipcMain.handle('eprData:getProcurement', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -62,7 +62,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('eprData:getSales', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -81,7 +81,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('eprData:getProduction', async () => {
-    const sqliteDb = getSqliteDb();
+    const sqliteDb = getDb();
     if (!sqliteDb) {
       console.warn("⚠️ SQLite DB not connected yet.");
       return [];
@@ -90,11 +90,88 @@ export function registerIpcHandlers() {
     try {
       const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='production_details'`);
       if (tableCheck) {
-        const rows = await sqliteDb.all(`SELECT * FROM production_details ORDER BY year DESC`);
+        const rows = await sqliteDb.all(`SELECT * FROM production_details`);
         return rows;
       }
     } catch (err) {
       console.error("Error fetching production_details:", err);
+    }
+    return [];
+  });
+
+  // ─── SETTINGS ──────────────────────────────────────────────────
+  const ensureSettingsTable = async () => {
+    const db = getDb();
+    await db.exec(`
+      CREATE TABLE IF NOT EXISTS app_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT,
+        updated_at TEXT
+      );
+    `);
+    return db;
+  };
+
+  ipcMain.handle('settings:get', async (_, key) => {
+    try {
+      const db = await ensureSettingsTable();
+      const row = await db.get(`SELECT value FROM app_settings WHERE key = ?`, key);
+      return row ? JSON.parse(row.value) : null;
+    } catch (err) {
+      console.error('settings:get error', err);
+      return null;
+    }
+  });
+
+  ipcMain.handle('settings:set', async (_, key, value) => {
+    try {
+      const db = await ensureSettingsTable();
+      await db.run(
+        `INSERT INTO app_settings (key, value, updated_at) VALUES (?, ?, ?)
+         ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+        key, JSON.stringify(value), new Date().toISOString()
+      );
+      return true;
+    } catch (err) {
+      console.error('settings:set error', err);
+      return false;
+    }
+  });
+
+  ipcMain.handle('eprData:getInventory', async () => {
+    const sqliteDb = getDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='inventory'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM inventory`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching inventory:", err);
+    }
+    return [];
+  });
+
+  ipcMain.handle('eprData:getConversionFactor', async () => {
+    const sqliteDb = getDb();
+    if (!sqliteDb) {
+      console.warn("⚠️ SQLite DB not connected yet.");
+      return [];
+    }
+
+    try {
+      const tableCheck = await sqliteDb.get(`SELECT name FROM sqlite_master WHERE type='table' AND name='conversion_factor'`);
+      if (tableCheck) {
+        const rows = await sqliteDb.all(`SELECT * FROM conversion_factor`);
+        return rows;
+      }
+    } catch (err) {
+      console.error("Error fetching conversion_factor:", err);
     }
     return [];
   });
@@ -120,8 +197,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('companies:add', async (_, data) => {
     const db = getDb();
     const result = await db.run(
-      'INSERT INTO companies (name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?)',
-      data.name, data.gstin, data.pan, data.entity_type, new Date().toISOString()
+      'INSERT INTO companies (name, gstin, pan, entity_type, account_number, ifsc_code, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)',
+      data.name, data.gstin, data.pan, data.entity_type, data.account_number, data.ifsc_code, new Date().toISOString()
     );
     return { id: result.lastID, ...data };
   });
@@ -129,8 +206,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('companies:update', async (_, data) => {
     const db = getDb();
     await db.run(
-      'UPDATE companies SET name = ?, gstin = ?, pan = ?, entity_type = ? WHERE id = ?',
-      data.name, data.gstin, data.pan, data.entity_type, data.id
+      'UPDATE companies SET name = ?, gstin = ?, pan = ?, entity_type = ?, account_number = ?, ifsc_code = ? WHERE id = ?',
+      data.name, data.gstin, data.pan, data.entity_type, data.account_number, data.ifsc_code, data.id
     );
     return { success: true };
   });
@@ -574,6 +651,23 @@ export function registerIpcHandlers() {
     return { success: true };
   });
 
+  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {
+    try {
+      const db = getDb();
+      const result = await db.run(
+        `UPDATE sales SET account_number = ?, ifsc_code = ?
+         WHERE (account_number IS NULL OR account_number = '')
+           AND (ifsc_code IS NULL OR ifsc_code = '')`,
+        account_number, ifsc_code
+      );
+      console.log(`[Bank] Applied bank details to ${result.changes} sales records.`);
+      return { success: true, updated: result.changes };
+    } catch (err) {
+      console.error('sales:applyBankDetailsToAll error', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   ipcMain.handle('sales:delete', async (_, id) => {
     const db = getDb();
     const record = await db.get('SELECT file_hash FROM sales WHERE id = ?', id);
@@ -628,6 +722,8 @@ export function registerIpcHandlers() {
     const purchaseTotal = (await db.get('SELECT SUM(total_amount) as total FROM purchases')).total || 0;
     const saleTotal = (await db.get('SELECT SUM(total_amount) as total FROM sales')).total || 0;
 
+    const myCompany = await db.get('SELECT name, gstin FROM companies LIMIT 1');
+
     const monthlyPurchaseData = await db.all(
       'SELECT SUBSTR(invoice_date, 1, 7) as month, SUM(total_amount) as total FROM purchases WHERE invoice_date IS NOT NULL GROUP BY month ORDER BY month DESC LIMIT 6'
     );
@@ -641,6 +737,7 @@ export function registerIpcHandlers() {
       purchaseCount: (await db.get('SELECT COUNT(id) as count FROM purchases')).count,
       saleCount: (await db.get('SELECT COUNT(id) as count FROM sales')).count,
       companyCount: (await db.get('SELECT COUNT(id) as count FROM companies')).count,
+      myCompany: myCompany || null,
       profit: saleTotal - purchaseTotal,
       monthlyPurchase: monthlyPurchaseData.map(row => ({ month: row.month, total: row.total || 0 })),
       monthlySale: monthlySaleData.map(row => ({ month: row.month, total: row.total || 0 })),
@@ -1175,8 +1272,28 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:runEpr', async () => {
+    let originalWriteFileSync;
     try {
       console.log("Starting EPR scraper...");
+      
+      const memoryDataMap = {};
+      originalWriteFileSync = fs.writeFileSync;
+      fs.writeFileSync = (filePath, data, ...args) => {
+          if (typeof filePath === 'string' && filePath.endsWith('.json') && (filePath.includes('data') || filePath.includes('\\data\\'))) {
+              const filename = path.basename(filePath);
+              console.log(`\n--- [SCRAPED DATA] ${filename} ---`);
+              let parsed = data;
+              try {
+                  parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                  console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
+              } catch(e) {}
+              memoryDataMap[filename] = parsed;
+                originalWriteFileSync(filePath, data, ...args);
+          } else {
+              originalWriteFileSync(filePath, data, ...args);
+          }
+      };
+
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
       const context = await chromium.launchPersistentContext(userDataDir, { 
           headless: false,
@@ -1247,7 +1364,7 @@ export function registerIpcHandlers() {
       }
 
       const saveJson = (filename, data) => {
-          fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
+        fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
       };
 
       allData.dashboard = await extractEprDashboard(page);
@@ -1281,29 +1398,31 @@ export function registerIpcHandlers() {
       console.log("EPR Scraping completed successfully.");
       
       // Auto-sync JSONs to SQLite
-      await new Promise((resolve, reject) => {
-         const { exec } = require('child_process');
-         exec('node sync_to_sqlite.js', { cwd: path.join(__dirname, '..') }, (error, stdout, stderr) => {
-            if (error) {
-               console.error("Failed to sync to SQLite:", error);
-               reject(error);
-            } else {
-               console.log("Synced to SQLite:", stdout);
-               resolve();
-            }
-         });
-      });
+      try {
+          const syncPath = path.join(__dirname, '..', 'sync_to_sqlite.js');
+          const syncModule = await import('file://' + syncPath.replace(/\\/g, '/'));
+          if (syncModule.default) {
+              await syncModule.default(memoryDataMap);
+          }
+      } catch (err) {
+          console.error("Failed to sync to SQLite:", err);
+          throw err;
+      }
 
       return { success: true, data: allData };
     } catch (error) {
       console.error("Scraper failed:", error);
       return { success: false, error: error.message };
+    } finally {
+      if (originalWriteFileSync) {
+          fs.writeFileSync = originalWriteFileSync;
+      }
     }
   });
 
   // ─── SQLITE SCRAPER DATA ──────────────────────────────────────────────
   ipcMain.handle('scraper:getProfile', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return null;
     try {
       return await sdb.get('SELECT * FROM epr_profile LIMIT 1');
@@ -1320,7 +1439,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getDashboardCards', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return null;
     try {
       const row = await sdb.get('SELECT * FROM epr_dashboard LIMIT 1');
@@ -1337,7 +1456,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getPayments', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all('SELECT * FROM epr_payment');
@@ -1348,7 +1467,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getWallet', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all('SELECT * FROM wallet_wallet_potentials');
@@ -1358,7 +1477,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getWalletHistory', async () => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       const rows = await sdb.all('SELECT * FROM wallet_certificate_transaction');
@@ -1374,7 +1493,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getProcurement', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM procurement_details WHERE year = ?`, [year || 2025]);
@@ -1384,7 +1503,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getSales', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM sales_details WHERE year = ?`, [year || 2025]);
@@ -1394,7 +1513,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:getProduction', async (e, year) => {
-    const sdb = getSqliteDb();
+    const sdb = getDb();
     if (!sdb) return [];
     try {
       return await sdb.all(`SELECT * FROM production_details WHERE year = ?`, [year || 2025]);
@@ -1451,5 +1570,168 @@ export function registerIpcHandlers() {
       }
     } catch (e) { console.error("Error reading inventory.json", e); }
     return [];
+  });
+  // ─── LOCAL PRODUCTION (USER ENTRIES) ────────────────────────
+  ipcMain.handle('localProduction:getAll', async (_, filters) => {
+    const db = getDb();
+    let query = 'SELECT p.*, c.name as company_name FROM local_productions p LEFT JOIN companies c ON p.company_id = c.id WHERE 1=1';
+    const params = [];
+    if (filters?.company_id) { query += ' AND p.company_id=?'; params.push(filters.company_id); }
+    if (filters?.from_date) { query += ' AND p.from_date >= ?'; params.push(filters.from_date); }
+    if (filters?.to_date) { query += ' AND p.to_date <= ?'; params.push(filters.to_date); }
+    query += ' ORDER BY p.created_at DESC';
+    return await db.all(query, params);
+  });
+
+  ipcMain.handle('localProduction:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    const info = await db.run(
+      `INSERT INTO local_productions 
+      (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, conversion_factor, calorific_value, calorific_unit, plastic_percent, created_at) 
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        data.company_id || null, data.from_date || '', data.to_date || '',
+        data.clinker_production || 0, data.energy_percentage || 0,
+        data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+        data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
+        created_at
+      ]
+    );
+    return { id: info.lastID, ...data, created_at };
+  });
+
+  ipcMain.handle('localProduction:bulkAdd', async (_, rows) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    let inserted = 0;
+    
+    // Using a transaction for bulk insert
+    await db.run('BEGIN TRANSACTION');
+    try {
+      for (const data of rows) {
+        await db.run(
+          `INSERT INTO local_productions 
+          (company_id, from_date, to_date, clinker_production, energy_percentage, energy_contribution_mj, qualifying_feed_mt, cat_i, cat_ii, cat_iii, cat_iv, conversion_factor, calorific_value, calorific_unit, plastic_percent, created_at) 
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          [
+            data.company_id || null, data.from_date || '', data.to_date || '',
+            data.clinker_production || 0, data.energy_percentage || 0,
+            data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+            data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+            data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
+            created_at
+          ]
+        );
+        inserted++;
+      }
+      await db.run('COMMIT');
+      return { success: true, count: inserted };
+    } catch (e) {
+      await db.run('ROLLBACK');
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('localProduction:update', async (_, data) => {
+    const db = getDb();
+    await db.run(
+      `UPDATE local_productions SET 
+        company_id=?, from_date=?, to_date=?, clinker_production=?, energy_percentage=?, 
+        energy_contribution_mj=?, qualifying_feed_mt=?, cat_i=?, cat_ii=?, cat_iii=?, cat_iv=?,
+        conversion_factor=?, calorific_value=?, calorific_unit=?, plastic_percent=?
+      WHERE id=?`,
+      [
+        data.company_id || null, data.from_date || '', data.to_date || '',
+        data.clinker_production || 0, data.energy_percentage || 0,
+        data.energy_contribution_mj || 0, data.qualifying_feed_mt || 0,
+        data.cat_i || 0, data.cat_ii || 0, data.cat_iii || 0, data.cat_iv || 0,
+        data.conversion_factor || 0, data.calorific_value || 0, data.calorific_unit || 'KJ/Kg', data.plastic_percent || 0,
+        data.id
+      ]
+    );
+    return { success: true };
+  });
+
+  ipcMain.handle('localProduction:delete', async (_, id) => {
+    const db = getDb();
+    await db.run('DELETE FROM local_productions WHERE id=?', [id]);
+    return { success: true };
+  });
+
+  // Update qualifying_feed_mt for all production records matching a given month/year (by to_date)
+  ipcMain.handle('localProduction:updateQualifyingFeed', async (_, { month, year, qualifying_feed_mt }) => {
+    const db = getDb();
+    // Get all records and filter in JS (same logic as frontend)
+    const allRows = await db.all('SELECT id, to_date FROM local_productions');
+    let updated = 0;
+    for (const row of allRows) {
+      if (!row.to_date) continue;
+      const d = new Date(row.to_date);
+      if (d.getMonth() === month && d.getFullYear() === year) {
+        await db.run('UPDATE local_productions SET qualifying_feed_mt=? WHERE id=?', [qualifying_feed_mt, row.id]);
+        updated++;
+      }
+    }
+    return { success: true, updated };
+  });
+
+  // ─── CREDIT CALCULATIONS (SQLITE) ────────────────────────
+  ipcMain.handle('creditCalculations:getAll', async () => {
+    const db = getDb();
+    return await db.all('SELECT * FROM credit_calculations ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('creditCalculations:add', async (_, data) => {
+    const db = getDb();
+    try {
+      const info = await db.run(
+        `INSERT INTO credit_calculations 
+        (month, energy_contribution_percent, energy_consumption_mj, calorific_value_unit, calorific_value_input, calorific_value_kj, clinker_produced_tons, energy_contribution_mj, rdf_burnt_tons, plastic_percent, potential_tons) 
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.month, data.energy_contribution_percent, data.energy_consumption_mj,
+          data.calorific_value_unit, data.calorific_value_input, data.calorific_value_kj,
+          data.clinker_produced_tons, data.energy_contribution_mj, data.rdf_burnt_tons,
+          data.plastic_percent, data.potential_tons
+        ]
+      );
+      return { success: true, id: info.lastID };
+    } catch (e) {
+      if (e.message.includes('UNIQUE constraint failed')) {
+        return { success: false, error: 'Calculations for this month already exist.' };
+      }
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('creditCalculations:update', async (_, data) => {
+    const db = getDb();
+    try {
+      await db.run(
+        `UPDATE credit_calculations SET
+          month=?, energy_contribution_percent=?, energy_consumption_mj=?, calorific_value_unit=?, calorific_value_input=?, calorific_value_kj=?, clinker_produced_tons=?, energy_contribution_mj=?, rdf_burnt_tons=?, plastic_percent=?, potential_tons=?, updated_at=CURRENT_TIMESTAMP
+        WHERE id=?`,
+        [
+          data.month, data.energy_contribution_percent, data.energy_consumption_mj,
+          data.calorific_value_unit, data.calorific_value_input, data.calorific_value_kj,
+          data.clinker_produced_tons, data.energy_contribution_mj, data.rdf_burnt_tons,
+          data.plastic_percent, data.potential_tons, data.id
+        ]
+      );
+      return { success: true };
+    } catch (e) {
+      if (e.message.includes('UNIQUE constraint failed')) {
+        return { success: false, error: 'Calculations for this month already exist.' };
+      }
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('creditCalculations:delete', async (_, id) => {
+    const db = getDb();
+    await db.run('DELETE FROM credit_calculations WHERE id=?', [id]);
+    return { success: true };
   });
 }

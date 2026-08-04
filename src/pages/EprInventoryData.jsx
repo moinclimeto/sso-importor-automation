@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { Database, Eye, Filter, ChevronLeft, ChevronRight } from 'lucide-react';
+import { usePageHeader } from '../context/PageHeaderContext.jsx';
 
 export default function EprInventoryData() {
   const [records, setRecords] = useState([]);
@@ -13,38 +14,17 @@ export default function EprInventoryData() {
   }, [selectedYear]);
 
   const loadData = async () => {
+    if (!window.pwp || !window.pwp.eprData) {
+      setLoading(false);
+      return;
+    }
+    
     setLoading(true);
     try {
-      let data = [];
-      let debugMsg = "";
-      if (window.pwp && window.pwp.scraper && window.pwp.scraper.getInventory) {
-        data = await window.pwp.scraper.getInventory();
-        debugMsg = "Tried getInventory. Result length: " + (data ? data.length : 'null');
-      } else if (window.pwp && window.pwp.fs && window.pwp.fs.readFileBase64) {
-        const filePath = 'C:/Users/itcli/Documents/GitHub/PWP-Cement-Automation/data/inventory.json';
-        const fileContent = await window.pwp.fs.readFileBase64(filePath);
-        if (fileContent) {
-           const binaryString = atob(fileContent);
-           const bytes = new Uint8Array(binaryString.length);
-           for (let i = 0; i < binaryString.length; i++) {
-               bytes[i] = binaryString.charCodeAt(i);
-           }
-           const text = new TextDecoder('utf-8').decode(bytes);
-           data = JSON.parse(text);
-           debugMsg = "Tried readFileBase64. Success, parsed " + (data ? data.length : 0) + " items.";
-        } else {
-           debugMsg = "Tried readFileBase64 but it returned null for path: " + filePath;
-        }
-      }
-      
-      if (!data || data.length === 0) {
-        alert("Debug Info: " + debugMsg);
-      }
-      
+      const data = await window.pwp.eprData.getInventory();
       setRecords(data || []);
     } catch (e) {
       console.error("Failed to fetch EPR Inventory Data:", e);
-      alert("Error loading data: " + e.message);
     }
     setLoading(false);
   };
@@ -69,32 +49,39 @@ export default function EprInventoryData() {
   const totalPages = Math.ceil(filteredRecords.length / itemsPerPage);
   const currentRecords = filteredRecords.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
 
-  return (
-    <div className="space-y-3">
-      <div>
-        <p className="text-slate-500 text-sm">{filteredRecords.length} records scraped — Total Available Qty: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
-      </div>
+  const { setPageHeader, clearPageHeader } = usePageHeader();
 
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex flex-wrap gap-3 items-end">
-        <div className="flex items-center gap-2 text-slate-500 mr-2 mb-1">
-          <Filter size={16} />
-          <span className="text-sm font-medium">Filter by Year:</span>
+  useEffect(() => {
+    const id = setPageHeader({
+      title: 'EPR Inventory Data',
+      subtitle: 'Data synced from CPCB portal',
+      actions: (
+        <div className="flex items-center gap-4">
+          <div className="flex items-center gap-2">
+            <Filter size={16} className="text-slate-400" />
+            <select 
+              value={selectedYear} 
+              onChange={(e) => setSelectedYear(e.target.value)} 
+              className="h-9 px-3 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 min-w-[120px] bg-white text-slate-700"
+            >
+              <option value="">All Years</option>
+              <option value="2026">2026-27</option>
+              <option value="2025">2025-26</option>
+              <option value="2024">2024-25</option>
+              <option value="2023">2023-24</option>
+              <option value="2022">2022-23</option>
+              <option value="2021">2021-22</option>
+            </select>
+          </div>
+          <p className="text-slate-500 text-sm border-l border-slate-200 pl-4">{filteredRecords.length} records — Available: <span className="font-semibold text-teal-600">{totalQuantity.toFixed(2)} MT</span></p>
         </div>
-        <div>
-          <select 
-            value={selectedYear} 
-            onChange={(e) => setSelectedYear(e.target.value)} 
-            className="h-9 px-3 border border-slate-200 rounded-md text-sm focus:outline-none focus:ring-1 focus:ring-teal-500 min-w-[120px]"
-          >
-            <option value="">All Years</option>
-            <option value="2026">2026-27</option>
-            <option value="2025">2025-26</option>
-            <option value="2024">2024-25</option>
-            <option value="2023">2023-24</option>
-            <option value="2022">2022-23</option>
-          </select>
-        </div>
-      </div>
+      )
+    });
+    return () => clearPageHeader(id);
+  }, [selectedYear, filteredRecords.length, totalQuantity, setPageHeader, clearPageHeader]);
+
+  return (
+    <div className="space-y-4">
 
       {loading ? (
         <div className="flex justify-center py-20">
@@ -127,31 +114,31 @@ export default function EprInventoryData() {
                 {currentRecords.map((r, i) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
-                  <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['S.N'] || globalIndex}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['Production Date'] || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qualifying Feed(MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat I (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat II (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat III (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Qty of PW processed for Cat IV (MT)'] || '0'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
-                      {r['Production ID'] || 'N/A'}
-                    </td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {r['Available Quantity (MT)'] || '0'}
-                    </td>
-                  </tr>
+                    <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
+                      <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['s_n'] || r['S.N'] || globalIndex}</td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['production_date'] || r['Production Date'] || 'N/A'}</td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qualifying_feed_mt_'] || r['Qualifying Feed(MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_i__mt_'] || r['Qty of PW processed for Cat I (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_ii__mt_'] || r['Qty of PW processed for Cat II (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_iii__mt_'] || r['Qty of PW processed for Cat III (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['qty_of_pw_processed_for_cat_iv__mt_'] || r['Qty of PW processed for Cat IV (MT)'] || '0'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">
+                        {r['production_id'] || r['Production ID'] || 'N/A'}
+                      </td>
+                      <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
+                        {r['available_quantity_mt_'] || r['Available Quantity (MT)'] || '0'}
+                      </td>
+                    </tr>
                 )})}
               </tbody>
             </table>

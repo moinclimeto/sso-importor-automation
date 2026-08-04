@@ -29,6 +29,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
     getSales: () => ipcRenderer.invoke('eprData:getSales'),
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
+    getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
   },
 
   // Sales
@@ -42,6 +43,11 @@ contextBridge.exposeInMainWorld('pwp', {
   // Dashboard
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
+  },
+  // Settings
+  settings: {
+    get: (key) => ipcRenderer.invoke('settings:get', key),
+    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
   // OCR (Gemini + local QR)
   ocr: {

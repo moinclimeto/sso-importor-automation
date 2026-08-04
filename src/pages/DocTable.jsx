@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight,
+  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Edit2
 } from 'lucide-react';
 import {
   downloadExcelTemplate,
@@ -11,12 +11,15 @@ import {
   SALE_TABLE_COLUMNS,
   PURCHASE_TABLE_COLUMNS,
 } from '../utils/excelImport.js';
+
+import CpcbConfirmationModal from '../components/CpcbConfirmationModal.jsx';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import InvoiceDetailsModal, {
   ViewInvoiceButton,
 } from '../components/InvoiceDetailsModal.jsx';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
+import { Toast, useToast } from '../components/Toast.jsx';
 import * as XLSX from 'xlsx';
 
 
@@ -884,6 +887,7 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
     onToggleSelectAll,
     onMove,
     moveLabel,
+    onEdit,
   } = extras;
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds?.has(r.id));
   const someSelected = rows.some((r) => selectedIds?.has(r.id));
@@ -953,6 +957,16 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
                       title={moveLabel || 'Move'}
                     >
                       <ArrowLeftRight size={15} />
+                    </button>
+                  )}
+                  {onEdit && (
+                    <button
+                      type="button"
+                      onClick={() => onEdit(r)}
+                      className="p-1.5 rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600"
+                      title="Edit"
+                    >
+                      <Edit2 size={15} />
                     </button>
                   )}
                   <button
@@ -1131,6 +1145,7 @@ export default function DocTable() {
   const [selectedIds, setSelectedIds] = useState(() => new Set());
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
+  const [globalBankMissing, setGlobalBankMissing] = useState(false);
 
 
 
@@ -1142,7 +1157,7 @@ export default function DocTable() {
 
 
 
-  const [message, setMessage] = useState('');
+  const { toast, showToast, hideToast } = useToast();
 
 
 
@@ -1151,10 +1166,12 @@ export default function DocTable() {
 
 
   const [cpcbOpen, setCpcbOpen] = useState(false);
+  const [cpcbConfirmOpen, setCpcbConfirmOpen] = useState(false);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
   const excelMenuRef = useRef(null);
 
   const [addOpen, setAddOpen] = useState(false);
+  const [editRow, setEditRow] = useState(null);
 
 
 
@@ -1187,7 +1204,7 @@ export default function DocTable() {
       }
       
       groups[monthKey].rows.push(r);
-      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.available_quantity_mt || 0);
+      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
       const qtyKg = parseFloat(r.quantity_kg || 0);
       if (!isNaN(qtyMT)) groups[monthKey].totalQtyMT += qtyMT;
       if (!isNaN(qtyKg)) groups[monthKey].totalQtyKg += qtyKg;
@@ -1253,18 +1270,15 @@ export default function DocTable() {
 
 
       const data = isPurchase
-
-
-
         ? await api.purchases.getAll()
-
-
-
         : await api.sales.getAll();
-
-
-
       setRows(data || []);
+
+      if (!isPurchase) {
+        const globalBank = await window.pwp?.settings?.get('global_bank_details');
+        setGlobalBankMissing(!globalBank?.account_number || !globalBank?.ifsc_code);
+      }
+
 
 
 
@@ -1398,16 +1412,14 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
     downloadExcelTemplate(type);
 
 
-
-    setMessage(`${title} Excel template downloaded.`);
-
+    showToast(`${title} Excel template downloaded.`, 'success');
 
 
   };
@@ -1426,7 +1438,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1494,7 +1506,7 @@ export default function DocTable() {
 
 
 
-    setMessage('');
+    hideToast();
 
 
 
@@ -1525,9 +1537,7 @@ export default function DocTable() {
       }
 
 
-
-      setMessage(msg);
-
+      showToast(msg, 'success');
 
 
       await load();
@@ -1574,7 +1584,7 @@ export default function DocTable() {
   }, [excelMenuOpen]);
 
   useEffect(() => {
-    setPageHeader({
+    const id = setPageHeader({
       sectionTitle: title,
       onBack: () => navigate('/doc-processor'),
       uploadState: { type },
@@ -1678,7 +1688,7 @@ export default function DocTable() {
           </div>
           <button
             type="button"
-            onClick={() => setCpcbOpen(true)}
+            onClick={() => setCpcbConfirmOpen(true)}
             className="inline-flex items-center gap-2 rounded-lg border border-green-600 text-green-700 bg-white hover:bg-green-50 text-sm font-medium px-3 py-2 transition-colors"
           >
             <UploadCloud size={16} />
@@ -1687,8 +1697,8 @@ export default function DocTable() {
         </>
       ),
     });
-    return () => clearPageHeader();
-  }, [title, type, rows, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
+    return () => clearPageHeader(id);
+  }, [title, type, rows.length, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
 
   return (
     <div className="space-y-5 max-w-full">
@@ -1750,21 +1760,30 @@ export default function DocTable() {
         />
       </div>
 
-      {message && (
-        <div className="rounded-xl border border-green-200 bg-green-50 px-4 py-3 text-sm text-green-700">
-          {message}
-        </div>
-      )}
+      <Toast toast={toast} onClose={hideToast} />
+
 
       {error && (
-        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line">
+        <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 whitespace-pre-line mb-4">
           {error}
         </div>
       )}
 
+      {!isPurchase && rows.length > 0 && globalBankMissing && (
+        <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start justify-between gap-2 mb-4">
+          <div className="flex items-start gap-2">
+            <Globe size={18} className="text-amber-500 mt-0.5 shrink-0" />
+            <span>
+              <b>Disclaimer:</b> Global Bank Details (Account No / IFSC) for Sales are missing.
+            </span>
+          </div>
+          <button onClick={() => navigate('/cpcb-dashboard')} className="text-indigo-600 font-medium hover:underline shrink-0">
+            Add in Dashboard
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
-
-
 
         {loading ? (
 
@@ -1835,12 +1854,13 @@ export default function DocTable() {
 
           renderWideTable(rows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
+            onEdit: setEditRow,
 
 
 
             getValue: (r, col, _idx, value) => {
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
 
               if (col.key === 'supplier_name' && !value) return r.vendor_name;
 
@@ -1964,20 +1984,21 @@ export default function DocTable() {
 
           renderWideTable(rows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
             onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
+            onEdit: setEditRow,
 
 
 
             getValue: (r, col, idx, value) => {
 
-
-
               if (col.key === 's_no' && (value === undefined || value === '')) return idx + 1;
-
-
 
               if (col.key === 'entity_name' && !value) return r.customer_name;
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
+              if (col.key === 'product_type') {
+                const hsn = String(r.hsn_code || r.hsn || '').trim();
+                return hsn === '25231000' ? 'Clinker' : 'Cement';
+              }
 
               // Handle invoice_date for sales
 
@@ -1995,30 +2016,17 @@ export default function DocTable() {
 
 
 
+              if (col.key === 'recycled_plastic_percent') {
+                if (r.product_type === 'Clinker') return '100';
+                return '';
+              }
+
               if (
-
-
-
-                ['recycled_plastic_percent', 'conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) &&
-
-
-
+                ['conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) &&
                 value !== undefined &&
-
-
-
                 value !== ''
-
-
-
               ) {
-
-
-
                 return fmt(value);
-
-
-
               }
 
 
@@ -2046,6 +2054,18 @@ export default function DocTable() {
 
 
 
+
+      {cpcbConfirmOpen && (
+        <CpcbConfirmationModal
+          rows={rows}
+          type={type}
+          onClose={() => setCpcbConfirmOpen(false)}
+          onConfirm={() => {
+            setCpcbConfirmOpen(false);
+            setCpcbOpen(true);
+          }}
+        />
+      )}
 
       {cpcbOpen && (
 
@@ -2080,41 +2100,26 @@ export default function DocTable() {
 
 
       {addOpen && (
-
-
-
         <SingleRecordModal
-
-
-
           type={type}
-
-
-
           onClose={() => setAddOpen(false)}
-
-
-
           onSaved={() => {
-
-
-
-            setMessage(`${title} record added successfully.`);
-
-
-
+            showToast(`${title} record added successfully.`, 'success');
             load();
-
-
-
           }}
-
-
-
         />
+      )}
 
-
-
+      {editRow && (
+        <SingleRecordModal
+          type={type}
+          initialData={editRow}
+          onClose={() => setEditRow(null)}
+          onSaved={() => {
+            showToast(`${title} record updated successfully.`, 'success');
+            load();
+          }}
+        />
       )}
 
       {monthDetail && (
@@ -2143,6 +2148,7 @@ export default function DocTable() {
             <div className="p-0 overflow-y-auto flex-1">
               {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras({
                 onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename || r.invoice_file_name }),
+                onEdit: setEditRow,
               }))}
             </div>
           </div>

@@ -34,10 +34,16 @@ contextBridge.exposeInMainWorld('pwp', {
     update: (data) => ipcRenderer.invoke('sales:update', data),
     delete: (id) => ipcRenderer.invoke('sales:delete', id),
     getSummary: (filters) => ipcRenderer.invoke('sales:getSummary', filters),
+    applyBankDetailsToAll: (bankDetails) => ipcRenderer.invoke('sales:applyBankDetailsToAll', bankDetails),
   },
   // Dashboard
   dashboard: {
     getStats: () => ipcRenderer.invoke('dashboard:getStats'),
+  },
+  // Settings
+  settings: {
+    get: (key) => ipcRenderer.invoke('settings:get', key),
+    set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
   // OCR (Gemini)
   ocr: {
@@ -85,5 +91,23 @@ contextBridge.exposeInMainWorld('pwp', {
     getProcurement: () => ipcRenderer.invoke('eprData:getProcurement'),
     getSales: () => ipcRenderer.invoke('eprData:getSales'),
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
+    getInventory: () => ipcRenderer.invoke('eprData:getInventory'),
+    getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
+  },
+  // Local Production (User Entries)
+  localProduction: {
+    getAll: (filters) => ipcRenderer.invoke('localProduction:getAll', filters),
+    add: (data) => ipcRenderer.invoke('localProduction:add', data),
+    bulkAdd: (rows) => ipcRenderer.invoke('localProduction:bulkAdd', rows),
+    update: (data) => ipcRenderer.invoke('localProduction:update', data),
+    delete: (id) => ipcRenderer.invoke('localProduction:delete', id),
+    updateQualifyingFeed: (data) => ipcRenderer.invoke('localProduction:updateQualifyingFeed', data),
+  },
+  // Credit Calculations
+  creditCalculations: {
+    getAll: () => ipcRenderer.invoke('creditCalculations:getAll'),
+    add: (data) => ipcRenderer.invoke('creditCalculations:add', data),
+    update: (data) => ipcRenderer.invoke('creditCalculations:update', data),
+    delete: (id) => ipcRenderer.invoke('creditCalculations:delete', id),
   },
 });
