@@ -1,5 +1,6 @@
-import { useState, useEffect } from 'react';
-import { Eye, FileText, X } from 'lucide-react';
+import { useState, useEffect, useRef } from 'react';
+import { Eye, FileText, X, ArrowLeftRight } from 'lucide-react';
+import PdfViewer from './PdfViewer';
 
 
 
@@ -69,6 +70,43 @@ function getLineItems(invoice) {
 export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase', onClose }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loadingFile, setLoadingFile] = useState(false);
+
+  const [formWidth, setFormWidth] = useState(50);
+  const [pdfOnLeft, setPdfOnLeft] = useState(false);
+  const isResizing = useRef(false);
+
+  const startResize = (e) => {
+    e.preventDefault();
+    isResizing.current = true;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResize);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isResizing.current) return;
+    const modalElement = document.getElementById('view-record-modal-content');
+    if (!modalElement) return;
+    const rect = modalElement.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    let newWidthPct = (mouseX / rect.width) * 100;
+    if (pdfOnLeft) {
+      newWidthPct = 100 - newWidthPct;
+    }
+    setFormWidth(Math.max(25, Math.min(75, newWidthPct)));
+  };
+
+  const stopResize = () => {
+    isResizing.current = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResize);
+  };
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', stopResize);
+    };
+  }, [pdfOnLeft]);
 
   useEffect(() => {
     async function loadFile() {
@@ -156,9 +194,9 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
           </div>
         </div>
 
-        <div className={`flex-1 min-h-0 ${previewUrl ? 'flex flex-col lg:flex-row' : ''}`}>
+        <div className={`flex-1 min-h-0 ${previewUrl ? (pdfOnLeft ? 'flex flex-col lg:flex-row-reverse' : 'flex flex-col lg:flex-row') : ''}`} style={{ '--form-width': `${formWidth}%` }}>
           {/* Data Section */}
-          <div className={`px-5 py-4 overflow-y-auto ${previewUrl ? 'lg:w-[45%] border-b lg:border-b-0 lg:border-r border-slate-200' : 'flex-1'}`}>
+          <div className={`px-5 py-4 overflow-y-auto ${previewUrl ? 'lg:w-[var(--form-width)] border-b lg:border-b-0 lg:border-r border-slate-200' : 'flex-1'}`}>
             <dl className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 text-sm rounded-xl border border-slate-200 bg-slate-50/80 px-3 py-3 mb-4">
               <div>
                 <dt className="text-[11px] uppercase tracking-wide text-slate-400">File</dt>

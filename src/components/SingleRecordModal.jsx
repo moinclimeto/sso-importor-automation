@@ -1,7 +1,8 @@
-import { useEffect, useState } from 'react';
-import { X, Loader2, Plus } from 'lucide-react';
+import { useEffect, useState, useRef } from 'react';
+import { X, Loader2, Plus, ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport.js';
 import { getApi } from '../utils/pwpApi.js';
+import PdfViewer from './PdfViewer';
 
 const GST_OPTIONS = ['Yes', 'No'];
 
@@ -20,7 +21,7 @@ const todayIso = () => new Date().toISOString().slice(0, 10);
 const emptyPurchase = (buyerGst = '') => ({
   invoice_file: null,
   invoice_filename: '',
-  category_of_plastic: '',
+  category_of_plastic: 'Cat-II',
   supplier_name: '',
   address_line_1: '',
   address_line_2: '',
@@ -41,7 +42,7 @@ const emptyPurchase = (buyerGst = '') => ({
 
 const emptySale = () => ({
   s_no: '',
-  category_of_plastic: '',
+  category_of_plastic: 'Cat-II',
   process_code: '',
   plastic_type: '',
   product_type: '',
@@ -74,7 +75,7 @@ function Field({ label, required, hint, children, className = '' }) {
   );
 }
 
-export default function SingleRecordModal({ type, initialData, onClose, onSaved }) {
+export default function SingleRecordModal({ type, initialData, onClose, onSaved, hasNext, onSaveAndNext, hasPrev, onNext, onPrev }) {
   const isPurchase = type !== 'sale';
   const isEdit = Boolean(initialData?.id);
   const title = isPurchase 
@@ -87,6 +88,7 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
         return {
           ...emptyPurchase(),
           ...initialData,
+          category_of_plastic: 'Cat-II',
           invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
           invoice_number: initialData.invoice_number || initialData.invoice_no || '',
           supplier_name: initialData.supplier_name || initialData.vendor_name || '',
@@ -105,6 +107,109 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
+  const [lineItems, setLineItems] = useState(() => (initialData?.line_items || initialData?.lineItems || []));
+
+  // Sync form state when initialData changes (e.g., when navigating Next/Prev)
+  useEffect(() => {
+    if (initialData) {
+      if (isPurchase) {
+        setForm({
+          ...emptyPurchase(),
+          ...initialData,
+          invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
+          invoice_number: initialData.invoice_number || initialData.invoice_no || '',
+          supplier_name: initialData.supplier_name || initialData.vendor_name || '',
+          supplier_gst_number: initialData.supplier_gst_number || initialData.vendor_gstin || '',
+        });
+      } else {
+        setForm({
+          ...emptySale(),
+          ...initialData,
+        });
+      }
+      setError('');
+      setFieldErrors({});
+    }
+  }, [initialData, isPurchase]);
+
+  const [formWidth, setFormWidth] = useState(50);
+  const [pdfOnLeft, setPdfOnLeft] = useState(false);
+  const isResizing = useRef(false);
+
+  const startResize = (e) => {
+    e.preventDefault();
+    isResizing.current = true;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResize);
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isResizing.current) return;
+    const modalElement = document.getElementById('single-record-modal-content');
+    if (!modalElement) return;
+    const rect = modalElement.getBoundingClientRect();
+    const mouseX = e.clientX - rect.left;
+    let newWidthPct = (mouseX / rect.width) * 100;
+    if (pdfOnLeft) {
+      newWidthPct = 100 - newWidthPct;
+    }
+    setFormWidth(Math.max(25, Math.min(75, newWidthPct)));
+  };
+
+  const stopResize = () => {
+    isResizing.current = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResize);
+  };
+
+  useEffect(() => {
+    return () => {
+      document.removeEventListener('mousemove', handleMouseMove);
+      document.removeEventListener('mouseup', stopResize);
+    };
+  }, [pdfOnLeft]);
+
+  const [previewUrl, setPreviewUrl] = useState(null);
+  const [loadingFile, setLoadingFile] = useState(false);
+
+  useEffect(() => {
+    if (form.invoice_file instanceof File) {
+      const url = URL.createObjectURL(form.invoice_file);
+      setPreviewUrl(url);
+      return () => URL.revokeObjectURL(url);
+    } else if (isEdit && initialData) {
+      const getFile = async () => {
+        let filePath = initialData.filePath || initialData.local_pdf_path;
+        if (!filePath && initialData._source_fields) {
+           let sf = initialData._source_fields;
+           if (typeof sf === 'string') {
+              try { sf = JSON.parse(sf); } catch(e){}
+           }
+           filePath = sf?.local_pdf_path;
+        }
+        if (!filePath) return;
+        
+        setLoadingFile(true);
+        try {
+          const base64 = await window.pwp?.fs?.readFileBase64(filePath);
+          if (base64) {
+            const ext = filePath.split('.').pop().toLowerCase();
+            const mime = ext === 'pdf' ? 'application/pdf' : 
+                         ext === 'png' ? 'image/png' : 
+                         (ext === 'jpg' || ext === 'jpeg') ? 'image/jpeg' : 'application/pdf';
+            setPreviewUrl(`data:${mime};base64,${base64}`);
+          }
+        } catch(e) {
+          console.error('Failed to load file preview:', e);
+        } finally {
+          setLoadingFile(false);
+        }
+      };
+      getFile();
+    } else {
+      setPreviewUrl(null);
+    }
+  }, [form.invoice_file, isEdit, initialData]);
 
   useEffect(() => {
     if (!isPurchase || isEdit) return;
@@ -142,7 +247,7 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
   const errCls = (key) =>
     fieldErrors[key] ? 'input border-red-400 focus:ring-red-400' : 'input';
 
-  const handleSubmit = async (e) => {
+  const handleSubmit = async (e, isSaveAndNext = false) => {
     e.preventDefault();
     setError('');
     const fe = {};
@@ -213,7 +318,7 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
       };
 
       if (isEdit && initialData) {
-        payload.lineItems = initialData.line_items || initialData.lineItems;
+        payload.lineItems = lineItems;
         payload.extraction = initialData.extraction;
         payload._source_fields = initialData._source_fields;
         payload._routing = initialData._routing;
@@ -303,7 +408,7 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
 
   return (
     <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl max-h-[92vh] flex flex-col overflow-hidden">
+      <div id="single-record-modal-content" className="bg-white rounded-2xl shadow-2xl flex flex-col overflow-hidden w-[95vw] lg:w-[90vw] h-[95vh] lg:h-[90vh]">
         <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100 flex-shrink-0">
           <div className="flex items-center gap-2">
             <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-green-50 text-green-700">
@@ -316,17 +421,54 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
               )}
             </div>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            disabled={saving}
-            className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
-          >
+          <div className="flex items-center gap-2">
+            {isEdit && (
+              <div className="flex items-center bg-slate-50 border border-slate-200 rounded-lg mr-2">
+                <button
+                  type="button"
+                  onClick={onPrev}
+                  disabled={!hasPrev || saving}
+                  className="p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed rounded-l-lg transition-colors border-r border-slate-200"
+                  title="Previous Record"
+                >
+                  <ChevronLeft size={16} />
+                </button>
+                <button
+                  type="button"
+                  onClick={onNext}
+                  disabled={!hasNext || saving}
+                  className="p-1.5 text-slate-500 hover:bg-slate-100 disabled:opacity-30 disabled:cursor-not-allowed rounded-r-lg transition-colors"
+                  title="Next Record"
+                >
+                  <ChevronRight size={16} />
+                </button>
+              </div>
+            )}
+            {previewUrl && (
+              <button
+                type="button"
+                onClick={() => setPdfOnLeft(!pdfOnLeft)}
+                className="p-1.5 rounded-lg text-blue-600 hover:bg-blue-50 flex items-center gap-1 text-sm font-medium transition-colors"
+                title="Swap PDF Position"
+              >
+                <ArrowLeftRight size={16} />
+                <span className="hidden sm:inline">Swap Sides</span>
+              </button>
+            )}
+            <div className="w-px h-5 bg-slate-200 mx-1" />
+            <button
+              type="button"
+              onClick={onClose}
+              disabled={saving}
+              className="p-1.5 rounded-lg text-slate-400 hover:bg-slate-100 hover:text-slate-600"
+            >
             <X size={18} />
           </button>
+          </div>
         </div>
 
-        <form onSubmit={handleSubmit} className="overflow-y-auto flex-1 p-5 space-y-4">
+        <div className={`flex-1 min-h-0 flex flex-col ${pdfOnLeft ? 'lg:flex-row-reverse' : 'lg:flex-row'}`} style={{ '--form-width': `${formWidth}%` }}>
+        <form onSubmit={(e) => handleSubmit(e, false)} className={`overflow-y-auto p-5 space-y-4 ${previewUrl ? 'lg:w-[var(--form-width)]' : 'w-full'}`}>
           {error && (
             <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600">
               {error}
@@ -360,9 +502,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <Field label="Categories of Plastic" required>
                   <select
-                    className={errCls('category_of_plastic')}
-                    value={form.category_of_plastic}
-                    onChange={(e) => set('category_of_plastic', e.target.value)}
+                    className={errCls('category_of_plastic') + ' bg-slate-100 text-slate-600'}
+                    value={form.category_of_plastic || 'Cat-II'}
+                    disabled
                   >
                     <option value="">Select</option>
                     {PLASTIC_CATEGORIES.map((c) => (
@@ -566,7 +708,7 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <Field label="Category of Plastic" required>
-                <select className="input" value={form.category_of_plastic} onChange={(e) => set('category_of_plastic', e.target.value)}>
+                <select className="input bg-slate-100 text-slate-600" value={form.category_of_plastic || 'Cat-II'} disabled>
                   <option value="">Select Category</option>
                   {PLASTIC_CATEGORIES.map((c) => (
                     <option key={c} value={c}>
@@ -626,18 +768,47 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved 
           )}
         </form>
 
+        {previewUrl && (
+          <div
+            className="hidden lg:flex w-2 bg-slate-200 hover:bg-slate-300 cursor-col-resize items-center justify-center flex-shrink-0 relative z-10 transition-colors"
+            onMouseDown={startResize}
+            title="Drag to resize"
+          >
+            <div className="w-0.5 h-8 bg-slate-400 rounded-full" />
+          </div>
+        )}
+
+        <div className="flex-1 min-h-0 bg-slate-100/50 flex flex-col relative overflow-hidden border-t lg:border-t-0 lg:border-l border-slate-200">
+          {previewUrl ? (
+            <PdfViewer url={previewUrl} className="w-full h-full rounded-none" />
+          ) : (
+            <div className="w-full h-full rounded-none border-0 bg-white flex flex-col items-center justify-center text-slate-400">
+              {loadingFile ? (
+                <span>Loading invoice preview...</span>
+              ) : (
+                <>
+                  <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="mb-2 opacity-20"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/></svg>
+                  <span className="text-sm">No preview available</span>
+                  <span className="text-xs mt-1">The PDF file was not found on the local disk.</span>
+                </>
+              )}
+            </div>
+          )}
+        </div>
+        </div>
+
         <div className="px-5 py-4 border-t border-slate-100 flex justify-end gap-2 flex-shrink-0">
           <button type="button" onClick={onClose} disabled={saving} className="btn-secondary">
             Cancel
           </button>
           <button
             type="button"
-            onClick={handleSubmit}
+            onClick={(e) => handleSubmit(e, isEdit && hasNext)}
             disabled={saving}
             className="btn-primary inline-flex items-center gap-2"
           >
             {saving && <Loader2 size={16} className="animate-spin" />}
-            {isPurchase ? 'Preview / Save' : 'Save'}
+            {isEdit && hasNext ? 'Save & Next' : (isPurchase ? 'Preview / Save' : 'Save')}
           </button>
         </div>
       </div>

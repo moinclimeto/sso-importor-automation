@@ -2142,17 +2142,36 @@ export default function DocTable() {
         />
       )}
 
-      {editRow && (
-        <SingleRecordModal
-          type={type}
-          initialData={editRow}
-          onClose={() => setEditRow(null)}
-          onSaved={() => {
-            showToast(`${title} record updated successfully.`, 'success');
-            load();
-          }}
-        />
-      )}
+      {editRow && (() => {
+        const editIdx = filteredRows.findIndex(r => r.id === editRow.id);
+        const hasNext = editIdx >= 0 && editIdx < filteredRows.length - 1;
+        const hasPrev = editIdx > 0;
+        
+        return (
+          <SingleRecordModal
+            type={type}
+            initialData={editRow}
+            hasNext={hasNext}
+            hasPrev={hasPrev}
+            onNext={() => {
+              if (hasNext) setEditRow(filteredRows[editIdx + 1]);
+            }}
+            onPrev={() => {
+              if (hasPrev) setEditRow(filteredRows[editIdx - 1]);
+            }}
+            onClose={() => setEditRow(null)}
+            onSaveAndNext={() => {
+              if (hasNext) {
+                setEditRow(filteredRows[editIdx + 1]);
+              }
+            }}
+            onSaved={() => {
+              showToast(`${title} record updated successfully.`, 'success');
+              load();
+            }}
+          />
+        );
+      })()}
 
       {monthDetail && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6">
