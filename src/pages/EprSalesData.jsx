@@ -22,6 +22,10 @@ export default function EprSalesData() {
     setLoading(true);
     try {
       const data = await window.pwp.eprData.getSales();
+<<<<<<< Updated upstream
+=======
+      
+>>>>>>> Stashed changes
       const dummyData = Array.from({ length: 20 }).map((_, i) => ({
           "Sr. No.": String(i + 1),
           "Seller GST No": `23AAACP6224A${Math.floor(Math.random() * 900) + 100}Z4`,
@@ -40,6 +44,10 @@ export default function EprSalesData() {
           "Potential Generation Status": "Generated",
           "e-Invoice File": "View"
       }));
+<<<<<<< Updated upstream
+=======
+
+>>>>>>> Stashed changes
       setRecords(data && data.length > 0 ? data : dummyData);
     } catch (e) {
       console.error("Failed to fetch EPR Sales Data:", e);
@@ -129,19 +137,18 @@ export default function EprSalesData() {
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Address</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">District</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">State/Country</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Qty. (Tonnes)</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Qty. of Product Sold (Tonnes)</th>
                   <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Invoice Value</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Date of Sale</th>
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Invoice No</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-I Potential</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-II Potential</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-III Potential</th>
-                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">CAT-IV Potential</th>
-                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Status</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Potential Generated for CAT-I</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Potential Generated for CAT-II</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Potential Generated for CAT-III</th>
+                  <th className="px-4 py-3 text-right font-medium border-r border-teal-600 whitespace-nowrap">Total Potential Generated for CAT-IV</th>
+                  <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Potential Generation Status</th>
                 </tr>
               </thead>
-              <tbody>
-                {currentRecords.map((r, i) => {
+              <tbody>tb                {currentRecords.map((r, i) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
@@ -152,7 +159,7 @@ export default function EprSalesData() {
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['District'] || (r.entitydistrict === 357 ? 'Indore' : r.entitydistrict === 352 ? 'Dhar' : r.entitydistrict || 'N/A')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['State/Country'] || (r.entitystate === 23 ? 'Madhya Pradesh' : r.entitystate === 7 ? 'Delhi' : r.entitystate || 'N/A')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">{r['Total Qty. of Product Sold (Tonnes)'] || (r.productionid_qty?.toFixed(2) || '0.00')}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Invoice Value'] ? `₹${r['Total Invoice Value']}` : (r.amount ? `₹${new Intl.NumberFormat('en-IN').format(r.amount)}` : '0')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Invoice Value'] || (r.amount ? `₹${new Intl.NumberFormat('en-IN').format(r.amount)}` : '0')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">{r['Date of Sale'] || (r.dateofsale ? new Date(r.dateofsale).toLocaleDateString('en-IN') : 'N/A')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-blue-600">{r['Invoice No'] || r.invoicenumber || r.eprinvno || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right text-slate-700">{r['Total Potential Generated for CAT-I'] || '0'}</td>
