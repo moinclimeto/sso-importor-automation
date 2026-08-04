@@ -1217,7 +1217,7 @@ export default function DocTable() {
       }
       
       groups[monthKey].rows.push(r);
-      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.available_quantity_mt || 0);
+      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
       const qtyKg = parseFloat(r.quantity_kg || 0);
       if (!isNaN(qtyMT)) groups[monthKey].totalQtyMT += qtyMT;
       if (!isNaN(qtyKg)) groups[monthKey].totalQtyKg += qtyKg;
@@ -1597,7 +1597,7 @@ export default function DocTable() {
   }, [excelMenuOpen]);
 
   useEffect(() => {
-    setPageHeader({
+    const id = setPageHeader({
       sectionTitle: title,
       onBack: () => navigate('/doc-processor'),
       uploadState: { type },
@@ -1710,8 +1710,8 @@ export default function DocTable() {
         </>
       ),
     });
-    return () => clearPageHeader();
-  }, [title, type, rows, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
+    return () => clearPageHeader(id);
+  }, [title, type, rows.length, importing, excelMenuOpen, navigate, setPageHeader, clearPageHeader]);
 
   return (
     <div className="space-y-5 max-w-full">
@@ -1873,7 +1873,7 @@ export default function DocTable() {
 
             getValue: (r, col, _idx, value) => {
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
 
               if (col.key === 'supplier_name' && !value) return r.vendor_name;
 
@@ -2003,15 +2003,15 @@ export default function DocTable() {
 
             getValue: (r, col, idx, value) => {
 
-
-
               if (col.key === 's_no' && (value === undefined || value === '')) return idx + 1;
-
-
 
               if (col.key === 'entity_name' && !value) return r.customer_name;
 
-
+              if (col.key === 'category_of_plastic') return 'Cat-II';
+              if (col.key === 'product_type') {
+                const hsn = String(r.hsn_code || r.hsn || '').trim();
+                return hsn === '25231000' ? 'Clinker' : 'Cement';
+              }
 
               // Handle invoice_date for sales
 

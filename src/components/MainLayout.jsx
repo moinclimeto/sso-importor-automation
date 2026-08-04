@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
@@ -16,17 +16,19 @@ const navLinks = [
     label: 'Overview',
     subLinks: [
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
-      { to: '/companies', label: 'Company Profile' },
+
     ]
   },
   {
     icon: Database,
     label: 'EPR Data',
     subLinks: [
-      { to: '/epr-production', label: 'Production Data' },
+      // { to: '/production-entry', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
+      { to: '/credit-calculations', label: 'Credit Calculations' },
+      { to: '/epr-conversion-factor', label: 'Conversion Factor' },
     ]
   },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
@@ -40,6 +42,7 @@ const pageHeaders = {
   '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -55,6 +58,10 @@ const pageHeaders = {
     subtitle: 'Upload and track documents by category',
     showUpload: true,
   },
+  '/production-entry': {
+    title: 'Production Data',
+    subtitle: 'Manage production entries',
+  },
 };
 
 const NavItem = ({ item, sidebarOpen }) => {
@@ -67,7 +74,7 @@ const NavItem = ({ item, sidebarOpen }) => {
     location.pathname.startsWith('/doc-processor') ||
     location.pathname.startsWith('/doc-upload') ||
     location.pathname.startsWith('/doc-table');
-    
+
   const Icon = item.icon;
 
   if (item.subLinks) {
@@ -110,9 +117,9 @@ const NavItem = ({ item, sidebarOpen }) => {
         const active = isActive || (item.to === '/doc-processor' && isDocSection);
         return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
         ${active
-          ? 'bg-green-50 text-green-700'
-          : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
-        }`;
+            ? 'bg-green-50 text-green-700'
+            : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
+          }`;
       }}
     >
       {Icon && <Icon size={18} className="flex-shrink-0" />}
@@ -136,7 +143,18 @@ function MainLayoutInner() {
   const { pageHeader } = usePageHeader();
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [syncingEpr, setSyncingEpr] = useState(false);
+  const [myCompany, setMyCompany] = useState(null);
   const { toast, showToast, hideToast } = useToast();
+
+  useEffect(() => {
+    if (window.pwp?.companies) {
+      window.pwp.companies.getAll().then(companies => {
+        if (companies && companies.length > 0) {
+          setMyCompany(companies[0]);
+        }
+      });
+    }
+  }, []);
 
   const handleSyncEpr = async () => {
     setSyncingEpr(true);
@@ -145,10 +163,10 @@ function MainLayoutInner() {
       const api = getApi();
       const res = await api.scraper.runEpr();
       if (res.success) {
-         showToast('EPR Portal successfully synced!', 'success');
-         setTimeout(() => window.location.reload(), 1500);
+        showToast('EPR Portal successfully synced!', 'success');
+        setTimeout(() => window.location.reload(), 1500);
       } else {
-         showToast('EPR Sync failed: ' + res.error, 'error');
+        showToast('EPR Sync failed: ' + res.error, 'error');
       }
     } catch (err) {
       showToast('EPR Sync failed: ' + err.message, 'error');
@@ -237,9 +255,18 @@ function MainLayoutInner() {
               </div>
             )}
             <div className="min-w-0">
-              <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
-                {headerTitle}
-              </h1>
+              <div className="flex items-center gap-3">
+                <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
+                  {headerTitle}
+                </h1>
+                {myCompany && (
+                  <div className="hidden sm:inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-md">
+                    <Building2 size={14} className="text-indigo-600" />
+                    <span className="text-xs font-medium text-indigo-900">{myCompany.name}</span>
+                    <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full font-mono border border-indigo-200">GST: {myCompany.gstin}</span>
+                  </div>
+                )}
+              </div>
               {headerSubtitle && (
                 <p className="text-sm text-slate-500 mt-0.5 truncate">{headerSubtitle}</p>
               )}
@@ -285,7 +312,7 @@ function MainLayoutInner() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto p-6 relative">
+        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-4 relative">
           <Toast toast={toast} onClose={hideToast} />
           <Outlet />
         </div>

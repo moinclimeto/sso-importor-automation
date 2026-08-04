@@ -18,6 +18,28 @@ const { extractEprAnnualFiling } = require("./src/extractors/epr/annual_filing.e
 const { extractEprDashboard } = require("./src/extractors/epr/dashboard.extractor.cjs");
 const { extractEprPaymentHistory } = require("./src/extractors/epr/payment.extractor.cjs");
 
+const memoryDataMap = {}; // Global store for synced data
+const dataDir = path.join(__dirname, 'data');
+
+// 🔥 OVERRIDE fs.writeFileSync globally to intercept all extractor JSON saves!
+const originalWriteFileSync = fs.writeFileSync;
+fs.writeFileSync = (filePath, data, ...args) => {
+    if (typeof filePath === 'string' && filePath.endsWith('.json') && filePath.includes('data')) {
+        const filename = path.basename(filePath);
+        console.log(`\n--- [SCRAPED DATA INTERCEPTED] ${filename} ---`);
+        let parsed = data;
+        try {
+            parsed = typeof data === 'string' ? JSON.parse(data) : data;
+            console.log(JSON.stringify(parsed, null, 2).substring(0, 500) + '... (truncated for console view)');
+        } catch(e) {
+            console.log(data.substring(0, 500) + '...');
+        }
+        memoryDataMap[filename] = parsed;
+    } else {
+        originalWriteFileSync(filePath, data, ...args);
+    }
+};
+
 async function runScraper() {
     console.log("🚀 Starting Standalone EPR scraper...");
     
@@ -73,9 +95,36 @@ async function runScraper() {
             await selectUnitBtn.click();
             await page.waitForTimeout(1500);
 
-            console.log("🖱️ Clicking the specific unit card...");
+            console.log("🖱️ Extracting Company Profile from unit card...");
             const unitCard = page.locator('button.unit-card').first();
             await unitCard.waitFor({ state: 'visible', timeout: 5000 });
+            
+            try {
+                // Extract text from the unit card
+                const cardText = await unitCard.innerText();
+                // Find GST using Regex (15 alphanumeric characters)
+                const gstMatch = cardText.match(/\b\d{2}[A-Z]{5}\d{4}[A-Z]{1}[A-Z\d]{1}[Z]{1}[A-Z\d]{1}\b/i);
+                const gstin = gstMatch ? gstMatch[0].toUpperCase() : '';
+                
+                // Assuming the company name is usually the very first line of the card text before 'Unit ID'
+                const lines = cardText.split('\n').map(l => l.trim()).filter(l => l.length > 0);
+                const companyName = lines.length > 0 ? lines[0] : '';
+                
+                if (gstin && companyName) {
+                    const profileData = { company_name: companyName, gstin: gstin };
+                    console.log("✅ Scraped Company Profile:", profileData);
+                    
+                    const dataDir = path.join(__dirname, 'data');
+                    if (!fs.existsSync(dataDir)) {
+                        fs.mkdirSync(dataDir, { recursive: true });
+                    }
+                    fs.writeFileSync(path.join(dataDir, 'epr_profile.json'), JSON.stringify(profileData, null, 2));
+                }
+            } catch (extErr) {
+                console.log("⚠️ Could not extract profile from unit card:", extErr.message);
+            }
+
+            console.log("🖱️ Clicking the specific unit card...");
             await unitCard.click();
             await page.waitForTimeout(3000);
         } catch (e) {
@@ -88,12 +137,9 @@ async function runScraper() {
     }
 
     const allData = {};
-    const dataDir = path.join(__dirname, 'data');
-    if (!fs.existsSync(dataDir)) {
-        fs.mkdirSync(dataDir, { recursive: true });
-    }
 
     const saveJson = (filename, data) => {
+        // Will be intercepted by our global fs.writeFileSync override
         fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
     };
 
@@ -129,13 +175,12 @@ async function runScraper() {
     saveJson('scraped_data_latest.json', allData);
 
     console.log("✅ EPR Scraping completed successfully!");
-    console.log("📂 JSON files are saved in the 'data' directory.");
     
-    console.log("🔄 Auto-syncing JSON data to SQLite database...");
+    console.log("🚀 Auto-syncing JSON data to SQLite database...");
     try {
         const syncModule = await import('./sync_to_sqlite.js');
         if (syncModule.default) {
-            await syncModule.default();
+            await syncModule.default(memoryDataMap); // Pass in-memory data instead of reading from disk
         }
     } catch (e) {
         console.error("⚠️ Auto-sync to SQLite failed:", e.message);

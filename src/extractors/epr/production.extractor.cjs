@@ -191,6 +191,55 @@ async function extractEprProduction(page) {
 
         Object.assign(pageData, htmlData);
 
+        // --- EXTRACT CONVERSION FACTOR ---
+        console.log("🚀 Extracting Conversion Factor from Production Details...");
+        try {
+            // Click the 'Test Report & Conversion Factor' button
+            console.log("🖱️ Clicking 'Test Report & Conversion Factor' button...");
+            const uploadBtn = page.locator('button[title="Test Report & Conversion Factor"]').first();
+            await uploadBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {}); 
+            await uploadBtn.click();
+            await page.waitForTimeout(2000);
+
+            // Click the 'Conversion Factor' tab
+            console.log("🖱️ Clicking 'Conversion Factor' tab...");
+            const conversionFactorBtn = page.getByRole('button', { name: /Conversion Factor/i }).first();
+            await conversionFactorBtn.waitFor({ state: 'visible', timeout: 5000 });
+            await conversionFactorBtn.click();
+            await page.waitForTimeout(2000);
+
+            // Extract the table data
+            console.log("⏳ Extracting Conversion Factor table data...");
+            const conversionData = await page.evaluate(() => {
+                const results = [];
+                const table = document.querySelector('table');
+                if (!table) return results;
+
+                const rows = table.querySelectorAll('tbody tr');
+                rows.forEach(row => {
+                    const cells = row.querySelectorAll('td');
+                    if (cells.length >= 3) {
+                        const srNo = cells[0].innerText.trim();
+                        const convFactor = cells[1].innerText.trim();
+                        const lastUpdated = cells[2].innerText.trim();
+                        if (srNo && convFactor) {
+                            results.push({ sr_no: srNo, conversion_factor: convFactor, last_updated: lastUpdated });
+                        }
+                    }
+                });
+                return results;
+            });
+
+            console.log(`✅ Extracted ${conversionData.length} records for Conversion Factor.`);
+            // This will be intercepted by the global override
+            fs.writeFileSync(path.join(dataDir, 'conversion_factor.json'), JSON.stringify(conversionData, null, 2));
+            console.log(`📂 Saved data/conversion_factor.json`);
+            
+            pageData.conversionFactor = conversionData;
+        } catch (e) {
+            console.log("❌ Could not extract Conversion Factor:", e.message);
+        }
+
     } catch (error) {
         console.error("❌ Failed to extract EPR Production Data:", error.message);
     }

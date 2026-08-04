@@ -2,7 +2,9 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import LoginPage from '../pages/Login.jsx';
 import MainLayout from '../components/MainLayout.jsx';
-import Companies from '../pages/Companies.jsx';
+import Dashboard from '../pages/Dashboard.jsx';
+
+// import Companies from '../pages/Companies.jsx';
 import Purchases from '../pages/Purchases.jsx';
 import Sales from '../pages/Sales.jsx';
 import Summary from '../pages/Summary.jsx';
@@ -14,7 +16,10 @@ import EprSalesData from '../pages/EprSalesData.jsx';
 import EprProcurementData from '../pages/EprProcurementData.jsx';
 import EprProductionData from '../pages/EprProductionData.jsx';
 import EprInventoryData from '../pages/EprInventoryData.jsx';
+import EprConversionFactorData from '../pages/EprConversionFactorData.jsx';
 import CpcbDashboard from '../pages/CpcbDashboard.jsx';
+import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
+import CreditCalculations from '../pages/CreditCalculations.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -35,7 +40,8 @@ export default function AppRoutes() {
             </ProtectedRoute>
           }
         >
-          <Route path="companies" element={<Companies />} />
+          <Route path="dashboard" element={<Dashboard />} />
+          {/* <Route path="companies" element={<Companies />} /> */}
           <Route path="purchases" element={<Purchases />} />
           <Route path="sales" element={<Sales />} />
           <Route path="summary" element={<Summary />} />
@@ -44,10 +50,13 @@ export default function AppRoutes() {
           <Route path="epr-procurement" element={<EprProcurementData />} />
           <Route path="epr-production" element={<EprProductionData />} />
           <Route path="epr-inventory" element={<EprInventoryData />} />
+          <Route path="epr-conversion-factor" element={<EprConversionFactorData />} />
           <Route path="cpcb-dashboard" element={<CpcbDashboard />} />
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />
           <Route path="doc-table" element={<DocTable />} />
+          <Route path="production-entry" element={<ProductionEntryPage />} />
+          <Route path="credit-calculations" element={<CreditCalculations />} />
         </Route>
       </Routes>
     </BrowserRouter>

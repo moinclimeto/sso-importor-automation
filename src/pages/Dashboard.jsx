@@ -85,6 +85,13 @@ export default function Dashboard() {
         <div>
           <h1 className="text-2xl font-bold text-slate-800">Dashboard</h1>
           <p className="text-slate-500 text-sm">Overview of your purchase & sale activity</p>
+          {stats?.myCompany && (
+            <div className="mt-2 inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1.5 rounded-md">
+              <Building2 size={16} className="text-indigo-600" />
+              <span className="text-sm font-medium text-indigo-900">{stats.myCompany.name}</span>
+              <span className="text-xs text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full font-mono border border-indigo-200">GST: {stats.myCompany.gstin}</span>
+            </div>
+          )}
         </div>
         <button 
           onClick={async () => {
