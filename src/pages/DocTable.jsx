@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Edit2
+  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Edit2, Search, ChevronLeft, ChevronRight
 } from 'lucide-react';
 import {
   downloadExcelTemplate,
@@ -862,14 +862,94 @@ function CpcbUploadModal({ type, title, onClose }) {
 
 
 
+function PaginationBar({ currentPage, totalPages, totalRecords, pageSize, onPageChange, onPageSizeChange }) {
+  const startRecord = totalRecords === 0 ? 0 : (currentPage - 1) * pageSize + 1;
+  const endRecord = Math.min(currentPage * pageSize, totalRecords);
+
+  const pageSizeOptions = [10, 25, 100];
+
+  const getPageNumbers = () => {
+    const pages = [];
+    const delta = 2;
+    const left = Math.max(1, currentPage - delta);
+    const right = Math.min(totalPages, currentPage + delta);
+    if (left > 1) { pages.push(1); if (left > 2) pages.push('...'); }
+    for (let i = left; i <= right; i++) pages.push(i);
+    if (right < totalPages) { if (right < totalPages - 1) pages.push('...'); pages.push(totalPages); }
+    return pages;
+  };
+
+  return (
+    <div className="flex items-center justify-between px-4 py-2.5 border-t border-slate-100 bg-slate-50/50">
+      {/* Left: Rows per page dropdown */}
+      <div className="flex items-center gap-2">
+        <span className="text-xs text-slate-500">Rows per page:</span>
+        <select
+          value={pageSize}
+          onChange={(e) => onPageSizeChange(Number(e.target.value))}
+          className="h-7 pl-2 pr-6 rounded border border-slate-200 bg-white text-xs font-medium text-slate-700 appearance-none cursor-pointer focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-300 transition-all"
+          style={{ backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%2394a3b8'/%3E%3C/svg%3E")`, backgroundRepeat: 'no-repeat', backgroundPosition: 'right 6px center' }}
+        >
+          {pageSizeOptions.map((size) => (
+            <option key={size} value={size}>{size}</option>
+          ))}
+        </select>
+      </div>
+
+      {/* Right: Page nav + count */}
+      <div className="flex items-center gap-3">
+        <p className="text-xs text-slate-400">
+          <span className="font-medium text-slate-600">{startRecord}</span>
+          {' – '}
+          <span className="font-medium text-slate-600">{endRecord}</span>
+          {' of '}
+          <span className="font-medium text-slate-600">{totalRecords}</span>
+        </p>
+        <div className="flex items-center gap-0.5">
+          <button
+            type="button"
+            onClick={() => onPageChange(currentPage - 1)}
+            disabled={currentPage <= 1}
+            className="p-1 rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            aria-label="Previous page"
+          >
+            <ChevronLeft size={14} />
+          </button>
+          {getPageNumbers().map((pg, i) =>
+            pg === '...' ? (
+              <span key={`ellipsis-${i}`} className="px-1 text-xs text-slate-400">…</span>
+            ) : (
+              <button
+                key={pg}
+                type="button"
+                onClick={() => onPageChange(pg)}
+                className={`min-w-[26px] h-6 px-1 rounded text-xs font-medium transition-all ${
+                  pg === currentPage
+                    ? 'bg-slate-800 text-white shadow-sm'
+                    : 'text-slate-500 hover:bg-slate-200 hover:text-slate-700'
+                }`}
+              >
+                {pg}
+              </button>
+            )
+          )}
+          <button
+            type="button"
+            onClick={() => onPageChange(currentPage + 1)}
+            disabled={currentPage >= totalPages}
+            className="p-1 rounded text-slate-400 hover:bg-slate-200 hover:text-slate-700 disabled:opacity-30 disabled:cursor-not-allowed transition-all"
+            aria-label="Next page"
+          >
+            <ChevronRight size={14} />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function rowLineCount(r) {
-
-
-
   return Array.isArray(r?.line_items) ? r.line_items.length : 0;
-
-
-
 }
 
 
@@ -1186,10 +1266,18 @@ export default function DocTable() {
   const [addOpen, setAddOpen] = useState(false);
   const [editRow, setEditRow] = useState(null);
 
-
-
   const [detailRow, setDetailRow] = useState(null);
   
+  // Search & Pagination state
+  const [searchQuery, setSearchQuery] = useState('');
+  const [currentPage, setCurrentPage] = useState(1);
+  const [pageSize, setPageSize] = useState(25);
+
+  const handlePageSizeChange = (size) => {
+    setPageSize(size);
+    setCurrentPage(1);
+  };
+
   // Month-wise view state
   const [viewMode, setViewMode] = useState('row'); // 'row' | 'month'
   const [monthDetail, setMonthDetail] = useState(null); // stores the month group object when viewing month details
@@ -1225,6 +1313,39 @@ export default function DocTable() {
     
     return Object.values(groups).sort((a, b) => b.key.localeCompare(a.key));
   }, [rows]);
+
+  // Filtered rows based on search query
+  const filteredRows = useMemo(() => {
+    if (!searchQuery.trim()) return rows;
+    const q = searchQuery.trim().toLowerCase();
+    return rows.filter((r) => {
+      const supplierName = (r.supplier_name || r.vendor_name || r.entity_name || r.customer_name || '').toLowerCase();
+      const invoiceNo = (r.invoice_no || r.invoice_number || r.application_number || '').toLowerCase();
+      const invoiceDate = (r.invoice_date || r.procurement_date || '').toLowerCase();
+      const gstin = (r.supplier_gst_number || r.vendor_gstin || r.buyer_gst || r.customer_gstin || '').toLowerCase();
+      const itemName = (r.item_name || '').toLowerCase();
+      const state = (r.state || '').toLowerCase();
+      return (
+        supplierName.includes(q) ||
+        invoiceNo.includes(q) ||
+        invoiceDate.includes(q) ||
+        gstin.includes(q) ||
+        itemName.includes(q) ||
+        state.includes(q)
+      );
+    });
+  }, [rows, searchQuery]);
+
+  // Paginated rows
+  const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
+  const paginatedRows = useMemo(() => {
+    const safePage = Math.min(currentPage, totalPages);
+    const start = (safePage - 1) * pageSize;
+    return filteredRows.slice(start, start + pageSize);
+  }, [filteredRows, currentPage, totalPages, pageSize]);
+
+  // Reset to page 1 when search changes or type changes
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, type]);
 
   const handleDownloadMonthInvoices = async (monthGroup) => {
     if (!monthGroup || !monthGroup.rows.length) return;
@@ -1348,7 +1469,7 @@ export default function DocTable() {
   };
 
   const toggleSelectAll = (checked) => {
-    if (checked) setSelectedIds(new Set(rows.map((r) => r.id)));
+    if (checked) setSelectedIds(new Set(filteredRows.map((r) => r.id)));
     else setSelectedIds(new Set());
   };
 
@@ -1733,7 +1854,13 @@ export default function DocTable() {
               Month-wise
             </button>
           </div>
-          <p className="text-xs text-slate-500">{rows.length} records</p>
+          <p className="text-xs text-slate-500">
+            {searchQuery.trim() ? (
+              <>{filteredRows.length} of {rows.length} records</>
+            ) : (
+              <>{rows.length} records</>
+            )}
+          </p>
           {selectedIds.size > 0 && (
             <>
               <span className="h-4 w-px bg-slate-200" />
@@ -1764,6 +1891,30 @@ export default function DocTable() {
             </>
           )}
         </div>
+
+        {/* Search Bar - only visible in row-wise mode */}
+        {viewMode === 'row' && (
+          <div className="relative">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+            <input
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder={isPurchase ? 'Search supplier, invoice, GSTIN…' : 'Search customer, invoice, GSTIN…'}
+              className="pl-8 pr-8 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:border-slate-300 w-64 transition-all"
+            />
+            {searchQuery && (
+              <button
+                type="button"
+                onClick={() => setSearchQuery('')}
+                className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+        )}
+
         <input
           ref={fileRef}
           type="file"
@@ -1863,198 +2014,66 @@ export default function DocTable() {
           </div>
         ) : isPurchase ? (
 
-
-
-          renderWideTable(rows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
-            onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
-            onEdit: setEditRow,
-
-
-
-            getValue: (r, col, _idx, value) => {
-
-              if (col.key === 'category_of_plastic') return 'Cat-II';
-
-              if (col.key === 'supplier_name' && !value) return r.vendor_name;
-
-
-
-              if (col.key === 'invoice_number' && !value) return r.invoice_no;
-
-
-
-              // Explicitly handle date columns with fallbacks for purchases
-
-
-
-              if (col.key === 'invoice_date') {
-
-
-
-                return cell(r.invoice_date || r.procurement_date || r.date_of_entry || value);
-
-
-
-              }
-
-
-
-              if (col.key === 'procurement_date') {
-
-
-
-                return cell(r.procurement_date || r.invoice_date || value);
-
-
-
-              }
-
-
-
-              if (col.key === 'date_of_entry') {
-
-
-
-                return cell(r.date_of_entry || r.invoice_date || value);
-
-
-
-              }
-
-
-
-              if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin;
-
-
-
-              if (col.key === 'quantity_mt' && (value === undefined || value === '')) {
-
-
-
-                return r.quantity != null ? fmt(r.quantity) : value;
-
-
-
-              }
-
-
-
-              if (
-
-
-
-                (col.key === 'quantity_mt' || col.key === 'quantity_kg') &&
-
-
-
-                value !== undefined &&
-
-
-
-                value !== ''
-
-
-
-              ) {
-
-
-
-                return fmt(value);
-
-
-
-              }
-
-
-
-              if (col.key === 'quantity_kg' && (value === undefined || value === '') && r.quantity_mt) {
-
-
-
-                return fmt(Number(r.quantity_mt) * 1000);
-
-
-
-              }
-
-
-
-              return value;
-
-
-
-            },
-
-
-
-          }))
-
-
+          <>
+            {renderWideTable(paginatedRows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
+              onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
+              onEdit: setEditRow,
+              getValue: (r, col, _idx, value) => {
+                if (col.key === 'category_of_plastic') return 'Cat-II';
+                if (col.key === 'supplier_name' && !value) return r.vendor_name;
+                if (col.key === 'invoice_number' && !value) return r.invoice_no;
+                if (col.key === 'invoice_date') return cell(r.invoice_date || r.procurement_date || r.date_of_entry || value);
+                if (col.key === 'procurement_date') return cell(r.procurement_date || r.invoice_date || value);
+                if (col.key === 'date_of_entry') return cell(r.date_of_entry || r.invoice_date || value);
+                if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin;
+                if (col.key === 'quantity_mt' && (value === undefined || value === '')) return r.quantity != null ? fmt(r.quantity) : value;
+                if ((col.key === 'quantity_mt' || col.key === 'quantity_kg') && value !== undefined && value !== '') return fmt(value);
+                if (col.key === 'quantity_kg' && (value === undefined || value === '') && r.quantity_mt) return fmt(Number(r.quantity_mt) * 1000);
+                return value;
+              },
+            }))}
+            <PaginationBar
+              currentPage={Math.min(currentPage, totalPages)}
+              totalPages={totalPages}
+              totalRecords={filteredRows.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          </>
 
         ) : (
 
-
-
-          renderWideTable(rows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
-            onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
-            onEdit: setEditRow,
-
-
-
-            getValue: (r, col, idx, value) => {
-
-              if (col.key === 's_no' && (value === undefined || value === '')) return idx + 1;
-
-              if (col.key === 'entity_name' && !value) return r.customer_name;
-
-              if (col.key === 'category_of_plastic') return 'Cat-II';
-              if (col.key === 'product_type') {
-                const hsn = String(r.hsn_code || r.hsn || '').trim();
-                return hsn === '25231000' ? 'Clinker' : 'Cement';
-              }
-
-              // Handle invoice_date for sales
-
-
-
-              if (col.key === 'invoice_date') {
-
-
-
-                return cell(r.invoice_date || value);
-
-
-
-              }
-
-
-
-              if (col.key === 'recycled_plastic_percent') {
-                if (r.product_type === 'Clinker') return '100';
-                return '';
-              }
-
-              if (
-                ['conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) &&
-                value !== undefined &&
-                value !== ''
-              ) {
-                return fmt(value);
-              }
-
-
-
-              return value;
-
-
-
-            },
-
-
-
-          }))
-
-
+          <>
+            {renderWideTable(paginatedRows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
+              onView: (r) => setDetailRow({ data: r, fileName: r.invoice_file_name }),
+              onEdit: setEditRow,
+              getValue: (r, col, idx, value) => {
+                if (col.key === 's_no' && (value === undefined || value === '')) return (Math.min(currentPage, totalPages) - 1) * pageSize + idx + 1;
+                if (col.key === 'entity_name' && !value) return r.customer_name;
+                if (col.key === 'category_of_plastic') return 'Cat-II';
+                if (col.key === 'product_type') {
+                  const hsn = String(r.hsn_code || r.hsn || '').trim();
+                  return hsn === '25231000' ? 'Clinker' : 'Cement';
+                }
+                if (col.key === 'invoice_date') return cell(r.invoice_date || value);
+                if (col.key === 'recycled_plastic_percent') {
+                  if (r.product_type === 'Clinker') return '100';
+                  return '';
+                }
+                if (['conversion_factor', 'available_quantity_mt', 'quantity_sold_mt', 'gst_other_charges'].includes(col.key) && value !== undefined && value !== '') return fmt(value);
+                return value;
+              },
+            }))}
+            <PaginationBar
+              currentPage={Math.min(currentPage, totalPages)}
+              totalPages={totalPages}
+              totalRecords={filteredRows.length}
+              pageSize={pageSize}
+              onPageChange={setCurrentPage}
+              onPageSizeChange={handlePageSizeChange}
+            />
+          </>
 
         )}
 
