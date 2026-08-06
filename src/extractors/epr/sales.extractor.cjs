@@ -148,23 +148,32 @@ async function extractEprSales(page) {
                 // Visually change the year in the dropdown so the user can see it
                 try {
                     console.log(`🖱️ Attempting to visually select 'Year' in interval dropdown...`);
-                    const selects = page.locator('select.filter-select-input');
-                    const count = await selects.count();
-                    
-                    if (count > 0) {
-                        // The first select is the interval type (Day/Month/Year)
-                        await selects.first().selectOption('year');
-                        await page.waitForTimeout(1000);
+                    const intervalSelect = page.locator('select.filter-select-input').first();
+                    if (await intervalSelect.count() > 0) {
+                        await intervalSelect.selectOption('year');
+                        await page.waitForTimeout(2000); // Wait for DOM to update
                         
-                        // There are probably 2 more selects or date inputs now for 'From' and 'To'
-                        // Since we just need the API to trigger, we can try to select the year if they are selects
-                        const allSelects = page.locator('select');
-                        const totalSelects = await allSelects.count();
-                        if (totalSelects >= 3) {
-                            try { await allSelects.nth(1).selectOption(year); } catch (e) {}
-                            await page.waitForTimeout(500);
-                            try { await allSelects.nth(2).selectOption(year); } catch (e) {}
-                            await page.waitForTimeout(500);
+                        // There are 2 more selects for 'From' and 'To' year with class 'filter-year-select'
+                        const yearSelects = page.locator('select.filter-year-select');
+                        const countYearSelects = await yearSelects.count();
+                        console.log(`Dropdowns found with class 'filter-year-select': ${countYearSelects}`);
+                        
+                        if (countYearSelects >= 2) {
+                            try { await yearSelects.nth(0).selectOption(year); console.log('Set From year'); } catch (e) { console.log(e.message) }
+                            await page.waitForTimeout(1000);
+                            try { await yearSelects.nth(1).selectOption(year); console.log('Set To year'); } catch (e) { console.log(e.message) }
+                            await page.waitForTimeout(1000);
+                        } else {
+                            // Fallback if class isn't exactly as expected
+                            const allSelects = page.locator('select');
+                            const total = await allSelects.count();
+                            console.log(`Fallback: Total selects found: ${total}`);
+                            if (total >= 3) {
+                                try { await allSelects.nth(1).selectOption(year); console.log('Set From year (fallback)'); } catch (e) {}
+                                await page.waitForTimeout(1000);
+                                try { await allSelects.nth(2).selectOption(year); console.log('Set To year (fallback)'); } catch (e) {}
+                                await page.waitForTimeout(1000);
+                            }
                         }
                     }
                 } catch(e) {
@@ -175,64 +184,129 @@ async function extractEprSales(page) {
                 const fetchBtn = page.locator('button').filter({ hasText: /Fetch Data/i }).first();
                 await fetchBtn.waitFor({ state: 'visible', timeout: 5000 });
                 await fetchBtn.click({ force: true });
-                await page.waitForTimeout(3000);
+                
+                // Wait for any potential loaders to disappear and table to populate
+                await page.waitForTimeout(5000);
 
-                // Setup API listener BEFORE clicking the underlined data
-                const apiResponsePromise = page.waitForResponse(
-                    response => response.url().includes('salesList') && response.request().method() !== 'OPTIONS',
-                    { timeout: 15000 }
-                ).catch(() => null);
+                    // Click the table underlined data to trigger API
+                    console.log("🖱️ Clicking the underlined data in the table...");
+                    try {
+                    
+                    // The safest way to click the right number is to target the first row's first/second column that has a number
+                    // Often it's the very first cell in tbody
+                    const firstRowCells = page.locator('tbody tr, mat-row').first().locator('td, mat-cell');
+                    
+                    // We know 'Qty of Clinker Sold' is the first or second column. 
+                    // Let's just click the first one that has a number greater than 0
+                    let targetLink = null;
+                    const cellCount = await firstRowCells.count();
+                    for (let i = 0; i < cellCount; i++) {
+                        const cell = firstRowCells.nth(i);
+                        const text = await cell.innerText();
+                        if (/[1-9]/.test(text)) {
+                            targetLink = cell.locator('u, a, span').first();
+                            if (await targetLink.count() === 0) {
+                                targetLink = cell; // click the cell itself if no inner span/u
+                            }
+                            break;
+                        }
+                    }
 
-                // Click the table underlined data to trigger API
-                console.log("🖱️ Clicking the underlined data in the table...");
-                try {
-                    // Find the underlined number in the table (could be inside td, mat-cell, or just an a/u tag)
-                    const tableLink = page.locator('td u, td a, mat-cell u, mat-cell a, .mat-cell u, .mat-cell a, a, u, [style*="underline"], [class*="underline"]').filter({ hasText: /\d/ }).first();
-                    await tableLink.waitFor({ state: 'visible', timeout: 8000 });
-                    await tableLink.click({ force: true });
+                    if (!targetLink) {
+                        targetLink = page.locator('td, mat-cell').filter({ hasText: /[1-9]/ }).first();
+                    }
+
+                    await targetLink.waitFor({ state: 'visible', timeout: 8000 });
+                    const linkText = await targetLink.innerText();
+                    console.log(`🖱️ Clicking target with text: ${linkText}`);
+                    
+                    // Setup API listener BEFORE clicking the underlined data
+                    const apiResponsePromise = page.waitForResponse(
+                        response => response.url().includes('salesList') && response.request().method() !== 'OPTIONS',
+                        { timeout: 15000 }
+                    ).catch(() => null);
+
+                    await targetLink.click({ force: true });
 
                     // Wait for the API response
                     console.log("⏳ Waiting for API response (salesList)...");
                     const apiReq = await apiResponsePromise;
+
                     if (apiReq) {
-                        const urlObj = new URL(apiReq.url());
-                        const headers = apiReq.headers();
-                        const baseUrl = `${urlObj.origin}${urlObj.pathname}`;
+                        const requestUrl = apiReq.url();
+                        const headers = apiReq.request().headers();
+                        const method = apiReq.request().method();
+                        const postData = apiReq.request().postData();
                         
-                        // Extract all search parameters from the original request
-                        const searchParams = new URLSearchParams(urlObj.search);
-                        
-                        console.log(`✅ Caught salesList request. Fetching all pages...`);
+                        console.log(`✅ Caught salesList request. Method: ${method}, Fetching all pages...`);
 
                         // Fetch all pages in browser context
-                        const allSalesData = await page.evaluate(async ({ baseUrl, headers, searchParamsStr }) => {
+                        const allSalesData = await page.evaluate(async ({ requestUrl, headers, method, postData }) => {
                             let pageNum = 1;
                             let results = [];
                             
-                            // Reconstruct the search params
-                            const params = new URLSearchParams(searchParamsStr);
-                            
                             while (true) {
-                                // Update page parameter
-                                params.set('page', pageNum.toString());
-                                // Ensure limit is set, default to 10 if not present
-                                if (!params.has('limit')) params.set('limit', '10');
+                                let url = requestUrl;
+                                let fetchOptions = { headers, method };
                                 
-                                const url = `${baseUrl}?${params.toString()}`;
+                                if (method.toUpperCase() === 'POST') {
+                                    let body = {};
+                                    if (postData) {
+                                        try { body = JSON.parse(postData); } catch (e) { body = {}; }
+                                    }
+                                    body.page = pageNum;
+                                    if (!body.limit) body.limit = 10;
+                                    fetchOptions.body = JSON.stringify(body);
+                                } else {
+                                    const urlObj = new URL(requestUrl);
+                                    urlObj.searchParams.set('page', pageNum.toString());
+                                    if (!urlObj.searchParams.has('limit')) urlObj.searchParams.set('limit', '10');
+                                    url = urlObj.toString();
+                                }
+                                
                                 try {
-                                    const res = await fetch(url, { headers });
+                                    const res = await fetch(url, fetchOptions);
                                     if (!res.ok) break;
                                     const json = await res.json();
                                     
-                                    // Find the array in the response
-                                    const items = Array.isArray(json.data) ? json.data : 
-                                                  (json.data && Array.isArray(json.data.list)) ? json.data.list : 
-                                                  (json.data && Array.isArray(json.data.salesDetails)) ? json.data.salesDetails : [];
+                                    // Handle nested data structures
+                                    let items = [];
+                                    if (json.data && Array.isArray(json.data.data)) {
+                                        items = json.data.data;
+                                    } else if (Array.isArray(json.data)) {
+                                        items = json.data;
+                                    } else if (json.data && Array.isArray(json.data.list)) {
+                                        items = json.data.list;
+                                    } else if (json.data && Array.isArray(json.data.salesDetails)) {
+                                        items = json.data.salesDetails;
+                                    }
                                                   
                                     if (items.length === 0) break;
                                     
+                                    // Safety: If the API ignores pagination and returns the same data, break the loop
+                                    const itemsHash = JSON.stringify(items);
+                                    if (window.__lastItemsHash === itemsHash) {
+                                        console.log("API returned identical data for next page. Pagination likely not supported. Breaking loop.");
+                                        break;
+                                    }
+                                    window.__lastItemsHash = itemsHash;
+                                    
+                                    if (pageNum > 50) {
+                                        console.log("Hard limit of 50 pages reached. Breaking loop.");
+                                        break;
+                                    }
+                                    
                                     results.push(...items);
-                                    if (items.length < parseInt(params.get('limit'))) break; // Last page reached
+                                    
+                                    // Check limit to determine if it's the last page
+                                    let limit = 10;
+                                    if (method.toUpperCase() === 'POST' && fetchOptions.body) {
+                                        limit = JSON.parse(fetchOptions.body).limit || 10;
+                                    } else {
+                                        limit = parseInt(new URL(url).searchParams.get('limit')) || 10;
+                                    }
+                                    
+                                    if (items.length < limit) break; // Last page reached
                                     pageNum++;
                                 } catch (err) {
                                     console.error("Fetch error on page " + pageNum, err);
@@ -240,7 +314,7 @@ async function extractEprSales(page) {
                                 }
                             }
                             return results;
-                        }, { baseUrl, headers, searchParamsStr: searchParams.toString() });
+                        }, { requestUrl, headers, method, postData });
 
                         console.log(`✅ API Response aggregated for ${year}! Total records: ${allSalesData.length}`);
                         fs.writeFileSync(path.join(dataDir, `sales_${year}.json`), JSON.stringify(allSalesData, null, 2));

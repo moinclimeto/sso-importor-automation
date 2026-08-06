@@ -103,7 +103,7 @@ export default function ScrapedDashboard({ company, onBack }) {
   };
 
   const totalProc = procurement.reduce((sum, item) => sum + (Number(item.qty_plastic_waste_mt) || 0), 0);
-  const totalSale = sales.reduce((sum, item) => sum + (Number(item.productionid_qty) || 0), 0);
+  const totalSale = sales.reduce((sum, item) => sum + (Number(item.qtyClinkerSold) || 0), 0);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 w-full pb-10">

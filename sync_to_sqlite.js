@@ -38,16 +38,14 @@ async function createTableFromObject(db, tableName, sampleObj) {
         columns.push(`"${safeKey}" ${sqliteType}`);
     }
 
-    // Drop table if it exists so we can run this cleanly multiple times
-    await db.exec(`DROP TABLE IF EXISTS "${tableName}";`);
-    
-    const createQuery = `CREATE TABLE "${tableName}" (\n  ${columns.join(',\n  ')}\n);`;
+    // We no longer drop the table to prevent deleting existing data
+    const createQuery = `CREATE TABLE IF NOT EXISTS "${tableName}" (\n  ${columns.join(',\n  ')}\n);`;
     await db.exec(createQuery);
     createdTables.add(tableName);
     console.log(`[Schema] Table '${tableName}' created successfully!`);
 }
 
-async function insertData(db, tableName, dataArray) {
+async function insertData(db, tableName, dataArray, sourceFile) {
     if (!dataArray || dataArray.length === 0) return;
     
     console.log(`[Data] Inserting ${dataArray.length} rows into '${tableName}'...`);
@@ -74,6 +72,11 @@ async function insertData(db, tableName, dataArray) {
     await db.exec('BEGIN TRANSACTION;');
     
     try {
+        if (sourceFile) {
+            // Delete only records that came from this specific file to prevent duplicating data
+            await db.run(`DELETE FROM "${tableName}" WHERE file_source = ?`, sourceFile).catch(() => {});
+        }
+
         const stmt = await db.prepare(insertQuery);
         for (const obj of dataArray) {
             const rowValues = allKeys.map(key => {
@@ -216,14 +219,7 @@ async function syncToSqlite(memoryDataMap = null) {
             targetData = expandedSales;
         }
         
-        // Final pass: Flatten all nested objects into separate columns, and inject the year
-        if (['procurement_details', 'production_details', 'sales_details'].includes(tableName)) {
-            targetData = targetData.map(row => {
-                let flatRow = flattenObject(row);
-                if (dataYear) flatRow.year = dataYear;
-                return flatRow;
-            });
-        }
+        // Final pass: Left intentionally blank, files remain in their original schema
         // 4. Wallet APIs (e.g. wallet_certificate-transaction.json)
         else if (file.startsWith('wallet_') && file !== 'epr_wallet.json') {
             if (jsonData.data) {
@@ -324,6 +320,14 @@ async function syncToSqlite(memoryDataMap = null) {
                 targetData = jsonData;
             }
         }
+        // 5.8 New Application
+        else if (file === 'epr_new_application.json') {
+            let flattened = { ...jsonData.part_a, ...jsonData.part_b, ...jsonData.part_c };
+            if (Object.keys(flattened).length > 0) {
+                targetData = [flattened];
+                tableName = 'new_application';
+            }
+        }
         // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
         else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
             const headers = jsonData.tables[0][0].map(h => {
@@ -348,13 +352,21 @@ async function syncToSqlite(memoryDataMap = null) {
             continue;
         }
 
+        // Ensure every row has a file_source to allow precise deletion later
+        targetData = targetData.map(row => {
+            if (typeof row === 'object' && row !== null) {
+                return { file_source: file, ...row };
+            }
+            return row;
+        });
+
         const sampleObj = targetData[0];
         // Clean up the table name (remove dashes)
         tableName = tableName.replace(/-/g, '_');
 
         try {
             await createTableFromObject(db, tableName, sampleObj);
-            await insertData(db, tableName, targetData);
+            await insertData(db, tableName, targetData, file);
         } catch (err) {
             console.error(`❌ Failed processing table ${tableName}:`, err.message);
         }

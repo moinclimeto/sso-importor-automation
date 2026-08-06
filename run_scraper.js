@@ -17,6 +17,7 @@ const { extractEprWallet } = require("./src/extractors/epr/wallet.extractor.cjs"
 const { extractEprAnnualFiling } = require("./src/extractors/epr/annual_filing.extractor.cjs");
 const { extractEprDashboard } = require("./src/extractors/epr/dashboard.extractor.cjs");
 const { extractEprPaymentHistory } = require("./src/extractors/epr/payment.extractor.cjs");
+const { extractEprNewApplication } = require("./src/extractors/epr/new_application.extractor.cjs");
 
 const memoryDataMap = {}; // Global store for synced data
 const dataDir = path.join(__dirname, 'data');
@@ -47,7 +48,9 @@ async function runScraper() {
     const userDataDir = path.join(__dirname, 'playwright_session');
     const context = await chromium.launchPersistentContext(userDataDir, { 
         headless: false,
-        acceptDownloads: true 
+        acceptDownloads: true,
+        viewport: null,
+        args: ['--start-maximized']
     });
     
     // Playwright persistent context sometimes opens an empty tab first
@@ -171,6 +174,9 @@ async function runScraper() {
 
     allData.payment = await extractEprPaymentHistory(page);
     saveJson('epr_payment.json', allData.payment);
+
+    allData.newApplication = await extractEprNewApplication(page);
+    saveJson('epr_new_application.json', allData.newApplication);
 
     saveJson('scraped_data_latest.json', allData);
 

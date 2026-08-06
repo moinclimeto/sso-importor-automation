@@ -32,6 +32,8 @@ const { extractEprProduction } = require("../src/extractors/epr/production.extra
 const { extractEprSales } = require("../src/extractors/epr/sales.extractor.cjs");
 const { extractEprWallet } = require("../src/extractors/epr/wallet.extractor.cjs");
 const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.extractor.cjs");
+const { extractEprPaymentHistory } = require("../src/extractors/epr/payment.extractor.cjs");
+const { extractEprNewApplication } = require("../src/extractors/epr/new_application.extractor.cjs");
 
 export function registerIpcHandlers() {
   initDatabase(async (dbInstance) => {
@@ -1281,14 +1283,14 @@ export function registerIpcHandlers() {
       fs.writeFileSync = (filePath, data, ...args) => {
           if (typeof filePath === 'string' && filePath.endsWith('.json') && (filePath.includes('data') || filePath.includes('\\data\\'))) {
               const filename = path.basename(filePath);
-              console.log(`\n--- [SCRAPED DATA] ${filename} ---`);
+              console.log(`\n--- [SCRAPED DATA IN MEMORY] ${filename} ---`);
               let parsed = data;
               try {
-                  parsed = typeof data === 'string' ? JSON.parse(data) : data;
+                  parsed = JSON.parse(data);
                   console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
               } catch(e) {}
               memoryDataMap[filename] = parsed;
-                originalWriteFileSync(filePath, data, ...args);
+              // Skipping originalWriteFileSync to keep data exclusively in memory
           } else {
               originalWriteFileSync(filePath, data, ...args);
           }
@@ -1298,6 +1300,8 @@ export function registerIpcHandlers() {
       const context = await chromium.launchPersistentContext(userDataDir, { 
           headless: false,
           acceptDownloads: true,
+          viewport: null,
+          args: ['--start-maximized'],
           channel: 'chrome' // Use system Chrome to bypass AppLocker policies
       });
       const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
@@ -1364,7 +1368,8 @@ export function registerIpcHandlers() {
       }
 
       const saveJson = (filename, data) => {
-        fs.writeFileSync(path.join(dataDir, filename), JSON.stringify(data, null, 2));
+        // Keep data in memory, do not write to disk
+        memoryDataMap[filename] = data;
       };
 
       allData.dashboard = await extractEprDashboard(page);
@@ -1390,6 +1395,12 @@ export function registerIpcHandlers() {
 
       allData.annualFiling = await extractEprAnnualFiling(page);
       saveJson('epr_annual_filing.json', allData.annualFiling);
+
+      allData.payment = await extractEprPaymentHistory(page);
+      saveJson('epr_payment.json', allData.payment);
+
+      allData.newApplication = await extractEprNewApplication(page);
+      saveJson('epr_new_application.json', allData.newApplication);
 
       saveJson('scraped_data_latest.json', allData);
 
@@ -1496,7 +1507,7 @@ export function registerIpcHandlers() {
     const sdb = getDb();
     if (!sdb) return [];
     try {
-      return await sdb.all(`SELECT * FROM procurement_details WHERE year = ?`, [year || 2025]);
+      return await sdb.all(`SELECT * FROM procurement_details WHERE file_source LIKE ?`, [`%${year || 2025}%`]);
     } catch (err) {
       return [];
     }
@@ -1506,7 +1517,8 @@ export function registerIpcHandlers() {
     const sdb = getDb();
     if (!sdb) return [];
     try {
-      return await sdb.all(`SELECT * FROM sales_details WHERE year = ?`, [year || 2025]);
+      const rows = await sdb.all(`SELECT * FROM transactions WHERE transaction_type = 'sales' AND year = ?`, [String(year || 2025)]);
+        return rows.map(r => ({ ...r, ...(r.raw_data ? JSON.parse(r.raw_data) : {}) }));
     } catch (err) {
       return [];
     }
@@ -1516,7 +1528,8 @@ export function registerIpcHandlers() {
     const sdb = getDb();
     if (!sdb) return [];
     try {
-      return await sdb.all(`SELECT * FROM production_details WHERE year = ?`, [year || 2025]);
+      const rows = await sdb.all(`SELECT * FROM transactions WHERE transaction_type = 'production' AND year = ?`, [String(year || 2025)]);
+        return rows.map(r => ({ ...r, ...(r.raw_data ? JSON.parse(r.raw_data) : {}) }));
     } catch (err) {
       return [];
     }

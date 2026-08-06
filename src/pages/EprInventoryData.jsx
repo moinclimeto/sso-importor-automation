@@ -41,7 +41,23 @@ export default function EprInventoryData() {
 
   const filteredRecords = records.filter(r => {
     if (!selectedYear) return true;
-    return true; // Inventory data typically has its own date filter logic, simplified here for now
+
+    let dateYear = null;
+    if (r.production_date) {
+      const d = new Date(r.production_date);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        dateYear = m < 4 ? String(y - 1) : String(y);
+      }
+    }
+    
+    const fileSourceYear = r.file_source ? r.file_source.match(/\\d{4}/)?.[0] : null;
+
+    return String(r.source_year) === selectedYear || 
+           String(r.year) === selectedYear || 
+           fileSourceYear === selectedYear ||
+           dateYear === selectedYear;
   });
 
   const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r['Available Quantity (MT)']) || 0), 0);

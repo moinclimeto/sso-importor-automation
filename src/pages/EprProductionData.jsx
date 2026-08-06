@@ -41,7 +41,23 @@ export default function EprProductionData() {
 
   const filteredRecords = records.filter(r => {
     if (!selectedYear) return true;
-    return String(r.year) === selectedYear;
+    
+    let dateYear = null;
+    if (r.from_date) {
+      const d = new Date(r.from_date);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        dateYear = m < 4 ? String(y - 1) : String(y);
+      }
+    }
+    
+    const fileSourceYear = r.file_source ? r.file_source.match(/\\d{4}/)?.[0] : null;
+
+    return String(r.source_year) === selectedYear || 
+           String(r.year) === selectedYear || 
+           fileSourceYear === selectedYear ||
+           dateYear === selectedYear;
   });
 
   const totalQuantity = filteredRecords.reduce((s, r) => s + (Number(r.qty_of_clinker_produced__mt_) || 0), 0);

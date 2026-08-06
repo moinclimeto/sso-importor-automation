@@ -22,10 +22,7 @@ export default function EprSalesData() {
     setLoading(true);
     try {
       const data = await window.pwp.eprData.getSales();
-<<<<<<< Updated upstream
-=======
-      
->>>>>>> Stashed changes
+
       const dummyData = Array.from({ length: 20 }).map((_, i) => ({
           "Sr. No.": String(i + 1),
           "Seller GST No": `23AAACP6224A${Math.floor(Math.random() * 900) + 100}Z4`,
@@ -44,10 +41,7 @@ export default function EprSalesData() {
           "Potential Generation Status": "Generated",
           "e-Invoice File": "View"
       }));
-<<<<<<< Updated upstream
-=======
 
->>>>>>> Stashed changes
       setRecords(data && data.length > 0 ? data : dummyData);
     } catch (e) {
       console.error("Failed to fetch EPR Sales Data:", e);
@@ -61,7 +55,23 @@ export default function EprSalesData() {
 
   const filteredRecords = records.filter(r => {
     if (!selectedYear) return true;
-    return String(r.source_year) === selectedYear || String(r.year) === selectedYear;
+    
+    let dateYear = null;
+    if (r.dateofsale) {
+      const d = new Date(r.dateofsale);
+      if (!isNaN(d.getTime())) {
+        const y = d.getFullYear();
+        const m = d.getMonth() + 1;
+        dateYear = m < 4 ? String(y - 1) : String(y);
+      }
+    }
+    
+    const fileSourceYear = r.file_source ? r.file_source.match(/\\d{4}/)?.[0] : null;
+
+    return String(r.source_year) === selectedYear || 
+           String(r.year) === selectedYear || 
+           fileSourceYear === selectedYear ||
+           dateYear === selectedYear;
   });
 
   const totalQuantity = filteredRecords.reduce((s, r) => s + (parseFloat(r['Total Qty. of Product Sold (Tonnes)']) || parseFloat(r.productionid_qty) || 0), 0);
@@ -148,14 +158,14 @@ export default function EprSalesData() {
                   <th className="px-4 py-3 text-left font-medium border-r border-teal-600 whitespace-nowrap">Potential Generation Status</th>
                 </tr>
               </thead>
-              <tbody>tb                {currentRecords.map((r, i) => {
+              <tbody>{currentRecords.map((r, i) => {
                   const globalIndex = (currentPage - 1) * itemsPerPage + i + 1;
                   return (
                   <tr key={i} className="border-b border-slate-100 hover:bg-slate-50 transition-colors">
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-500 text-center">{r['Sr. No.'] || globalIndex}</td>
                     <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">{r['Seller GST No'] || r.sellergstno || 'N/A'}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800" title={r['Name of the Entity'] || r.entityname}>{r['Name of the Entity'] || (r.entityname ? r.entityname.replace(/^\d+-/, '') : 'N/A')}</td>
-                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600" title={r['Address'] || r.entityaddress}>{r['Address'] || r.entityaddress || 'N/A'}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 font-medium text-slate-800 max-w-[200px] truncate" title={r['Name of the Entity'] || r.entityname}>{r['Name of the Entity'] || (r.entityname ? r.entityname.replace(/^\d+-/, '') : 'N/A')}</td>
+                    <td className="px-4 py-3 border-r border-slate-100 text-slate-600 max-w-[250px] truncate" title={r['Address'] || r.entityaddress}>{r['Address'] || r.entityaddress || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['District'] || (r.entitydistrict === 357 ? 'Indore' : r.entitydistrict === 352 ? 'Dhar' : r.entitydistrict || 'N/A')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600">{r['State/Country'] || (r.entitystate === 23 ? 'Madhya Pradesh' : r.entitystate === 7 ? 'Delhi' : r.entitystate || 'N/A')}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">{r['Total Qty. of Product Sold (Tonnes)'] || (r.productionid_qty?.toFixed(2) || '0.00')}</td>
