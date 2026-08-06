@@ -16,6 +16,7 @@ import {
   MINIMAL_PDF,
 } from './cpcbProcurementBulk.js';
 import * as XLSX from 'xlsx';
+import { PDFDocument } from 'pdf-lib';
 import {
   runSalesBulkFill,
 } from './cpcbSalesBulk.js';
@@ -219,9 +220,9 @@ export function registerIpcHandlers() {
   });
 
   async function storeInvoicePdfLocally(data) {
-    if (!data._page || !data._page.sourceFileName) return data;
-    const source = data._page.sourceFileName;
-    if (!fs.existsSync(source)) return data;
+    if (!data._page) return data;
+    const source = data._page.sourceFilePath || data._page.sourceFileName;
+    if (!source || !fs.existsSync(source)) return data;
 
     const companyName = data.company_name || 'Unknown_Company';
     const invoiceDate = data.invoice_date || data.procurement_date || data.date_of_entry || new Date().toISOString().split('T')[0];
@@ -240,7 +241,23 @@ export function registerIpcHandlers() {
     const destPath = path.join(destDir, safeName);
 
     try {
-      fs.copyFileSync(source, destPath);
+      if (source.toLowerCase().endsWith('.pdf') && data._page.pageNumber) {
+        const pdfBytes = fs.readFileSync(source);
+        const sourceDoc = await PDFDocument.load(pdfBytes);
+        const newDoc = await PDFDocument.create();
+        const pageIndex = Math.max(0, data._page.pageNumber - 1);
+        
+        if (pageIndex < sourceDoc.getPageCount()) {
+          const [copiedPage] = await newDoc.copyPages(sourceDoc, [pageIndex]);
+          newDoc.addPage(copiedPage);
+          const singlePageBytes = await newDoc.save();
+          fs.writeFileSync(destPath, singlePageBytes);
+        } else {
+          fs.copyFileSync(source, destPath);
+        }
+      } else {
+        fs.copyFileSync(source, destPath);
+      }
       data.local_pdf_path = destPath;
     } catch (err) {
       console.error('Failed to copy PDF invoice locally:', err);

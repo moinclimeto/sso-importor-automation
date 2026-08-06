@@ -1362,7 +1362,7 @@ export default function DocTable() {
       
       const pdfFiles = monthGroup.rows.map(r => ({
         name: r.invoice_filename || r.invoice_file_name,
-        localPath: r.local_pdf_path
+        localPath: r.local_pdf_path || r._source_fields?.local_pdf_path
       })).filter(f => f.name);
 
       const res = await window.pwp.invoices.exportZip({
