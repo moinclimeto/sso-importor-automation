@@ -343,39 +343,35 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
       return;
     }
 
-    // Sale (unchanged structure)
-    if (!form.category_of_plastic) {
-      setError('Categories of Plastic is required.');
-      return;
-    }
-    if (!form.entity_name.trim()) return setError('Name of the Entity is required.');
+  
+    if (!(form.entity_name || '').trim()) return setError('Name of the Entity is required.');
 
     const sold = parseFloat(form.quantity_sold_mt) || 0;
     const payload = {
       company_id: null,
       record_type: 'sale_epr',
-      s_no: form.s_no.trim(),
+      s_no: (form.s_no || '').trim(),
       category_of_plastic: form.category_of_plastic,
-      process_code: form.process_code.trim(),
-      plastic_type: form.plastic_type.trim(),
-      product_type: form.product_type.trim(),
+      process_code: (form.process_code || '').trim(),
+      plastic_type: (form.plastic_type || '').trim(),
+      product_type: (form.product_type || '').trim(),
       recycled_plastic_percent: parseFloat(form.recycled_plastic_percent) || 0,
       conversion_factor: parseFloat(form.conversion_factor) || 0,
       available_quantity_mt: parseFloat(form.available_quantity_mt) || 0,
       quantity_sold_mt: sold,
-      registration_type: form.registration_type.trim(),
-      entity_name: form.entity_name.trim(),
-      address: form.address.trim(),
-      state: form.state.trim(),
-      district: form.district.trim(),
-      account_number: form.account_number.trim(),
-      ifsc_code: form.ifsc_code.trim().toUpperCase(),
+      registration_type: (form.registration_type || '').trim(),
+      entity_name: (form.entity_name || '').trim(),
+      address: (form.address || '').trim(),
+      state: (form.state || '').trim(),
+      district: (form.district || '').trim(),
+      account_number: (form.account_number || '').trim(),
+      ifsc_code: (form.ifsc_code || '').trim().toUpperCase(),
       gst_other_charges: parseFloat(form.gst_other_charges) || 0,
-      invoice_file_name: form.invoice_file_name.trim(),
-      application_number: form.application_number.trim(),
-      customer_name: form.entity_name.trim(),
-      invoice_no: form.application_number.trim() || form.invoice_file_name.trim(),
-      item_name: form.product_type.trim() || form.plastic_type.trim() || form.category_of_plastic,
+      invoice_file_name: (form.invoice_file_name || '').trim(),
+      application_number: (form.application_number || '').trim(),
+      customer_name: (form.entity_name || '').trim(),
+      invoice_no: (form.application_number || '').trim() || (form.invoice_file_name || '').trim(),
+      item_name: (form.product_type || '').trim() || (form.plastic_type || '').trim() || form.category_of_plastic,
       quantity: sold,
       unit: 'MT',
       total_amount: parseFloat(form.gst_other_charges) || 0,

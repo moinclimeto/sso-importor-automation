@@ -229,7 +229,7 @@ export default function DocUpload() {
   }, [files, pageJobs]);
 
   useEffect(() => {
-    window.pwp?.settings?.get('global_bank_details').then(setGlobalBankDetails);
+    window.pwp?.settings?.get?.('global_bank_details')?.then(setGlobalBankDetails);
     return () => {
       if (typeof unsubRef.current === 'function') unsubRef.current();
     };

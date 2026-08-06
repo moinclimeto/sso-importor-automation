@@ -20,7 +20,7 @@ export default function ScrapedDashboard({ company, onBack }) {
   const { toast, showToast, hideToast } = useToast();
 
   useEffect(() => {
-    window.pwp?.settings?.get('global_bank_details').then((data) => {
+    window.pwp?.settings?.get?.('global_bank_details')?.then((data) => {
       if (data) {
         setBankDetails(data);
       }
