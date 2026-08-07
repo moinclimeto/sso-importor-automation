@@ -96,6 +96,10 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
       if (!res?.success) {
         throw new Error(res?.error || 'Failed to prepare data');
       }
+      
+      // Artificial delay to prevent accidental double-clicks from immediately triggering Confirm
+      await new Promise(resolve => setTimeout(resolve, 800));
+      
       setPreparedData(res); // expecting { success: true, excelPath, zipPath }
     } catch (err) {
       setPrepareError(err.message || 'Something went wrong');
@@ -226,6 +230,7 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
         {/* Footer */}
         <div className="flex justify-end gap-3 px-6 py-4 border-t bg-slate-50 rounded-b-2xl">
           <button
+            type="button"
             onClick={onClose}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border rounded-lg hover:bg-slate-50 transition-colors"
           >
@@ -233,6 +238,7 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
           </button>
           {!preparedData ? (
             <button
+              type="button"
               onClick={handlePrepareData}
               disabled={isPreparing || !fromDate || !toDate}
               className="flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-indigo-600 rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
@@ -241,6 +247,7 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
             </button>
           ) : (
             <button
+              type="button"
               onClick={handleConfirm}
               className="flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition-colors"
             >

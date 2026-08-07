@@ -8,6 +8,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import fs from 'fs';
+import os from 'os';
 import {
   prepareDummyProcurementBulk,
   runProcurementBulkFill,
