@@ -329,36 +329,20 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
   );
 }
 
-
-
 export function ViewInvoiceButton({ onClick, disabled, title = 'View invoice details' }) {
-
   return (
-
     <button
-
       type="button"
-
       onClick={onClick}
-
       disabled={disabled}
-
       className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-2.5 py-1.5 text-xs font-medium text-slate-600 hover:text-green-700 hover:border-green-300 hover:bg-emerald-50 disabled:opacity-40 disabled:cursor-not-allowed"
-
       title={title}
-
       aria-label={title}
-
     >
-
       <Eye size={14} />
-
       View
-
     </button>
-
   );
-
 }
 
 

@@ -1195,8 +1195,22 @@ export function registerIpcHandlers() {
         return { success: false, error: 'Browser not open. Login first.' };
       }
 
+      if (payload.fromDate && payload.toDate) {
+        const from = new Date(payload.fromDate);
+        const to = new Date(payload.toDate);
+        const diffDays = Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        if (diffDays < 1 || diffDays > 31) {
+          return { success: false, error: 'Date range cannot exceed 31 days.' };
+        }
+      }
+
       sendLog('Preparing dummy procurement Excel + invoice ZIP…', 'info');
-      const files = prepareDummyProcurementBulk({
+      const files = (payload.excelPath && payload.zipPath) ? {
+        excelPath: payload.excelPath,
+        zipPath: payload.zipPath,
+        fromDate: payload.fromDate,
+        toDate: payload.toDate,
+      } : prepareDummyProcurementBulk({
         fromDate: payload.fromDate,
         toDate: payload.toDate,
       });
@@ -1251,6 +1265,15 @@ export function registerIpcHandlers() {
         return { success: false, error: 'Browser not open. Login first.' };
       }
 
+      if (payload.fromDate && payload.toDate) {
+        const from = new Date(payload.fromDate);
+        const to = new Date(payload.toDate);
+        const diffDays = Math.floor((to.getTime() - from.getTime()) / (1000 * 60 * 60 * 24)) + 1;
+        if (diffDays < 1 || diffDays > 31) {
+          return { success: false, error: 'Date range cannot exceed 31 days.' };
+        }
+      }
+
       sendLog('Step 1: Select Unit on /onboarding/, then Sales Bulk Entry…', 'info');
 
       const result = await runSalesBulkFill(cpcbPage, {
@@ -1260,6 +1283,12 @@ export function registerIpcHandlers() {
         salesType: payload.salesType || 'domestic',
         fromDate: payload.fromDate,
         toDate: payload.toDate,
+        files: (payload.excelPath && payload.zipPath) ? {
+          excelPath: payload.excelPath,
+          zipPath: payload.zipPath,
+          fromDate: payload.fromDate,
+          toDate: payload.toDate
+        } : undefined,
       });
 
       const prepared = result.prepared;
@@ -1285,6 +1314,104 @@ export function registerIpcHandlers() {
       };
     } finally {
       cpcbKeepAliveBusy = false;
+    }
+  });
+
+  ipcMain.handle('scraper:prepareCpcbData', async (event, payload = {}) => {
+    try {
+      const { rows = [], type = 'sale', fromDate, toDate } = payload;
+      if (!rows.length) throw new Error('No rows provided for data preparation.');
+      
+      if (fromDate && toDate) {
+        const from = new Date(fromDate);
+        const to = new Date(toDate);
+        const diffTime = to.getTime() - from.getTime();
+        const diffDays = Math.floor(diffTime / (1000 * 60 * 60 * 24)) + 1;
+        if (diffDays < 1 || diffDays > 31) {
+          throw new Error('Date range cannot exceed 31 days. Please correct your dates.');
+        }
+      }
+      
+      const isPurchase = type !== 'sale';
+      const outDir = path.join(os.tmpdir(), `pwp-cpcb-${type}-bulk-${Date.now()}`);
+      fs.mkdirSync(outDir, { recursive: true });
+
+      const mappedRows = [];
+      const uniquePdfs = new Set();
+      
+      rows.forEach((row, index) => {
+        let pdfName = row.invoice_filename || row.invoice_file_name || row.invoice_number;
+        if (!pdfName) {
+          pdfName = `dummy_${type}_invoice_${index + 1}.pdf`;
+        } else if (!pdfName.toLowerCase().endsWith('.pdf')) {
+          pdfName += '.pdf';
+        }
+        uniquePdfs.add(pdfName);
+
+        if (isPurchase) {
+          mappedRows.push({
+            'Categories of Plastic': row.category_of_plastic || 'Cat-I',
+            'Name of Supplier': row.supplier_name || row.name_of_supplier || 'Supplier',
+            'Address Line 1': row.address_line_1 || 'Address',
+            'Address Line 2': row.address_line_2 || '',
+            'State': row.state || 'Haryana',
+            'City': row.city || 'Gurugram',
+            'PIN Code': row.pin_code || '122001',
+            'Buyer GST': row.buyer_gst || '',
+            'Supplier GST': row.supplier_gst_number || row.supplier_gst || '',
+            'HSN Code': row.hsn_code || '3915',
+            'Invoice No./GST E-Invoice Number': row.invoice_number || `INV-${index+1}`,
+            'Invoice Date': row.invoice_date || fromDate,
+            'Qty. of Waste Plastic (MT)': parseFloat(row.quantity_mt || row.qty_of_waste_plastic_mt) || 0,
+            'Qty. of Waste Plastic (Kg)': parseFloat(row.quantity_kg || row.qty_of_waste_plastic_kg) || ((parseFloat(row.quantity_mt || row.qty_of_waste_plastic_mt) || 0) * 1000) || 0,
+            'Date of Entry': row.date_of_entry || toDate,
+            'Procurement date': row.procurement_date || fromDate,
+            'Invoice Filename': pdfName,
+          });
+        } else {
+          mappedRows.push({
+            'Category of Plastic': row.category_of_plastic || 'Cat-III',
+            'Product Type': row.product_type || 'Others',
+            '(%) of Recycled Plastic in Product': parseFloat(row.percent_recycled) || 100,
+            'Quantity Sold (MT)': parseFloat(row.quantity_sold_mt || row.quantity_mt) || 0,
+            'Name of the Entity': row.entity_name || row.buyer_name || 'Buyer',
+            'Address': row.address || 'Address',
+            'State': row.state || 'Madhya Pradesh',
+            'District': row.district || 'Dhar',
+            'Account Number': row.account_number || '1234567890',
+            'IFSC Code': row.ifsc_code || 'SBIN0001234',
+            'GST & Other Charges': parseFloat(row.gst_and_other_charges) || 0,
+            'Invoice File Name': pdfName,
+          });
+        }
+      });
+
+      const headers = Object.keys(mappedRows[0]);
+      const wb = XLSX.utils.book_new();
+      const ws = XLSX.utils.json_to_sheet(mappedRows, { header: headers });
+      XLSX.utils.book_append_sheet(wb, ws, isPurchase ? 'Procurement' : 'DomesticSales');
+      
+      const excelName = `${type}_bulk_${Date.now()}.xlsx`;
+      const excelPath = path.join(outDir, excelName);
+      XLSX.writeFile(wb, excelPath);
+
+      // Create ZIP with minimal PDFs
+      const { createZipStore, MINIMAL_PDF } = require('./cpcbProcurementBulk.js');
+      const zipName = `${type}_invoices_${Date.now()}.zip`;
+      const zipPath = path.join(outDir, zipName);
+      const filesToAdd = Array.from(uniquePdfs).map(name => ({ name, data: MINIMAL_PDF }));
+      fs.writeFileSync(zipPath, createZipStore(filesToAdd));
+
+      return {
+        success: true,
+        excelPath,
+        zipPath,
+        fromDate,
+        toDate,
+      };
+    } catch (error) {
+      console.error('prepareCpcbData failed:', error);
+      return { success: false, error: error.message };
     }
   });
 

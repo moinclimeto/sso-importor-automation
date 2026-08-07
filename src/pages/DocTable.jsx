@@ -34,7 +34,7 @@ const cell = (v) => (v === null || v === undefined || v === '' ? '—' : v);
 
 
 
-function CpcbUploadModal({ type, title, onClose }) {
+function CpcbUploadModal({ type, title, onClose, uploadData }) {
 
   const [phase, setPhase] = useState('idle'); // idle | opening | waitingLogin | filling | ready | error
 
@@ -198,7 +198,7 @@ function CpcbUploadModal({ type, title, onClose }) {
 
       addLog('Starting Sales Bulk Entry automation…', 'info');
 
-      const fillRes = await window.pwp.scraper.fillSalesBulk({});
+      const fillRes = await window.pwp.scraper.fillSalesBulk(uploadData || {});
 
       if (!fillRes?.success) {
 
@@ -210,7 +210,7 @@ function CpcbUploadModal({ type, title, onClose }) {
 
       }
 
-      addLog('Sales Bulk Entry filled with dummy Excel + ZIP (Preview not clicked).', 'success');
+      addLog('Sales Bulk Entry filled with prepared Excel + ZIP (Preview not clicked).', 'success');
 
       if (fillRes.excelPath) addLog(`Excel: ${fillRes.excelPath}`, 'info');
 
@@ -238,7 +238,7 @@ function CpcbUploadModal({ type, title, onClose }) {
 
     addLog('Starting Procurement Bulk Entry automation…', 'info');
 
-    const fillRes = await window.pwp.scraper.fillProcurementBulk({});
+    const fillRes = await window.pwp.scraper.fillProcurementBulk(uploadData || {});
 
     if (!fillRes?.success) {
 
@@ -1260,6 +1260,7 @@ export default function DocTable() {
 
   const [cpcbOpen, setCpcbOpen] = useState(false);
   const [cpcbConfirmOpen, setCpcbConfirmOpen] = useState(false);
+  const [cpcbUploadData, setCpcbUploadData] = useState(null);
   const [excelMenuOpen, setExcelMenuOpen] = useState(false);
   const excelMenuRef = useRef(null);
 
@@ -2092,7 +2093,8 @@ export default function DocTable() {
           rows={rows}
           type={type}
           onClose={() => setCpcbConfirmOpen(false)}
-          onConfirm={() => {
+          onConfirm={(data) => {
+            setCpcbUploadData(data);
             setCpcbConfirmOpen(false);
             setCpcbOpen(true);
           }}
@@ -2100,14 +2102,9 @@ export default function DocTable() {
       )}
 
       {cpcbOpen && (
-
-
-
         <CpcbUploadModal
-
-
-
           type={type}
+          uploadData={cpcbUploadData}
 
 
 
