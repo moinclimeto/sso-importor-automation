@@ -35,24 +35,19 @@ export function prepareDummySalesBulk(options = {}) {
 
   const row = {
     'S-No.': 1,
-    'Category of Plastic': 'Cat-III',
-    'Process Code': 'R6',
-    'Plastic Type': 'MLP',
-    'Product Type': 'Others',
-    '(%) of Recycled Plastic in Product': 100,
-    'Conversion Factor': 0.93,
+    'Production ID': 'PROD-DUMMY-001',
     'Available Quantity (MT)': 10,
-    'Quantity Sold (MT)': 1,
-    'Registration type': 'PWM',
-    'Name of the Entity': 'Dummy Buyer Pvt Ltd',
-    Address: 'Plot 1, Industrial Area',
-    State: 'Madhya Pradesh',
-    District: 'Dhar',
+    'Qty of Material Sold (MT)': 1,
+    'Product Type': 'Others',
+    '% of Clinker': 0,
+    'Entity Name': 'Dummy Buyer Pvt Ltd',
+    'Address': 'Plot 1, Industrial Area',
+    'State': 'Madhya Pradesh',
+    'District': 'Dhar',
     'Account Number': '1234567890',
     'IFSC Code': 'SBIN0001234',
-    'GST & Other Charges': 1000,
-    'Invoice File Name': invoiceFileName,
-    'Application Number': 'APP-DUMMY-001',
+    'GST & Other Charges (₹)': 1000,
+    'Invoice File Name\n(Shall exactly match the name of pdf uploaded in ZIP folder)': invoiceFileName,
   };
 
   const headers = Object.keys(row);
@@ -122,7 +117,7 @@ export async function runSalesBulkFill(page, { onLog, files, unitId, unitName, s
 
   // 3) Same page → Operations → Sales Details → View → Bulk Entry (no URL goto)
   log('Opening Sales via Operations View…', 'info');
-  await openModuleViaOperationsView(page, 'Sales Details', { onLog });
+  await openModuleViaOperationsView(page, ['Sales Details', 'Cement Co-Processing', 'Cement Co-processing'], { onLog });
 
   log('Filling From Date…', 'info');
   await setBulkDate(page, 'From Date', prepared.fromDate);

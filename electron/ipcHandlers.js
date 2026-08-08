@@ -1361,38 +1361,35 @@ export function registerIpcHandlers() {
 
         if (isPurchase) {
           mappedRows.push({
-            'Categories of Plastic': row.category_of_plastic || 'Cat-I',
             'Name of Supplier': row.supplier_name || row.name_of_supplier || 'Supplier',
             'Address Line 1': row.address_line_1 || 'Address',
             'Address Line 2': row.address_line_2 || '',
             'State': row.state || 'Haryana',
             'City': row.city || 'Gurugram',
-            'PIN Code': row.pin_code || '122001',
-            'Buyer GST': row.buyer_gst || '',
-            'Supplier GST': row.supplier_gst_number || row.supplier_gst || '',
+            'Pincode': row.pin_code || '122001',
+            'Supplier GST Number': row.supplier_gst_number || row.supplier_gst || '',
+            'Invoice Number': row.invoice_number || row.invoice_no || `INV-${index+1}`,
+            'Quantity (MT)': parseFloat(row.quantity_mt || row.qty_of_waste_plastic_mt) || 0,
+            'Procurement Date': row.procurement_date || row.invoice_date || fromDate,
             'HSN Code': row.hsn_code || '3915',
-            'Invoice No./GST E-Invoice Number': row.invoice_number || `INV-${index+1}`,
-            'Invoice Date': row.invoice_date || fromDate,
-            'Qty. of Waste Plastic (MT)': parseFloat(row.quantity_mt || row.qty_of_waste_plastic_mt) || 0,
-            'Qty. of Waste Plastic (Kg)': parseFloat(row.quantity_kg || row.qty_of_waste_plastic_kg) || ((parseFloat(row.quantity_mt || row.qty_of_waste_plastic_mt) || 0) * 1000) || 0,
-            'Date of Entry': row.date_of_entry || toDate,
-            'Procurement date': row.procurement_date || fromDate,
-            'Invoice Filename': pdfName,
+            'Invoice File Name': pdfName,
           });
         } else {
           mappedRows.push({
-            'Category of Plastic': row.category_of_plastic || 'Cat-III',
+            'S-No.': index + 1,
+            'Production ID': row.production_id || `PROD-${index + 1}`,
+            'Available Quantity (MT)': parseFloat(row.available_quantity_mt) || 0,
+            'Qty of Material Sold (MT)': parseFloat(row.quantity_sold_mt || row.quantity_mt) || 0,
             'Product Type': row.product_type || 'Others',
-            '(%) of Recycled Plastic in Product': parseFloat(row.percent_recycled) || 100,
-            'Quantity Sold (MT)': parseFloat(row.quantity_sold_mt || row.quantity_mt) || 0,
-            'Name of the Entity': row.entity_name || row.buyer_name || 'Buyer',
+            '% of Clinker': parseFloat(row.percent_clinker) || 0,
+            'Entity Name': row.entity_name || row.buyer_name || 'Buyer',
             'Address': row.address || 'Address',
             'State': row.state || 'Madhya Pradesh',
             'District': row.district || 'Dhar',
             'Account Number': row.account_number || '1234567890',
             'IFSC Code': row.ifsc_code || 'SBIN0001234',
-            'GST & Other Charges': parseFloat(row.gst_and_other_charges) || 0,
-            'Invoice File Name': pdfName,
+            'GST & Other Charges (₹)': parseFloat(row.gst_and_other_charges || row.gst_other_charges) || 0,
+            'Invoice File Name\n(Shall exactly match the name of pdf uploaded in ZIP folder)': pdfName,
           });
         }
       });

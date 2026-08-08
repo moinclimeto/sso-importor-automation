@@ -371,13 +371,26 @@ export async function openModuleViaOperationsView(page, moduleLabel, { onLog } =
     if (typeof onLog === 'function') onLog(text, level);
   };
 
-  // If Operations card not on current view, go to Dashboard via sidebar click (no full reload)
-  let opsRow = page
-    .locator('.operations-row, .operations-row-content')
-    .filter({ hasText: moduleLabel })
-    .first();
+  const labels = Array.isArray(moduleLabel) ? moduleLabel : [moduleLabel];
+  let opsRow = null;
+  let foundLabel = '';
 
-  if ((await opsRow.count()) === 0 || !(await opsRow.isVisible().catch(() => false))) {
+  const checkOpsRow = async (lbl) => {
+    const r1 = page.locator('.operations-row, .operations-row-content').filter({ hasText: lbl }).first();
+    if (await r1.count() > 0 && await r1.isVisible().catch(() => false)) return r1;
+    const r2 = page.locator('.operations-row').filter({ has: page.locator(`.operations-row-label:has-text("${lbl}")`) }).first();
+    if (await r2.count() > 0 && await r2.isVisible().catch(() => false)) return r2;
+    const r3 = page.locator('.operations-row').filter({ hasText: lbl }).first();
+    if (await r3.count() > 0 && await r3.isVisible().catch(() => false)) return r3;
+    return null;
+  };
+
+  for (const lbl of labels) {
+    opsRow = await checkOpsRow(lbl);
+    if (opsRow) { foundLabel = lbl; break; }
+  }
+
+  if (!opsRow) {
     log('Operations card not visible — opening Dashboard…', 'info');
     const dash = page
       .locator(
@@ -394,15 +407,16 @@ export async function openModuleViaOperationsView(page, moduleLabel, { onLog } =
       await dash.click({ force: true });
       await sleep(2500);
     }
-    opsRow = page
-      .locator('.operations-row')
-      .filter({ has: page.locator(`.operations-row-label:has-text("${moduleLabel}")`) })
-      .first();
+    for (const lbl of labels) {
+      opsRow = await checkOpsRow(lbl);
+      if (opsRow) { foundLabel = lbl; break; }
+    }
   }
 
   // Fallback selector
-  if ((await opsRow.count()) === 0) {
-    opsRow = page.locator('.operations-row').filter({ hasText: moduleLabel }).first();
+  if (!opsRow) {
+    opsRow = page.locator('.operations-row').filter({ hasText: labels[0] }).first();
+    foundLabel = labels[0];
   }
 
   await opsRow.waitFor({ state: 'visible', timeout: 45000 });
@@ -411,31 +425,54 @@ export async function openModuleViaOperationsView(page, moduleLabel, { onLog } =
     .first();
   await viewBtn.waitFor({ state: 'visible', timeout: 15000 });
   await viewBtn.click({ force: true });
-  log(`Clicked View — ${moduleLabel}`, 'success');
+  log(`Clicked View — ${foundLabel}`, 'success');
   await sleep(2500);
 
-  // Open Bulk Entry from within the module (sidebar / tabs / links) — no page.goto
-  const bulkNav = page
-    .locator(
-      [
-        'a[href*="bulk-entry"]',
-        '.sidebar a:has-text("Bulk Entry")',
-        'nav a:has-text("Bulk Entry")',
-        '[role="tab"]:has-text("Bulk Entry")',
-        'button:has-text("Bulk Entry")',
-        'a:has-text("Bulk Entry")',
-        '.breadcrumb a:has-text("Bulk Entry")',
-      ].join(', ')
-    )
-    .first();
+  const bulkSelectors = [
+    '.breadcrumb-right button[title="Bulk Entry"]:visible',
+    'button.action-btn[title="Bulk Entry"]:visible',
+    'button:has-text("Bulk Entry"):visible',
+    'a[href*="bulk-entry"]:visible',
+    '.sidebar a:has-text("Bulk Entry"):visible',
+    'nav a:has-text("Bulk Entry"):visible'
+  ];
 
-  await bulkNav.waitFor({ state: 'visible', timeout: 30000 });
-  await bulkNav.click({ force: true });
-  log('Clicked Bulk Entry', 'success');
+  let bulkNavigated = false;
+  for (const sel of bulkSelectors) {
+    const el = page.locator(sel).first();
+    if ((await el.count()) > 0) {
+      await el.scrollIntoViewIfNeeded().catch(() => {});
+      // Try regular click first
+      await el.click().catch(async () => {
+        // Fallback to force click if obscured
+        await el.click({ force: true }).catch(() => {});
+      });
+      
+      log(`Clicked Bulk Entry via ${sel.split(':')[0]}`, 'info');
+      // Wait to see if URL changes to bulk-entry
+      try {
+        await page.waitForURL(/bulk-entry/, { timeout: 8000 });
+        bulkNavigated = true;
+        log('Navigated to Bulk Entry URL successfully', 'success');
+        break;
+      } catch (err) {
+        log('URL did not change after click, trying next selector...', 'info');
+      }
+    }
+  }
+
+  if (!bulkNavigated) {
+    const fb = page.locator('button:has-text("Bulk Entry"), a:has-text("Bulk Entry")').first();
+    await fb.waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
+    await fb.click({ force: true }).catch(() => {});
+    log('Clicked Bulk Entry (fallback)', 'info');
+  }
+  
   await sleep(2500);
 
+  // Wait for the bulk entry elements to be visible
   await page.waitForSelector(
-    'form.bulk-entry-form, .bulk-entry-page, h1.section-title:has-text("Bulk Entry")',
+    'form.bulk-entry-form, .bulk-entry-page, h1:has-text("Bulk"), h2:has-text("Bulk"), h3:has-text("Bulk"), h4:has-text("Bulk"), app-input-date, input[type="file"]',
     { timeout: 45000 }
   );
   log('Bulk Entry page loaded (unit context kept)', 'success');
