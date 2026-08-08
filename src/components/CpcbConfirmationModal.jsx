@@ -40,8 +40,8 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
     end.setHours(23, 59, 59, 999);
 
     return rows.filter(r => {
-      const dateStr = r.invoice_date || r.procurement_date || r.date_of_entry || '';
-      if (!dateStr) return true; // keep rows with no date? or false? let's keep them if no date is specified or maybe filter out? usually better to keep or maybe check the logic. Let's keep them if no date is found or assume they fall in range if they were fetched. Wait, CPCB data usually has dates. Let's strictly filter:
+      const dateStr = r.invoice_date || '';
+      if (!dateStr) return false;
       const rowDate = new Date(dateStr);
       return rowDate >= start && rowDate <= end;
     });
@@ -64,7 +64,7 @@ export default function CpcbConfirmationModal({ rows, type, onClose, onConfirm }
       byCategory[cat] += qty;
 
       // Calculate Month
-      const dateStr = r.invoice_date || r.procurement_date || '';
+      const dateStr = r.invoice_date || '';
       let month = 'Unknown';
       if (dateStr && dateStr.length >= 7) {
         month = dateStr.substring(0, 7); // YYYY-MM

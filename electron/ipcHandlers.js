@@ -1338,7 +1338,7 @@ export function registerIpcHandlers() {
       fs.mkdirSync(outDir, { recursive: true });
 
       const mappedRows = [];
-      const uniquePdfs = new Set();
+      const invoiceFilesMap = new Map();
       
       rows.forEach((row, index) => {
         let pdfName = row.invoice_filename || row.invoice_file_name || row.invoice_number;
@@ -1347,7 +1347,17 @@ export function registerIpcHandlers() {
         } else if (!pdfName.toLowerCase().endsWith('.pdf')) {
           pdfName += '.pdf';
         }
-        uniquePdfs.add(pdfName);
+        
+        let localPdfPath = null;
+        if (row._source_fields && row._source_fields.local_pdf_path) {
+          localPdfPath = row._source_fields.local_pdf_path;
+        } else if (row.local_pdf_path) {
+          localPdfPath = row.local_pdf_path;
+        }
+
+        if (!invoiceFilesMap.has(pdfName) || (localPdfPath && !invoiceFilesMap.get(pdfName).path)) {
+          invoiceFilesMap.set(pdfName, { path: localPdfPath });
+        }
 
         if (isPurchase) {
           mappedRows.push({
@@ -1400,7 +1410,17 @@ export function registerIpcHandlers() {
       const { createZipStore, MINIMAL_PDF } = require('./cpcbProcurementBulk.js');
       const zipName = `${type}_invoices_${Date.now()}.zip`;
       const zipPath = path.join(outDir, zipName);
-      const filesToAdd = Array.from(uniquePdfs).map(name => ({ name, data: MINIMAL_PDF }));
+      const filesToAdd = Array.from(invoiceFilesMap.entries()).map(([name, info]) => {
+        let data = MINIMAL_PDF;
+        if (info.path && fs.existsSync(info.path)) {
+          try {
+            data = fs.readFileSync(info.path);
+          } catch (e) {
+            console.error(`Failed to read PDF for ${name} at ${info.path}`, e);
+          }
+        }
+        return { name, data };
+      });
       fs.writeFileSync(zipPath, createZipStore(filesToAdd));
 
       return {
