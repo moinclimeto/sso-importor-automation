@@ -93,6 +93,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
     getInventory: () => ipcRenderer.invoke('eprData:getInventory'),
     getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
+    getNewApplicationData: () => ipcRenderer.invoke('eprData:getNewApplicationData'),
   },
   // Local Production (User Entries)
   localProduction: {

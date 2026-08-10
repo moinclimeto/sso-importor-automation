@@ -1372,32 +1372,32 @@ export function registerIpcHandlers() {
         memoryDataMap[filename] = data;
       };
 
-      allData.dashboard = await extractEprDashboard(page);
-      saveJson('epr_dashboard.json', allData.dashboard);
+      // allData.dashboard = await extractEprDashboard(page);
+      // saveJson('epr_dashboard.json', allData.dashboard);
 
-      allData.profile = await extractEprProfile(page);
-      saveJson('epr_profile.json', allData.profile);
+      // allData.profile = await extractEprProfile(page);
+      // saveJson('epr_profile.json', allData.profile);
 
-      allData.application = await extractEprApplication(page);
-      saveJson('epr_application.json', allData.application);
+      // allData.application = await extractEprApplication(page);
+      // saveJson('epr_application.json', allData.application);
 
-      allData.material = await extractEprMaterial(page);
-      saveJson('epr_material.json', allData.material);
+      // allData.material = await extractEprMaterial(page);
+      // saveJson('epr_material.json', allData.material);
 
-      allData.production = await extractEprProduction(page);
-      await saveJson('epr_production.json', allData.production);
+      // allData.production = await extractEprProduction(page);
+      // await saveJson('epr_production.json', allData.production);
 
-      allData.sales = await extractEprSales(page);
-      saveJson('epr_sales.json', allData.sales);
+      // allData.sales = await extractEprSales(page);
+      // saveJson('epr_sales.json', allData.sales);
 
-      allData.wallet = await extractEprWallet(page);
-      saveJson('epr_wallet.json', allData.wallet);
+      // allData.wallet = await extractEprWallet(page);
+      // saveJson('epr_wallet.json', allData.wallet);
 
-      allData.annualFiling = await extractEprAnnualFiling(page);
-      saveJson('epr_annual_filing.json', allData.annualFiling);
+      // allData.annualFiling = await extractEprAnnualFiling(page);
+      // saveJson('epr_annual_filing.json', allData.annualFiling);
 
-      allData.payment = await extractEprPaymentHistory(page);
-      saveJson('epr_payment.json', allData.payment);
+      // allData.payment = await extractEprPaymentHistory(page);
+      // saveJson('epr_payment.json', allData.payment);
 
       allData.newApplication = await extractEprNewApplication(page);
       saveJson('epr_new_application.json', allData.newApplication);
@@ -1747,4 +1747,35 @@ export function registerIpcHandlers() {
     await db.run('DELETE FROM credit_calculations WHERE id=?', [id]);
     return { success: true };
   });
+
+  // --- NEW APPLICATION DATA ---
+  ipcMain.handle('eprData:getNewApplicationData', async () => {
+    const db = getDb();
+    try {
+      // Find all tables related to new_application
+      const tables = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'new_app%');");
+      const result = {};
+      
+      for (const t of tables) {
+        const rows = await db.all(`SELECT * FROM ${t.name}`);
+        // Remove internal/sqlite fields like _internal_id and file_source
+        const cleanRows = rows.map(row => {
+          const { _internal_id, file_source, ...rest } = row;
+          return rest;
+        });
+        
+        if (t.name === 'new_application_part_a' || t.name === 'new_application_part_b' || t.name === 'new_application_part_c') {
+          result[t.name] = cleanRows.length > 0 ? cleanRows[0] : null;
+        } else {
+          result[t.name] = cleanRows; // Arrays for nested tables
+        }
+      }
+      return result;
+    } catch (e) {
+      console.error("Failed to fetch new application data:", e);
+      return {};
+    }
+  });
+
 }
+

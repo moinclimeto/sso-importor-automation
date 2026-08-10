@@ -148,32 +148,32 @@ async function runScraper() {
 
     console.log("Running Extractors...");
     
-    allData.dashboard = await extractEprDashboard(page);
-    saveJson('epr_dashboard.json', allData.dashboard);
+    // allData.dashboard = await extractEprDashboard(page);
+    // saveJson('epr_dashboard.json', allData.dashboard);
 
-    allData.profile = await extractEprProfile(page);
-    saveJson('epr_profile.json', allData.profile);
+    // allData.profile = await extractEprProfile(page);
+    // saveJson('epr_profile.json', allData.profile);
 
-    allData.application = await extractEprApplication(page);
-    saveJson('epr_application.json', allData.application);
+    // allData.application = await extractEprApplication(page);
+    // saveJson('epr_application.json', allData.application);
 
-    allData.material = await extractEprMaterial(page);
-    saveJson('epr_material.json', allData.material);
+    // allData.material = await extractEprMaterial(page);
+    // saveJson('epr_material.json', allData.material);
 
-    allData.production = await extractEprProduction(page);
-    saveJson('epr_production.json', allData.production);
+    // allData.production = await extractEprProduction(page);
+    // saveJson('epr_production.json', allData.production);
 
-    allData.sales = await extractEprSales(page);
-    saveJson('epr_sales.json', allData.sales);
+    // allData.sales = await extractEprSales(page);
+    // saveJson('epr_sales.json', allData.sales);
 
-    allData.wallet = await extractEprWallet(page);
-    saveJson('epr_wallet.json', allData.wallet);
+    // allData.wallet = await extractEprWallet(page);
+    // saveJson('epr_wallet.json', allData.wallet);
 
-    allData.annualFiling = await extractEprAnnualFiling(page);
-    saveJson('epr_annual_filing.json', allData.annualFiling);
+    // allData.annualFiling = await extractEprAnnualFiling(page);
+    // saveJson('epr_annual_filing.json', allData.annualFiling);
 
-    allData.payment = await extractEprPaymentHistory(page);
-    saveJson('epr_payment.json', allData.payment);
+    // allData.payment = await extractEprPaymentHistory(page);
+    // saveJson('epr_payment.json', allData.payment);
 
     allData.newApplication = await extractEprNewApplication(page);
     saveJson('epr_new_application.json', allData.newApplication);

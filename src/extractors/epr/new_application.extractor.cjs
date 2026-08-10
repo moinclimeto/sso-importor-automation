@@ -34,22 +34,34 @@ async function extractEprNewApplication(page) {
             console.log("Navigating to Applications List...");
             
             // Try to find the Applications button/link anywhere on the page and click it
-            const clickedSidebar = await page.evaluate(() => {
-                const links = Array.from(document.querySelectorAll('a, button, span, div'));
-                const appLink = links.find(el => {
-                    const text = el.innerText ? el.innerText.trim().toLowerCase() : '';
-                    return (text === 'all application' || text === 'all applications' || text === 'applications') && !text.includes('new');
-                });
-                if (appLink) {
-                    const clickable = appLink.closest('button, a') || appLink;
-                    clickable.click();
-                    return true;
+            // We need to wait for it to render first!
+            console.log("Waiting for 'All Applications' button to appear...");
+            const clickedSidebar = await page.evaluate(async () => {
+                // Poll for the button to appear (up to 10 seconds)
+                for (let i = 0; i < 20; i++) {
+                    const elements = Array.from(document.querySelectorAll('button.applicant-btn, button, a'));
+                    const appBtn = elements.find(el => {
+                        const text = el.innerText ? el.innerText.trim().toLowerCase() : '';
+                        return (text === 'all application' || text === 'all applications');
+                    });
+                    
+                    if (appBtn) {
+                        const clickable = appBtn.closest('button, a') || appBtn;
+                        clickable.click();
+                        return true;
+                    }
+                    // wait 500ms
+                    await new Promise(r => setTimeout(r, 500));
                 }
                 return false;
             });
             
-            if (!clickedSidebar) {
-                console.log("Could not find sidebar link, navigating via URL to applications list...");
+            if (clickedSidebar) {
+                console.log("✅ Clicked 'All Applications' button!");
+                await page.waitForTimeout(3000); // wait for list to load
+            } else {
+                console.log("❌ Could not find 'All Applications' button!");
+                // Try fallback URL (might be wrong for cement, but just in case)
                 await page.goto('https://epr.cpcb.gov.in/onboarding/pwp/recycler/applications', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
             }
             
@@ -130,8 +142,9 @@ async function extractEprNewApplication(page) {
         const path = require('path');
         fs.writeFileSync(path.join(__dirname, '..', '..', '..', 'data', 'new_application_debug_html.txt'), htmlDump);
         
-        const extracted = await page.evaluate(() => {
+        const { data: extracted, logs } = await page.evaluate(() => {
             const data = {};
+            const logs = [];
             
             // Collect all possible containers that hold a label and a value
             const containers = document.querySelectorAll('mat-form-field, .form-group, .form-field, div[class*="col-"]');
@@ -141,67 +154,78 @@ async function extractEprNewApplication(page) {
                 const labelElem = container.querySelector('label, mat-label, span.title, .mat-form-field-label');
                 if (!labelElem) return;
                 
-                let labelText = labelElem.innerText.replace('*', '').trim().toLowerCase();
+                let rawLabel = labelElem.innerText;
+                let labelText = rawLabel.replace('*', '').trim().toLowerCase();
                 let key = labelText.replace(/[^a-z0-9]/g, '_').replace(/_+/g, '_').replace(/_$/, '');
                 if (!key || key === 'select' || key === 'yes' || key === 'no') return;
                 
                 // 2. Find Value
                 let val = '';
+                let method = '';
                 
                 // Check Inputs / Textareas
                 const input = container.querySelector('input, textarea');
                 if (input) {
                     val = input.value || input.getAttribute('aria-valuenow') || input.getAttribute('value') || '';
+                    if (val) method = 'input';
                 }
                 
-                // Check Angular Material Selects
-                if (!val) {
-                    const select = container.querySelector('mat-select, .mat-select-value, .mat-select-value-text span, .select-field');
-                    if (select) {
-                        // Sometimes the selected option text is directly inside
-                        val = select.innerText.trim();
-                        if (val.toLowerCase() === 'select') val = '';
-                    }
-                }
-                
-                // Check Standard Selects
+                // Check Standard Selects (Native) FIRST to prevent wrapper text extraction
                 if (!val) {
                     const select = container.querySelector('select');
                     if (select && select.options.length > 0 && select.selectedIndex >= 0) {
                         val = select.options[select.selectedIndex].text;
                         if (val.toLowerCase() === 'select') val = '';
+                        if (val) method = 'standard-select';
                     }
                 }
                 
-                // Fallback: If still empty, the value might be rendered as raw text inside a disabled div or span
-                // We grab all text in the container, remove the label text, and take whatever is left
+                // Check Angular Material Selects
                 if (!val) {
-                    // Try to find a custom input wrapper that might contain the text directly
+                    // Target the specific element that holds the SELECTED value, not the wrapper
+                    const selectValue = container.querySelector('.mat-select-value-text span, .mat-select-value, ng-select .ng-value-label');
+                    if (selectValue) {
+                        val = selectValue.innerText.trim();
+                        if (val.toLowerCase() === 'select') val = '';
+                        if (val) method = 'mat-select';
+                    } else {
+                        // Fallback for mat-select if value-text not found
+                        const matSelect = container.querySelector('mat-select');
+                        if (matSelect && matSelect.getAttribute('ng-reflect-model')) {
+                            val = matSelect.getAttribute('ng-reflect-model');
+                            method = 'mat-select-model';
+                        }
+                    }
+                }
+                
+                // Fallback: Custom wrapper
+                if (!val) {
                     const wrapper = container.querySelector('.input-wrapper, .custom-input-wrapper, .form-control');
                     if (wrapper) {
                         let text = wrapper.innerText.trim();
-                        // Ignore buttons like "Upload"
                         text = text.replace(/upload/i, '').trim();
-                        if (text) val = text;
+                        if (text) {
+                            val = text;
+                            method = 'custom-wrapper';
+                        }
                     }
                 }
                 
-                // Fallback: If it's a plain text div inside the container
+                // Fallback: Plain text div
                 if (!val) {
-                    // Get all text in the container, remove the label text, and take what's left
                     let rawText = container.innerText || '';
-                    // Some labels are inside the text, replace it out
                     rawText = rawText.replace(labelElem.innerText, '').trim();
-                    // Take the first non-empty line
                     const lines = rawText.split('\n').map(l => l.trim()).filter(l => l);
                     if (lines.length > 0) {
                         val = lines[0];
+                        method = 'plain-text';
                     }
                 }
                 
-                // Always add the key to data, even if value is empty
                 // Clean up value
                 val = val ? val.trim() : null;
+                
+                logs.push(`[DEBUG] Label: "${labelText}" -> Key: "${key}" -> Value: "${val}" (Method: ${method})`);
                 
                 // Only save if we don't already have a valid value or if the new one is better
                 if (!(key in data) || (val && (!data[key] || String(data[key]).length < val.length))) {
@@ -209,10 +233,98 @@ async function extractEprNewApplication(page) {
                 }
             });
             
-            return data;
+            // --- TABLE EXTRACTION LOGIC ---
+            const tables = document.querySelectorAll('table');
+            tables.forEach((table, index) => {
+                // Try to find a preceding heading for the table name
+                let tableName = `table_${index + 1}`;
+                let prev = table.previousElementSibling;
+                while (prev && prev.tagName !== 'TABLE' && index < 5) { // search up a bit
+                    if (prev.tagName.match(/^H[1-6]$/i) || prev.classList.contains('title') || prev.classList.contains('heading')) {
+                        tableName = prev.innerText.trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
+                        break;
+                    }
+                    prev = prev.previousElementSibling;
+                }
+                
+                const headers = Array.from(table.querySelectorAll('thead th, tr:first-child th')).map(th => {
+                    return th.innerText.trim().replace(/[^a-zA-Z0-9]/g, '_').replace(/_+/g, '_').toLowerCase();
+                });
+                
+                if (headers.length === 0) return; // skip if no headers
+                
+                const rows = Array.from(table.querySelectorAll('tbody tr, tr:not(:first-child)'));
+                const tableData = [];
+                
+                rows.forEach(row => {
+                    const rowData = {};
+                    const cells = Array.from(row.querySelectorAll('td'));
+                    
+                    let hasData = false;
+                    cells.forEach((cell, i) => {
+                        if (i >= headers.length) return;
+                        const key = headers[i];
+                        if (!key) return;
+                        
+                        let val = '';
+                        
+                        // Check inputs
+                        const input = cell.querySelector('input, textarea');
+                        if (input) val = input.value || input.getAttribute('value') || '';
+                        
+                        // Check native select
+                        if (!val) {
+                            const select = cell.querySelector('select');
+                            if (select && select.options.length > 0 && select.selectedIndex >= 0) {
+                                val = select.options[select.selectedIndex].text;
+                            }
+                        }
+                        
+                        // Check material select
+                        if (!val) {
+                            const selectValue = cell.querySelector('.mat-select-value-text span, .mat-select-value, ng-select .ng-value-label');
+                            if (selectValue) val = selectValue.innerText.trim();
+                        }
+                        
+                        // Plain text
+                        if (!val) {
+                            let text = cell.innerText.trim();
+                            text = text.replace(/upload/i, '').trim();
+                            if (text && text !== 'Browse' && text !== 'View') val = text;
+                        }
+                        
+                        if (val && val.toLowerCase() !== 'select') {
+                            rowData[key] = val;
+                            hasData = true;
+                        }
+                    });
+                    
+                    if (hasData) {
+                        tableData.push(rowData);
+                    }
+                });
+                
+                if (tableData.length > 0) {
+                    data[tableName] = JSON.stringify(tableData);
+                    logs.push(`[DEBUG] Extracted Table: "${tableName}" with ${tableData.length} rows.`);
+                }
+            });
+            
+            return { data, logs };
         });
 
-        Object.assign(applicationData.part_a, extracted);
+        // Print the logs from the browser
+        console.log(`\n--- UI EXTRACTION LOGS FOR STEP ${stepCount} ---`);
+        logs.forEach(log => console.log(log));
+        console.log(`----------------------------------------\n`);
+
+        if (stepCount === 1) {
+            Object.assign(applicationData.part_a, extracted);
+        } else if (stepCount === 2) {
+            Object.assign(applicationData.part_b, extracted);
+        } else {
+            Object.assign(applicationData.part_c, extracted);
+        }
         console.log(`✅ Extracted ${Object.keys(extracted).length} fields from Step ${stepCount}.`);
 
         // Check for 'Save & Next' button and click it

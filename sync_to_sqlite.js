@@ -133,6 +133,7 @@ async function syncToSqlite(memoryDataMap = null) {
         }
 
         // Strategy to extract the actual array of data based on known API structures
+        let tablesToProcess = []; // Array of { tableName, targetData }
         let targetData = [];
         let tableName = file.replace('.json', '');
 
@@ -322,11 +323,47 @@ async function syncToSqlite(memoryDataMap = null) {
         }
         // 5.8 New Application
         else if (file === 'epr_new_application.json') {
-            let flattened = { ...jsonData.part_a, ...jsonData.part_b, ...jsonData.part_c };
-            if (Object.keys(flattened).length > 0) {
-                targetData = [flattened];
-                tableName = 'new_application';
+            const parts = {
+                'part_a': jsonData.part_a || {},
+                'part_b': jsonData.part_b || {},
+                'part_c': jsonData.part_c || {}
+            };
+            
+            for (const [partName, partData] of Object.entries(parts)) {
+                if (Object.keys(partData).length === 0) continue;
+                
+                let partObj = { ...partData };
+                
+                // Extract any arrays into separate tables
+                for (const key of Object.keys(partObj)) {
+                    let val = partObj[key];
+                    try {
+                        if (typeof val === 'string' && val.startsWith('[')) {
+                            val = JSON.parse(val);
+                        }
+                    } catch(e) {}
+                    
+                    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object') {
+                        // Queue it as a separate SQLite table with part prefix
+                        tablesToProcess.push({
+                            tableName: `new_app_${partName}_${key.replace(/[^a-z0-9_]/g, '_').substring(0, 30)}`,
+                            targetData: val
+                        });
+                        // Remove from main table to keep it clean
+                        delete partObj[key];
+                    }
+                }
+
+                if (Object.keys(partObj).length > 0) {
+                    tablesToProcess.push({
+                        tableName: `new_application_${partName}`,
+                        targetData: [partObj]
+                    });
+                }
             }
+            
+            // We manually queued the tables, so we skip the default logic for this file
+            targetData = null;
         }
         // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
         else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
@@ -347,28 +384,36 @@ async function syncToSqlite(memoryDataMap = null) {
             });
         }
         
-        if (targetData.length === 0) {
+        // Push the primary table for this file
+        if (targetData && targetData.length > 0) {
+            tablesToProcess.push({ tableName, targetData });
+        }
+        
+        if (tablesToProcess.length === 0) {
             console.log(`⚠️ No structured data found to insert for ${file}`);
             continue;
         }
 
-        // Ensure every row has a file_source to allow precise deletion later
-        targetData = targetData.map(row => {
-            if (typeof row === 'object' && row !== null) {
-                return { file_source: file, ...row };
+        for (let tableObj of tablesToProcess) {
+            let tName = tableObj.tableName.replace(/-/g, '_');
+            let tData = tableObj.targetData;
+
+            // Ensure every row has a file_source to allow precise deletion later
+            tData = tData.map(row => {
+                if (typeof row === 'object' && row !== null) {
+                    return { file_source: file, ...row };
+                }
+                return row;
+            });
+
+            const sampleObj = tData[0];
+
+            try {
+                await createTableFromObject(db, tName, sampleObj);
+                await insertData(db, tName, tData, file);
+            } catch (err) {
+                console.error(`❌ Failed processing table ${tName}:`, err.message);
             }
-            return row;
-        });
-
-        const sampleObj = targetData[0];
-        // Clean up the table name (remove dashes)
-        tableName = tableName.replace(/-/g, '_');
-
-        try {
-            await createTableFromObject(db, tableName, sampleObj);
-            await insertData(db, tableName, targetData, file);
-        } catch (err) {
-            console.error(`❌ Failed processing table ${tableName}:`, err.message);
         }
     }
 
