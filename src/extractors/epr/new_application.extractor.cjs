@@ -28,46 +28,67 @@ async function extractEprNewApplication(page) {
         };
         page.on('response', responseHandler);
         
-        // Only navigate if we are not already on the view-application page
-        if (!page.url().includes('view') && !page.url().includes('edit')) {
-            console.log("Attempting to navigate to All Applications...");
+        // Since navigating directly to "new-application" results in missing data,
+        // we MUST navigate to the Applications list and click the Eye Icon.
+        if (!page.url().includes('view') && !page.url().includes('edit') && !page.url().includes('new-application')) {
+            console.log("Navigating to Applications List...");
             
-            // Try guessing the Applications List URL
-            await page.goto('https://epr.cpcb.gov.in/onboarding/pwp/recycler/applications', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(e => console.log(e.message));
-            await page.waitForTimeout(3000);
-            
-            // Try clicking the sidebar link if the direct URL didn't load the list correctly
-            await page.evaluate(async () => {
-                const links = Array.from(document.querySelectorAll('button, a, span, div, li'));
-                const appLink = links.find(el => el.innerText && (
-                    el.innerText.trim().toLowerCase() === 'all applications' || 
-                    el.innerText.trim().toLowerCase() === 'applications' || 
-                    el.innerText.trim().toLowerCase() === 'application list'
-                ));
-                if (appLink) appLink.click();
-            });
-            
-            // Wait for page to load
-            await page.waitForTimeout(5000);
-            
-            // 2. Click the eye icon to open the view/edit form
-            console.log("Clicking on Eye icon to view application...");
-            await page.evaluate(async () => {
-                const eyeIcon = document.querySelector('img[src*="eye.svg"]');
-                if (eyeIcon) {
-                    // Click the button or anchor that wraps the image
-                    const clickable = eyeIcon.closest('button, a') || eyeIcon;
+            // Try to find the Applications button/link anywhere on the page and click it
+            const clickedSidebar = await page.evaluate(() => {
+                const links = Array.from(document.querySelectorAll('a, button, span, div'));
+                const appLink = links.find(el => {
+                    const text = el.innerText ? el.innerText.trim().toLowerCase() : '';
+                    return (text === 'all application' || text === 'all applications' || text === 'applications') && !text.includes('new');
+                });
+                if (appLink) {
+                    const clickable = appLink.closest('button, a') || appLink;
                     clickable.click();
+                    return true;
                 }
+                return false;
             });
             
-            // Wait for the application view to open
-            await page.waitForTimeout(5000);
+            if (!clickedSidebar) {
+                console.log("Could not find sidebar link, navigating via URL to applications list...");
+                await page.goto('https://epr.cpcb.gov.in/onboarding/pwp/recycler/applications', { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+            }
+            
+            // Wait for the list table to load and the Eye icon to appear
+            console.log("Waiting for Eye icon to appear on the applications list...");
+            try {
+                await page.waitForSelector('img[src*="eye.svg"]', { timeout: 30000 });
+                console.log("Eye icon found! Clicking it to open the fully filled form...");
+                await page.evaluate(() => {
+                    const eyeIcon = document.querySelector('img[src*="eye.svg"]');
+                    if (eyeIcon) {
+                        const clickable = eyeIcon.closest('button, a') || eyeIcon;
+                        clickable.click();
+                    }
+                });
+                
+                // Wait for the new application view to open
+                await page.waitForTimeout(5000);
+            } catch (e) {
+                console.log("?? Could not find Eye icon. The table might be empty or loading too slowly.");
+            }
         }
         
         // Ensure form fields are loaded before we try to extract
         try {
             await page.waitForSelector('label, mat-label, .form-group', { timeout: 10000 });
+            
+            // Wait for data to populate
+            console.log("Waiting for data to populate on the UI...");
+            await page.waitForFunction(() => {
+                const inputs = Array.from(document.querySelectorAll('input[type="text"], select, .custom-input-wrapper, .form-control'));
+                return inputs.some(input => {
+                    if (input.tagName === 'SELECT') return input.value && input.value !== '';
+                    if (input.tagName === 'INPUT') return input.value && input.value.trim().length > 0;
+                    if (input.innerText) return input.innerText.trim().length > 0 && !input.innerText.includes('Select') && !input.innerText.includes('Enter');
+                    return false;
+                });
+            }, { timeout: 20000 }).catch(e => console.log("?? Data didn't fully populate within timeout, proceeding anyway."));
+            
         } catch (e) {
             console.log("?? Timeout waiting for form labels to render. The DOM might be empty.");
         }
@@ -206,9 +227,32 @@ async function extractEprNewApplication(page) {
         });
 
         if (hasNext) {
+            // Wait a moment for validation error toast to potentially appear
+            await page.waitForTimeout(1500);
+            
+            // Check for validation error toast
+            const hasError = await page.evaluate(() => {
+                const toast = document.querySelector('.toast-message, .toast-error, #toast-container');
+                if (toast && toast.innerText && (toast.innerText.includes('Missing') || toast.innerText.includes('required'))) return true;
+                const req = Array.from(document.querySelectorAll('.text-danger, .error-message, mat-error')).find(el => el.innerText.includes('required'));
+                if (req && req.offsetHeight > 0) return true;
+                return false;
+            });
+            
+            if (hasError) {
+                console.log("?? Validation error detected! Form is missing required fields. Navigating to URL again to trigger auto-fill...");
+                await page.goto('https://epr.cpcb.gov.in/onboarding/pwp/recycler/new-application', { waitUntil: 'domcontentloaded', timeout: 30000 });
+                await page.waitForTimeout(5000);
+                
+                // Restart extraction from Step 1
+                stepCount = 1;
+                console.log("?? Restarting extraction after reload...");
+                continue;
+            }
+            
             stepCount++;
             // Wait for next step to render
-            await page.waitForTimeout(4000);
+            await page.waitForTimeout(3000);
             
             // Wait for form labels to appear in the new step
             try {
