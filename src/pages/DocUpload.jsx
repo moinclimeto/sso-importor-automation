@@ -229,7 +229,7 @@ export default function DocUpload() {
   }, [files, pageJobs]);
 
   useEffect(() => {
-    window.pwp?.settings?.get('global_bank_details').then(setGlobalBankDetails);
+    window.pwp?.settings?.get?.('global_bank_details')?.then(setGlobalBankDetails);
     return () => {
       if (typeof unsubRef.current === 'function') unsubRef.current();
     };
@@ -493,6 +493,7 @@ export default function DocUpload() {
         lineItems,
         extraction,
         _routing: sourceRow?.routing || data._routing,
+        _page: sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined,
       };
     }
 
@@ -531,6 +532,7 @@ export default function DocUpload() {
       lineItems,
       extraction,
       _routing: sourceRow?.routing || data._routing,
+      _page: sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined,
     };
   };
 
