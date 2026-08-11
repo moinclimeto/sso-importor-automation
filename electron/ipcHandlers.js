@@ -243,17 +243,25 @@ export function registerIpcHandlers() {
 
     try {
       if (source.toLowerCase().endsWith('.pdf') && data._page.pageNumber) {
-        const pdfBytes = fs.readFileSync(source);
-        const sourceDoc = await PDFDocument.load(pdfBytes);
-        const newDoc = await PDFDocument.create();
-        const pageIndex = Math.max(0, data._page.pageNumber - 1);
-        
-        if (pageIndex < sourceDoc.getPageCount()) {
-          const [copiedPage] = await newDoc.copyPages(sourceDoc, [pageIndex]);
-          newDoc.addPage(copiedPage);
-          const singlePageBytes = await newDoc.save();
-          fs.writeFileSync(destPath, singlePageBytes);
-        } else {
+        try {
+          const pdfBytes = fs.readFileSync(source);
+          const sourceDoc = await PDFDocument.load(pdfBytes);
+          const newDoc = await PDFDocument.create();
+          const pageIndex = Math.max(0, data._page.pageNumber - 1);
+          
+          if (pageIndex < sourceDoc.getPageCount()) {
+            const [copiedPage] = await newDoc.copyPages(sourceDoc, [pageIndex]);
+            newDoc.addPage(copiedPage);
+            const singlePageBytes = await newDoc.save();
+            fs.writeFileSync(destPath, singlePageBytes);
+          } else {
+            fs.copyFileSync(source, destPath);
+          }
+        } catch (pdfErr) {
+          console.warn('PDF-lib extraction failed, falling back to full copy:', pdfErr.message);
+          if (fs.existsSync(destPath)) {
+            fs.unlinkSync(destPath);
+          }
           fs.copyFileSync(source, destPath);
         }
       } else {
