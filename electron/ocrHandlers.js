@@ -211,6 +211,18 @@ async function extractOneInvoice({
         ? mapPurchaseFromOcr(parsed, outFileName)
         : mapSaleFromOcr(parsed, outFileName, sNo);
 
+    const cpy = row.extraction?.copyType;
+    if (cpy && (cpy.includes('duplicate') || cpy.includes('triplicate'))) {
+      log.warn('Skipping duplicate/triplicate invoice', { fileName: outFileName, copyType: cpy });
+      return {
+        success: false,
+        skipped: true,
+        message: `Skipped ${cpy} copy. Only original is allowed.`,
+        fileName: outFileName,
+        trackId: log.trackId,
+      };
+    }
+
     // Ensure filename fields point at page-specific name
     if (invoiceType === 'purchase') {
       row.invoice_filename = outFileName;
@@ -221,6 +233,7 @@ async function extractOneInvoice({
       pageNumber: pageNo,
       pageCount: resolvedPageCount,
       sourceFileName: sourceName,
+      sourceFilePath: filePath,
       displayName: displayName || outFileName,
     };
 

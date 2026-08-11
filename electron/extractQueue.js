@@ -111,7 +111,7 @@ export async function runExtractQueue({
   const results = [];
   let successCount = 0;
   let failedCount = 0;
-  const skippedCount = skipped.length;
+  let skippedCount = skipped.length;
 
   const emit = (partial) => {
     const payload = {
@@ -307,6 +307,42 @@ export async function runExtractQueue({
               : `Success · ${lines} lines`,
             tone: 'ok',
             status: 'success',
+          },
+          pageInfo: {
+            pageNumber: job.pageNumber,
+            pageCount: job.pageCount,
+            sourceFileName: job.sourceFileName,
+          },
+        });
+      } else if (one?.skipped) {
+        skippedCount += 1;
+        processedCount += 1; // Increment here
+        const message = one?.message || 'Extraction skipped';
+        log.info('Page extract skipped', { label, message });
+        results.push({
+          ok: false,
+          skipped: true,
+          fileName: label,
+          invoiceFileName: job.invoiceFileName,
+          filePath: job.filePath,
+          pageNumber: job.pageNumber,
+          pageCount: job.pageCount,
+          message,
+          trackId: fileTrack,
+          fileHash: job.fileHash,
+        });
+        emit({
+          stage: 'processing',
+          processed: processedCount,
+          current,
+          message: `Extracting ${current}/${total}`,
+          currentFile: label,
+          fileStatus: {
+            fileName: label,
+            sourceFileName: job.sourceFileName,
+            label: `Skipped · ${message}`,
+            tone: 'skip',
+            status: 'skipped',
           },
           pageInfo: {
             pageNumber: job.pageNumber,
