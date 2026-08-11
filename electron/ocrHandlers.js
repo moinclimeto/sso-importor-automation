@@ -216,6 +216,7 @@ async function extractOneInvoice({
       log.warn('Skipping duplicate/triplicate invoice', { fileName: outFileName, copyType: cpy });
       return {
         success: false,
+        skipped: true,
         message: `Skipped ${cpy} copy. Only original is allowed.`,
         fileName: outFileName,
         trackId: log.trackId,
