@@ -20,6 +20,7 @@ import EprConversionFactorData from '../pages/EprConversionFactorData.jsx';
 import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
+import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -51,6 +52,7 @@ export default function AppRoutes() {
           <Route path="epr-production" element={<EprProductionData />} />
           <Route path="epr-inventory" element={<EprInventoryData />} />
           <Route path="epr-conversion-factor" element={<EprConversionFactorData />} />
+          <Route path="epr-new-application" element={<EprNewApplicationData />} />
           <Route path="cpcb-dashboard" element={<CpcbDashboard />} />
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />

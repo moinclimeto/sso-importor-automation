@@ -17,6 +17,7 @@ const { extractEprWallet } = require("./src/extractors/epr/wallet.extractor.cjs"
 const { extractEprAnnualFiling } = require("./src/extractors/epr/annual_filing.extractor.cjs");
 const { extractEprDashboard } = require("./src/extractors/epr/dashboard.extractor.cjs");
 const { extractEprPaymentHistory } = require("./src/extractors/epr/payment.extractor.cjs");
+const { extractEprNewApplication } = require("./src/extractors/epr/new_application.extractor.cjs");
 
 const memoryDataMap = {}; // Global store for synced data
 const dataDir = path.join(__dirname, 'data');
@@ -47,7 +48,9 @@ async function runScraper() {
     const userDataDir = path.join(__dirname, 'playwright_session');
     const context = await chromium.launchPersistentContext(userDataDir, { 
         headless: false,
-        acceptDownloads: true 
+        acceptDownloads: true,
+        viewport: null,
+        args: ['--start-maximized']
     });
     
     // Playwright persistent context sometimes opens an empty tab first
@@ -145,32 +148,35 @@ async function runScraper() {
 
     console.log("Running Extractors...");
     
-    allData.dashboard = await extractEprDashboard(page);
-    saveJson('epr_dashboard.json', allData.dashboard);
+    // allData.dashboard = await extractEprDashboard(page);
+    // saveJson('epr_dashboard.json', allData.dashboard);
 
-    allData.profile = await extractEprProfile(page);
-    saveJson('epr_profile.json', allData.profile);
+    // allData.profile = await extractEprProfile(page);
+    // saveJson('epr_profile.json', allData.profile);
 
-    allData.application = await extractEprApplication(page);
-    saveJson('epr_application.json', allData.application);
+    // allData.application = await extractEprApplication(page);
+    // saveJson('epr_application.json', allData.application);
 
-    allData.material = await extractEprMaterial(page);
-    saveJson('epr_material.json', allData.material);
+    // allData.material = await extractEprMaterial(page);
+    // saveJson('epr_material.json', allData.material);
 
-    allData.production = await extractEprProduction(page);
-    saveJson('epr_production.json', allData.production);
+    // allData.production = await extractEprProduction(page);
+    // saveJson('epr_production.json', allData.production);
 
-    allData.sales = await extractEprSales(page);
-    saveJson('epr_sales.json', allData.sales);
+    // allData.sales = await extractEprSales(page);
+    // saveJson('epr_sales.json', allData.sales);
 
-    allData.wallet = await extractEprWallet(page);
-    saveJson('epr_wallet.json', allData.wallet);
+    // allData.wallet = await extractEprWallet(page);
+    // saveJson('epr_wallet.json', allData.wallet);
 
-    allData.annualFiling = await extractEprAnnualFiling(page);
-    saveJson('epr_annual_filing.json', allData.annualFiling);
+    // allData.annualFiling = await extractEprAnnualFiling(page);
+    // saveJson('epr_annual_filing.json', allData.annualFiling);
 
-    allData.payment = await extractEprPaymentHistory(page);
-    saveJson('epr_payment.json', allData.payment);
+    // allData.payment = await extractEprPaymentHistory(page);
+    // saveJson('epr_payment.json', allData.payment);
+
+    allData.newApplication = await extractEprNewApplication(page);
+    saveJson('epr_new_application.json', allData.newApplication);
 
     saveJson('scraped_data_latest.json', allData);
 

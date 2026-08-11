@@ -38,16 +38,14 @@ async function createTableFromObject(db, tableName, sampleObj) {
         columns.push(`"${safeKey}" ${sqliteType}`);
     }
 
-    // Drop table if it exists so we can run this cleanly multiple times
-    await db.exec(`DROP TABLE IF EXISTS "${tableName}";`);
-    
-    const createQuery = `CREATE TABLE "${tableName}" (\n  ${columns.join(',\n  ')}\n);`;
+    // We no longer drop the table to prevent deleting existing data
+    const createQuery = `CREATE TABLE IF NOT EXISTS "${tableName}" (\n  ${columns.join(',\n  ')}\n);`;
     await db.exec(createQuery);
     createdTables.add(tableName);
     console.log(`[Schema] Table '${tableName}' created successfully!`);
 }
 
-async function insertData(db, tableName, dataArray) {
+async function insertData(db, tableName, dataArray, sourceFile) {
     if (!dataArray || dataArray.length === 0) return;
     
     console.log(`[Data] Inserting ${dataArray.length} rows into '${tableName}'...`);
@@ -74,6 +72,11 @@ async function insertData(db, tableName, dataArray) {
     await db.exec('BEGIN TRANSACTION;');
     
     try {
+        if (sourceFile) {
+            // Delete only records that came from this specific file to prevent duplicating data
+            await db.run(`DELETE FROM "${tableName}" WHERE file_source = ?`, sourceFile).catch(() => {});
+        }
+
         const stmt = await db.prepare(insertQuery);
         for (const obj of dataArray) {
             const rowValues = allKeys.map(key => {
@@ -130,6 +133,7 @@ async function syncToSqlite(memoryDataMap = null) {
         }
 
         // Strategy to extract the actual array of data based on known API structures
+        let tablesToProcess = []; // Array of { tableName, targetData }
         let targetData = [];
         let tableName = file.replace('.json', '');
 
@@ -216,14 +220,7 @@ async function syncToSqlite(memoryDataMap = null) {
             targetData = expandedSales;
         }
         
-        // Final pass: Flatten all nested objects into separate columns, and inject the year
-        if (['procurement_details', 'production_details', 'sales_details'].includes(tableName)) {
-            targetData = targetData.map(row => {
-                let flatRow = flattenObject(row);
-                if (dataYear) flatRow.year = dataYear;
-                return flatRow;
-            });
-        }
+        // Final pass: Left intentionally blank, files remain in their original schema
         // 4. Wallet APIs (e.g. wallet_certificate-transaction.json)
         else if (file.startsWith('wallet_') && file !== 'epr_wallet.json') {
             if (jsonData.data) {
@@ -324,6 +321,50 @@ async function syncToSqlite(memoryDataMap = null) {
                 targetData = jsonData;
             }
         }
+        // 5.8 New Application
+        else if (file === 'epr_new_application.json') {
+            const parts = {
+                'part_a': jsonData.part_a || {},
+                'part_b': jsonData.part_b || {},
+                'part_c': jsonData.part_c || {}
+            };
+            
+            for (const [partName, partData] of Object.entries(parts)) {
+                if (Object.keys(partData).length === 0) continue;
+                
+                let partObj = { ...partData };
+                
+                // Extract any arrays into separate tables
+                for (const key of Object.keys(partObj)) {
+                    let val = partObj[key];
+                    try {
+                        if (typeof val === 'string' && val.startsWith('[')) {
+                            val = JSON.parse(val);
+                        }
+                    } catch(e) {}
+                    
+                    if (Array.isArray(val) && val.length > 0 && typeof val[0] === 'object') {
+                        // Queue it as a separate SQLite table with part prefix
+                        tablesToProcess.push({
+                            tableName: `new_app_${partName}_${key.replace(/[^a-z0-9_]/g, '_').substring(0, 30)}`,
+                            targetData: val
+                        });
+                        // Remove from main table to keep it clean
+                        delete partObj[key];
+                    }
+                }
+
+                if (Object.keys(partObj).length > 0) {
+                    tablesToProcess.push({
+                        tableName: `new_application_${partName}`,
+                        targetData: [partObj]
+                    });
+                }
+            }
+            
+            // We manually queued the tables, so we skip the default logic for this file
+            targetData = null;
+        }
         // 6. Generic Fallback for standard tables (e.g. epr_payment, epr_application)
         else if (jsonData.tables && jsonData.tables.length > 0 && jsonData.tables[0].length > 1) {
             const headers = jsonData.tables[0][0].map(h => {
@@ -343,20 +384,36 @@ async function syncToSqlite(memoryDataMap = null) {
             });
         }
         
-        if (targetData.length === 0) {
+        // Push the primary table for this file
+        if (targetData && targetData.length > 0) {
+            tablesToProcess.push({ tableName, targetData });
+        }
+        
+        if (tablesToProcess.length === 0) {
             console.log(`⚠️ No structured data found to insert for ${file}`);
             continue;
         }
 
-        const sampleObj = targetData[0];
-        // Clean up the table name (remove dashes)
-        tableName = tableName.replace(/-/g, '_');
+        for (let tableObj of tablesToProcess) {
+            let tName = tableObj.tableName.replace(/-/g, '_');
+            let tData = tableObj.targetData;
 
-        try {
-            await createTableFromObject(db, tableName, sampleObj);
-            await insertData(db, tableName, targetData);
-        } catch (err) {
-            console.error(`❌ Failed processing table ${tableName}:`, err.message);
+            // Ensure every row has a file_source to allow precise deletion later
+            tData = tData.map(row => {
+                if (typeof row === 'object' && row !== null) {
+                    return { file_source: file, ...row };
+                }
+                return row;
+            });
+
+            const sampleObj = tData[0];
+
+            try {
+                await createTableFromObject(db, tName, sampleObj);
+                await insertData(db, tName, tData, file);
+            } catch (err) {
+                console.error(`❌ Failed processing table ${tName}:`, err.message);
+            }
         }
     }
 

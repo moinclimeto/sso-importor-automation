@@ -15,8 +15,7 @@ const navLinks = [
     icon: LayoutDashboard,
     label: 'Overview',
     subLinks: [
-      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
-
+      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },
   {
@@ -43,6 +42,7 @@ const pageHeaders = {
   '/epr-sales': { title: 'EPR Sales Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/epr-new-application': { title: 'New Application Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',

@@ -30,6 +30,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getSales: () => ipcRenderer.invoke('eprData:getSales'),
     getProduction: () => ipcRenderer.invoke('eprData:getProduction'),
     getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
+    getNewApplicationData: () => ipcRenderer.invoke('eprData:getNewApplicationData'),
   },
 
   // Sales
