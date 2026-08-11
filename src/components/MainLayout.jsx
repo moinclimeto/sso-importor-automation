@@ -15,8 +15,7 @@ const navLinks = [
     icon: LayoutDashboard,
     label: 'Overview',
     subLinks: [
-      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' },
-      { to: '/epr-new-application', label: 'New Application Data' },
+      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },
   {

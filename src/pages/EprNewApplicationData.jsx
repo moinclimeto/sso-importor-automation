@@ -41,14 +41,50 @@ export default function EprNewApplicationData() {
 
   useEffect(() => {
     loadData();
+    const handleRefresh = () => loadData();
+    window.addEventListener('refresh-epr-data', handleRefresh);
+    return () => window.removeEventListener('refresh-epr-data', handleRefresh);
   }, []);
+
+  const handleOpenFile = async (filename) => {
+    if (!window.pwp || !window.pwp.eprData || !window.pwp.eprData.openDocument) {
+      alert('File opener not ready. Please restart the app if you just updated it.');
+      return;
+    }
+    const res = await window.pwp.eprData.openDocument(filename);
+    if (!res.success) {
+      alert(`Could not open file: ${res.error}`);
+    }
+  };
+
+  const renderValue = (val) => {
+    if (!val) return <span className="text-gray-400 italic">Not available</span>;
+    const textVal = String(val);
+    const hasExt = textVal.toLowerCase().match(/\.(pdf|jpg|jpeg|png)$/);
+    
+    if (hasExt) {
+      return (
+        <div className="flex items-center justify-between w-full">
+          <span className="text-gray-800 truncate pr-2" title={textVal}>{textVal}</span>
+          <button 
+            onClick={() => handleOpenFile(textVal)}
+            className="px-3 py-1 bg-[#17a2b8] hover:bg-[#138496] text-white text-xs font-bold rounded shadow-sm flex-shrink-0"
+          >
+            View
+          </button>
+        </div>
+      );
+    }
+    
+    return textVal;
+  };
 
   const renderField = (label, value) => {
     return (
       <div className="mb-4">
-        <label className="block text-sm font-semibold text-gray-700 mb-1">{label}</label>
-        <div className="w-full bg-gray-100 border border-gray-300 rounded-md px-3 py-2 text-gray-600 font-medium">
-          {value || <span className="text-gray-400 italic">Not available</span>}
+        <label className="block text-[13px] font-bold text-[#495057] mb-1">{label}</label>
+        <div className="w-full bg-[#e9ecef] border border-[#ced4da] rounded px-3 py-1.5 text-[#495057] text-sm min-h-[38px] flex items-center">
+          {renderValue(value)}
         </div>
       </div>
     );
@@ -60,27 +96,27 @@ export default function EprNewApplicationData() {
     const headers = Object.keys(tableData[0]).filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at');
     
     return (
-      <div className="mt-8 mb-6 bg-white border border-gray-200 rounded-lg overflow-hidden shadow-sm">
-        <div className="bg-gray-50 border-b border-gray-200 px-4 py-3">
-          <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+      <div className="mt-8 mb-6 bg-white border border-[#dee2e6] rounded-sm shadow-sm overflow-hidden">
+        <div className="bg-[#f8f9fa] border-b border-[#dee2e6] px-4 py-2.5">
+          <h3 className="text-base font-bold text-[#343a40] uppercase">{title}</h3>
         </div>
         <div className="overflow-x-auto">
           <table className="w-full text-left border-collapse">
             <thead>
-              <tr className="bg-gray-100 text-gray-700 text-sm border-b">
+              <tr className="bg-[#343a40] text-white text-[13px]">
                 {headers.map(h => (
-                  <th key={h} className="px-4 py-3 font-semibold uppercase tracking-wider">
+                  <th key={h} className="px-4 py-2 font-bold uppercase border border-[#454d55]">
                     {h.replace(/_/g, ' ')}
                   </th>
                 ))}
               </tr>
             </thead>
-            <tbody className="text-sm text-gray-700">
+            <tbody className="text-[13px] text-[#212529]">
               {tableData.map((row, i) => (
-                <tr key={i} className="border-b hover:bg-blue-50 transition-colors">
+                <tr key={i} className="border-b border-[#dee2e6] even:bg-[#f2f2f2] hover:bg-[#e9ecef]">
                   {headers.map(h => (
-                    <td key={h} className="px-4 py-3 border-r last:border-r-0 border-gray-100">
-                      {row[h] || '-'}
+                    <td key={h} className="px-4 py-2 border-r border-[#dee2e6] last:border-r-0 min-w-[200px]">
+                      {renderValue(row[h])}
                     </td>
                   ))}
                 </tr>
@@ -135,38 +171,24 @@ export default function EprNewApplicationData() {
   const tables = Object.keys(data).filter(k => k.startsWith('new_app_part_'));
 
   return (
-    <div className="h-full bg-gray-50 p-6 overflow-y-auto">
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-3xl font-bold text-gray-800 flex items-center gap-3">
-          <FileText className="text-emerald-600" size={32} />
-          New Application Data
-        </h1>
-        <button 
-          onClick={loadData}
-          className="flex items-center gap-2 text-sm bg-white border border-gray-300 hover:bg-gray-50 text-gray-700 px-4 py-2 rounded-lg shadow-sm transition-colors"
-        >
-          <RefreshCw size={16} />
-          Refresh
-        </button>
-      </div>
+    <div className="w-full mt-8 font-sans">
 
       <div className="max-w-7xl mx-auto space-y-8">
         
         {/* PART A */}
         {partA && (
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="bg-emerald-50 border-b border-emerald-100 px-6 py-4 flex items-center gap-3">
-              <Building2 className="text-emerald-600" size={24} />
-              <h2 className="text-xl font-bold text-emerald-900">Part A: Company & Registration Details</h2>
+          <section className="bg-white rounded border border-[#28a745] shadow-sm overflow-hidden">
+            <div className="bg-[#28a745] text-white px-4 py-2">
+              <h2 className="text-[15px] font-bold m-0">Part A: Company & Registration Details</h2>
             </div>
             
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
+            <div className="p-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
                 {Object.entries(partA)
                   .filter(([k]) => !['id', 'created_at', 'updated_at'].includes(k))
                   .map(([key, value]) => (
                     <React.Fragment key={key}>
-                      {renderField(key.replace(/_/g, ' ').toUpperCase(), value)}
+                      {renderField(key.replace(/_/g, ' '), value)}
                     </React.Fragment>
                 ))}
               </div>
@@ -176,19 +198,18 @@ export default function EprNewApplicationData() {
 
         {/* PART B */}
         {partB && (
-          <section className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-            <div className="bg-blue-50 border-b border-blue-100 px-6 py-4 flex items-center gap-3">
-              <Wrench className="text-blue-600" size={24} />
-              <h2 className="text-xl font-bold text-blue-900">Part B: Consent & Plant Machinery Details</h2>
+          <section className="bg-white rounded border border-[#28a745] shadow-sm overflow-hidden mt-6">
+            <div className="bg-[#28a745] text-white px-4 py-2">
+              <h2 className="text-[15px] font-bold m-0">Part B: Consent & Plant Machinery Details</h2>
             </div>
             
-            <div className="p-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-8 gap-y-2">
+            <div className="p-4">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-2">
                 {Object.entries(partB)
                   .filter(([k]) => !['id', 'created_at', 'updated_at'].includes(k))
                   .map(([key, value]) => (
                     <React.Fragment key={key}>
-                      {renderField(key.replace(/_/g, ' ').toUpperCase(), value)}
+                      {renderField(key.replace(/_/g, ' '), value)}
                     </React.Fragment>
                 ))}
               </div>

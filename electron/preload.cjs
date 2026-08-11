@@ -94,6 +94,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getInventory: () => ipcRenderer.invoke('eprData:getInventory'),
     getConversionFactor: () => ipcRenderer.invoke('eprData:getConversionFactor'),
     getNewApplicationData: () => ipcRenderer.invoke('eprData:getNewApplicationData'),
+    openDocument: (filename) => ipcRenderer.invoke('eprData:openDocument', filename),
   },
   // Local Production (User Entries)
   localProduction: {

@@ -215,6 +215,7 @@ async function extractEprNewApplication(page) {
                 if (!val) {
                     let rawText = container.innerText || '';
                     rawText = rawText.replace(labelElem.innerText, '').trim();
+                    rawText = rawText.replace(/upload|view|browse|please copy/ig, '').trim();
                     const lines = rawText.split('\n').map(l => l.trim()).filter(l => l);
                     if (lines.length > 0) {
                         val = lines[0];
@@ -317,6 +318,168 @@ async function extractEprNewApplication(page) {
         console.log(`\n--- UI EXTRACTION LOGS FOR STEP ${stepCount} ---`);
         logs.forEach(log => console.log(log));
         console.log(`----------------------------------------\n`);
+        
+        console.log(`📥 Attempting to download documents for Step ${stepCount}...`);
+        try {
+            const fileElements = await page.$$eval('.form-group, mat-form-field, td, div[class*="col-"]', els => {
+                const results = [];
+                els.forEach(container => {
+                    const text = (container.innerText || '').toLowerCase();
+                    const hasExt = text.includes('.pdf') || text.includes('.jpg') || text.includes('.jpeg') || text.includes('.png');
+                    const isViewBtn = text.includes('view');
+                    
+                    if ((hasExt || isViewBtn) && text.length < 200) {
+                        const clickables = Array.from(container.querySelectorAll('a, button, img, span.cursor-pointer'));
+                        // Find the one that actually says 'view' or looks like an eye icon
+                        let clickable = clickables.find(c => {
+                            const t = (c.innerText || c.title || c.className || '').toLowerCase();
+                            const s = (c.src || '').toLowerCase();
+                            return t.includes('view') || t.includes('eye') || s.includes('view') || s.includes('eye');
+                        });
+                        
+                        if (!clickable) {
+                            // Fallback to the last button (often 'View' comes after 'Upload')
+                            const btns = Array.from(container.querySelectorAll('a, button'));
+                            if (btns.length > 0) clickable = btns[btns.length - 1];
+                        }
+                        
+                        if (clickable) {
+                            if (!clickable.id) clickable.id = 'pwp-dl-elem-' + Math.random().toString(36).substring(7);
+                            
+                            // Get actual text of the field
+                            let val = '';
+                            const input = container.querySelector('input, textarea');
+                            if (input) val = input.value || input.getAttribute('value') || '';
+                            if (!val) {
+                                let rawText = container.innerText || '';
+                                const label = container.querySelector('label, mat-label');
+                                if (label) rawText = rawText.replace(label.innerText, '');
+                                rawText = rawText.replace(/upload|view|browse|please copy/ig, '').trim();
+                                const lines = rawText.split('\n').map(l=>l.trim()).filter(l=>l);
+                                if (lines.length > 0) val = lines[0];
+                            }
+                            
+                            results.push({
+                                id: clickable.id,
+                                text: text.substring(0, 50).replace(/\n/g, ' '),
+                                rawText: val.trim()
+                            });
+                        }
+                    }
+                });
+                return results;
+            });
+
+            const fs = require('fs');
+            const path = require('path');
+            const dlDir = path.join(__dirname, '..', '..', '..', 'data', 'downloads', 'new_application');
+            if (!fs.existsSync(dlDir)) {
+                fs.mkdirSync(dlDir, { recursive: true });
+            }
+
+            // Remove duplicates by ID or text to avoid clicking the same thing twice
+            const uniqueFiles = [];
+            const seenText = new Set();
+            for (const f of fileElements) {
+                if (!seenText.has(f.text)) {
+                    seenText.add(f.text);
+                    uniqueFiles.push(f);
+                }
+            }
+
+            for (const fElem of uniqueFiles) {
+                console.log(`   👉 Clicking element containing: "${fElem.text}"`);
+                try {
+                    // Start waiting for download, popup, or API response
+                    const downloadPromise = page.waitForEvent('download', { timeout: 3000 }).catch(() => null);
+                    const popupPromise = page.context().waitForEvent('page', { timeout: 3000 }).catch(() => null);
+                    const apiResponsePromise = page.waitForResponse(response => 
+                        response.url().includes('downloadById') && response.status() === 200, 
+                        { timeout: 5000 }
+                    ).catch(() => null);
+                    
+                    await page.evaluate((id) => {
+                        const el = document.getElementById(id);
+                        if (el) {
+                            // If it's a wrapper, try to find an inner clickable element
+                            const innerLink = el.querySelector('a, img[src*="eye"], img[src*="download"], img[src*="print"]');
+                            if (innerLink) {
+                                innerLink.click();
+                            } else {
+                                el.click();
+                            }
+                        }
+                    }, fElem.id);
+
+                    const [download, popup, apiResponse] = await Promise.all([downloadPromise, popupPromise, apiResponsePromise]);
+                    
+                    let savedFilename = null;
+
+                    if (apiResponse) {
+                        const buffer = await apiResponse.body();
+                        let ext = '.pdf';
+                        const contentType = apiResponse.headers()['content-type'] || '';
+                        if (contentType.includes('image/jpeg')) ext = '.jpg';
+                        else if (contentType.includes('image/png')) ext = '.png';
+                        
+                        let baseName = fElem.rawText ? fElem.rawText.replace(/[^a-zA-Z0-9_-]/g, '_') : 'document_' + fElem.id;
+                        savedFilename = baseName + ext;
+                        const dlPath = path.join(dlDir, savedFilename);
+                        fs.writeFileSync(dlPath, buffer);
+                        console.log(`   ✅ Downloaded via API: ${savedFilename}`);
+                        
+                    } else if (download) {
+                        savedFilename = download.suggestedFilename();
+                        const dlPath = path.join(dlDir, savedFilename);
+                        await download.saveAs(dlPath);
+                        console.log(`   ✅ Downloaded via direct download: ${savedFilename}`);
+                        
+                    } else if (popup) {
+                        await popup.waitForLoadState('domcontentloaded').catch(() => {});
+                        const popupUrl = popup.url();
+                        console.log(`   🔗 Opened in new tab. URL: ${popupUrl}`);
+                        
+                        try {
+                            const response = await popup.request.get(popupUrl);
+                            const buffer = await response.body();
+                            
+                            savedFilename = popupUrl.split('/').pop().split('?')[0];
+                            if (!savedFilename || savedFilename.length < 3 || !savedFilename.includes('.')) {
+                                let baseName = fElem.rawText ? fElem.rawText.replace(/[^a-zA-Z0-9_-]/g, '_') : 'document_' + fElem.id;
+                                savedFilename = baseName + '.pdf';
+                            }
+                            
+                            const dlPath = path.join(dlDir, savedFilename);
+                            fs.writeFileSync(dlPath, buffer);
+                            console.log(`   ✅ Saved content from popup to: ${savedFilename}`);
+                        } catch (err) {
+                            console.log(`   ❌ Failed to fetch content from popup: ${err.message}`);
+                        }
+                        await popup.close();
+                    } else {
+                        console.log(`   ❌ No download, popup, or API response triggered.`);
+                    }
+
+                    // Update extracted data memory map
+                    if (savedFilename && fElem.rawText && fElem.rawText.trim().length > 3) {
+                        const originalText = fElem.rawText.trim().toLowerCase();
+                        for (let key in extracted) {
+                            let val = extracted[key];
+                            if (typeof val === 'string' && val.toLowerCase().includes(originalText) && !val.includes('.')) {
+                                extracted[key] = savedFilename; // Use the file name instead of raw text!
+                                console.log(`   📝 Updated DB record [${key}] with file: ${savedFilename}`);
+                            }
+                        }
+                    }
+
+                } catch (e) {
+                    console.log(`   ❌ Failed to interact with document: ${e.message}`);
+                }
+                await page.waitForTimeout(500);
+            }
+        } catch (e) {
+            console.error(`   ❌ Document extraction failed:`, e);
+        }
 
         if (stepCount === 1) {
             Object.assign(applicationData.part_a, extracted);

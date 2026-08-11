@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { ArrowLeft, Wallet, TrendingUp, Package, History, ArrowDownRight, IndianRupee, Calendar, FileText, AlertCircle, RefreshCw, Scale, CreditCard, Edit2, Check, X, ShieldCheck } from 'lucide-react';
 import { getApi } from '../utils/pwpApi.js';
 import { useToast, Toast } from '../components/Toast.jsx';
+import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 
 export default function ScrapedDashboard({ company, onBack }) {
   const [profile, setProfile] = useState(null);
@@ -11,7 +12,7 @@ export default function ScrapedDashboard({ company, onBack }) {
   const [sales, setSales] = useState([]);
   const [payments, setPayments] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState('procurement');
+  const [activeTab, setActiveTab] = useState('dashboard');
   const [selectedYear, setSelectedYear] = useState(2025);
   const [dashboardCards, setDashboardCards] = useState(null);
   const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
@@ -191,8 +192,34 @@ export default function ScrapedDashboard({ company, onBack }) {
         </div>
       </div>
 
-      {/* EPR Dashboard Structured Cards */}
-      {dashboardCards && (
+      {/* Tabs */}
+      <div className="flex border-b border-slate-200 mb-6 mt-4">
+        <button
+          className={`py-3 px-6 font-semibold text-sm transition-colors border-b-2 ${
+            activeTab === 'dashboard' 
+              ? 'border-indigo-600 text-indigo-700 bg-indigo-50/50' 
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+          onClick={() => setActiveTab('dashboard')}
+        >
+          Dashboard Overview
+        </button>
+        <button
+          className={`py-3 px-6 font-semibold text-sm transition-colors border-b-2 ${
+            activeTab === 'new_application' 
+              ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' 
+              : 'border-transparent text-slate-500 hover:text-slate-800 hover:bg-slate-50'
+          }`}
+          onClick={() => setActiveTab('new_application')}
+        >
+          New Application Data
+        </button>
+      </div>
+
+      {activeTab === 'dashboard' && (
+        <>
+          {/* EPR Dashboard Structured Cards */}
+          {dashboardCards && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-5">
           {/* Annual Filings */}
           <div className="bg-white p-6 rounded-3xl border border-slate-100 shadow-sm hover:shadow-xl hover:shadow-purple-500/5 hover:-translate-y-1 transition-all duration-300 relative overflow-hidden group">
@@ -408,6 +435,15 @@ export default function ScrapedDashboard({ company, onBack }) {
           </div>
         </div>
       </div>
+        </>
+      )}
+
+      {activeTab === 'new_application' && (
+        <div className="mt-4">
+          <EprNewApplicationData />
+        </div>
+      )}
+
       <Toast toast={toast} onClose={hideToast} />
     </div>
   );
