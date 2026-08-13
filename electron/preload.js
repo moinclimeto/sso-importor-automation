@@ -79,10 +79,12 @@ contextBridge.exposeInMainWorld('pwp', {
   // Scraper
   scraper: {
     startRegistrationFlow: (payload) => ipcRenderer.invoke('scraper:startRegistrationFlow', payload),
-    submitEmailOtp: (otp) => ipcRenderer.invoke('scraper:submitEmailOtp', otp),
+    submitEmailOtp: (payload) => ipcRenderer.invoke('scraper:submitEmailOtp', payload),
     resendEmailOtp: () => ipcRenderer.invoke('scraper:resendEmailOtp'),
     submitMobileOtp: (payload) => ipcRenderer.invoke('scraper:submitMobileOtp', payload),
     resendMobileOtp: () => ipcRenderer.invoke('scraper:resendMobileOtp'),
+    submitRegistrationCaptcha: (payload) => ipcRenderer.invoke('scraper:submitRegistrationCaptcha', payload),
+    refreshRegistrationCaptcha: () => ipcRenderer.invoke('scraper:refreshRegistrationCaptcha'),
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),

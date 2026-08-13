@@ -27,6 +27,8 @@ import {
   resendEmailOtp,
   submitMobileOtp,
   resendMobileOtp,
+  submitRegistrationCaptcha,
+  refreshRegistrationCaptcha,
   closeRegistrationSession
 } from './cpcbRegistration.js';
 
@@ -809,26 +811,9 @@ export function registerIpcHandlers() {
 
   // ─── REGISTRATION ──────────────────────────────────────────────
   ipcMain.handle('registration:save', async (_, data) => {
-    const db = getDb();
     try {
-      // Add column if it doesn't exist to handle existing tables
-      try {
-        await db.run('ALTER TABLE registration_details ADD COLUMN sub_applicant_type TEXT');
-      } catch (e) {
-        // Ignore error if column already exists
-      }
-
-      // Check if registration already exists
-      const existing = await db.get('SELECT _internal_id FROM registration_details LIMIT 1');
-      if (existing) {
-        return { success: true, id: existing._internal_id, inserted: false };
-      }
-
-      const result = await db.run(
-        'INSERT INTO registration_details (applicant_type, sub_applicant_type) VALUES (?, ?)',
-        data.applicant_type, data.sub_applicant_type
-      );
-      return { success: true, id: result.lastID, inserted: true };
+      const { saveRegistrationDetails } = await import('./registrationDb.js');
+      return await saveRegistrationDetails(data);
     } catch (err) {
       console.error('registration:save error', err);
       return { success: false, error: err.message };
@@ -842,20 +827,31 @@ export function registerIpcHandlers() {
     });
   });
   
-  ipcMain.handle('scraper:submitEmailOtp', async (_, otp) => {
-    return await submitEmailOtp(otp);
+  ipcMain.handle('scraper:submitEmailOtp', async (event, payload) => {
+    const otp = typeof payload === 'string' ? payload : payload?.otp;
+    const mobile = typeof payload === 'object' ? payload?.mobile : undefined;
+    return await submitEmailOtp(otp, mobile, (msg) => event.sender.send('scraper:log', msg));
   });
   
   ipcMain.handle('scraper:resendEmailOtp', async (event) => {
     return await resendEmailOtp((msg) => event.sender.send('scraper:log', msg));
   });
   
-  ipcMain.handle('scraper:submitMobileOtp', async (_, { mobile, otp }) => {
-    return await submitMobileOtp(mobile, otp);
+  ipcMain.handle('scraper:submitMobileOtp', async (event, payload) => {
+    return await submitMobileOtp(payload, (msg) => event.sender.send('scraper:log', msg));
   });
   
   ipcMain.handle('scraper:resendMobileOtp', async (event) => {
     return await resendMobileOtp((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:submitRegistrationCaptcha', async (event, payload) => {
+    const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
+    return await submitRegistrationCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:refreshRegistrationCaptcha', async (event) => {
+    return await refreshRegistrationCaptcha((msg) => event.sender.send('scraper:log', msg));
   });
 
   ipcMain.handle('scraper:closeRegistrationSession', async () => {

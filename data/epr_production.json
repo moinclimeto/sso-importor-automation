@@ -1,0 +1,62 @@
+{
+  "tables": [
+    [
+      [
+        "Production (MT)",
+        "Waste Used (MT)"
+      ],
+      [
+        "2,75,664",
+        "4,797.77"
+      ]
+    ],
+    [
+      [
+        "Sr. No.",
+        "From Date",
+        "To Date",
+        "QTY of Clinker Produced (MT)",
+        "Qualifying Feed (MT) / Solid Waste Burnt (MT)",
+        "Qty of PW processed for Cat I (MT)",
+        "Qty of PW processed for Cat II (MT)",
+        "Qty of PW processed for Cat III (MT)",
+        "Qty of PW processed for Cat IV (MT)",
+        "Energy contibution by alternative fuel (MSW/RDF)",
+        "Date of Entry",
+        "Action"
+      ],
+      [
+        "1",
+        "01-01-2026",
+        "31-01-2026",
+        "7,139.61",
+        "4,797.77",
+        "0",
+        "3,118.55",
+        "0",
+        "0",
+        "5.66",
+        "10-06-2026",
+        ""
+      ]
+    ]
+  ],
+  "rawText": "केंद्रीय प्रदूषण नियंत्रण बोर्ड\n\nCentral Pollution Control Board​\n\nPrism Johnson Limited\nUnit ID : 12548\nAll Applications\n\nSD\n\nSUMITABH DWIVEDI\n\ndashboard\nDashboard\nreport\nOperations\naccount_balance_wallet\nWallet\nevent_note\nAnnual Filings\nedit_document\nAmendment\npublic\nEnvironment Compensation\nsavings\nPayment History\nsupport_agent\nGrievances\nOperations\nProduction Details\nBulk Entry\nSingle Entry\nTest Report & Conversion Factor\nProduction Details\nWaste Available for Production\nDay\nMonth\nYear\nFrom Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nTo Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nFetch Data\nNote: Will be showing yearly totals from 01 Jan 2026 to 11 Aug 2026.\nData are fetched based on date of entry.\nDownload\nDownload\nProduction (MT)\tWaste Used (MT)\n\n2,75,664\n\t\n4,797.77\nDownload\nSr. No.\tFrom Date\tTo Date\tQTY of Clinker Produced (MT)\tQualifying Feed (MT) / Solid Waste Burnt (MT)\tQty of PW processed for Cat I (MT)\tQty of PW processed for Cat II (MT)\tQty of PW processed for Cat III (MT)\tQty of PW processed for Cat IV (MT)\tEnergy contibution by alternative fuel (MSW/RDF)\tDate of Entry\tAction\n\n1\n\t\n01-01-2026\n\t\n31-01-2026\n\t\n7,139.61\n\t\n4,797.77\n\t\n0\n\t\n3,118.55\n\t\n0\n\t\n0\n\t\n5.66\n\t\n10-06-2026\n\t",
+  "conversionFactor": [
+    {
+      "sr_no": "1",
+      "conversion_factor": "3071.05",
+      "last_updated": "05-07-2023 03:56 PM"
+    },
+    {
+      "sr_no": "2",
+      "conversion_factor": "3071.05",
+      "last_updated": "05-07-2023 03:56 PM"
+    },
+    {
+      "sr_no": "3",
+      "conversion_factor": "3083.61",
+      "last_updated": "14-02-2023 04:37 PM"
+    }
+  ]
+}

@@ -1,0 +1,94 @@
+{
+  "tables": [
+    [
+      [
+        "Procurement Summary (MT)",
+        "2026",
+        "Total"
+      ],
+      [
+        "Waste Procured",
+        "11,438.39",
+        "11,438.39"
+      ]
+    ],
+    [
+      [
+        "Sr. No.",
+        "Supplier Name",
+        "Address Line 1",
+        "Address Line 2",
+        "City",
+        "State",
+        "Pincode",
+        "Suplier GST Number",
+        "Invoice Number/GST E-Invoice No.",
+        "Qty. of Feed (MT)",
+        "Procurement Date",
+        "Date of Entry",
+        "Action"
+      ],
+      [
+        "1",
+        "BABA KINARAM ENTERPRISES",
+        "HARAURA, AMILIYA, Chandauli",
+        "SHAHAB GANJ",
+        "Chandauli",
+        "Uttar Pradesh",
+        "232118",
+        "09LGRPK9556M1ZZ",
+        "94",
+        "903.27",
+        "31-01-2026",
+        "23-03-2026",
+        ""
+      ],
+      [
+        "2",
+        "BABA KINARAM ENTERPRISES",
+        "HARAURA, AMILIYA, Chandauli",
+        "SHAHAB GANJ",
+        "Chandauli",
+        "Uttar Pradesh",
+        "232118",
+        "09LGRPK9556M1ZZ",
+        "91",
+        "820.55",
+        "22-01-2026",
+        "23-03-2026",
+        ""
+      ],
+      [
+        "3",
+        "NSS ENTERPRISES",
+        "Ground, NS Shetty Group, NS Shetty Group",
+        "VJ Patil Marg Jogani Industrial Complex Chuna Bhatti",
+        "Mumbai",
+        "Maharashtra",
+        "400022",
+        "27AAXFN5388B1ZP",
+        "RDF-07/25-26",
+        "494.12",
+        "21-01-2026",
+        "23-03-2026",
+        ""
+      ],
+      [
+        "4",
+        "BABA KINARAM ENTERPRISES",
+        "HARAURA, AMILIYA, Chandauli",
+        "SHAHAB GANJ",
+        "Chandauli",
+        "Uttar Pradesh",
+        "232118",
+        "09LGRPK9556M1ZZ",
+        "89",
+        "567.53",
+        "14-01-2026",
+        "23-03-2026",
+        ""
+      ]
+    ]
+  ],
+  "rawText": "केंद्रीय प्रदूषण नियंत्रण बोर्ड\n\nCentral Pollution Control Board​\n\nPrism Johnson Limited\nUnit ID : 12548\nAll Applications\n\nSD\n\nSUMITABH DWIVEDI\n\ndashboard\nDashboard\nreport\nOperations\naccount_balance_wallet\nWallet\nevent_note\nAnnual Filings\nedit_document\nAmendment\npublic\nEnvironment Compensation\nsavings\nPayment History\nsupport_agent\nGrievances\nOperations\nProcurement Details\nVerify Details\nInvoice Validation\nBulk Entry\nSingle Entry\nProcurement Details\nDay\nMonth\nYear\nFrom Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nTo Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nFetch Data\nNote: Will be showing yearly totals from 01 Jan 2026 to 11 Aug 2026.\nData are fetched based on date of procurement.\nDownload\nDownload\nProcurement Summary (MT)\t2026\tTotal\n\nWaste Procured\n\t\n11,438.39\n\t\n11,438.39\nDownload\nSr. No.\tSupplier Name\tAddress Line 1\tAddress Line 2\tCity\tState\tPincode\tSuplier GST Number\tInvoice Number/GST E-Invoice No.\tQty. of Feed (MT)\tProcurement Date\tDate of Entry\tAction\n\n1\n\t\nBABA KINARAM ENTERPRISES\n\t\nHARAURA, AMILIYA, Chandauli\n\t\nSHAHAB GANJ\n\t\nChandauli\n\t\nUttar Pradesh\n\t\n232118\n\t\n09LGRPK9556M1ZZ\n\t\n94\n\t\n903.27\n\t\n31-01-2026\n\t\n23-03-2026\n\t\n\n\n2\n\t\nBABA KINARAM ENTERPRISES\n\t\nHARAURA, AMILIYA, Chandauli\n\t\nSHAHAB GANJ\n\t\nChandauli\n\t\nUttar Pradesh\n\t\n232118\n\t\n09LGRPK9556M1ZZ\n\t\n91\n\t\n820.55\n\t\n22-01-2026\n\t\n23-03-2026\n\t\n\n\n3\n\t\nNSS ENTERPRISES\n\t\nGround, NS Shetty Group, NS Shetty Group\n\t\nVJ Patil Marg Jogani Industrial Complex Chuna Bhatti\n\t\nMumbai\n\t\nMaharashtra\n\t\n400022\n\t\n27AAXFN5388B1ZP\n\t\nRDF-07/25-26\n\t\n494.12\n\t\n21-01-2026\n\t\n23-03-2026\n\t\n\n\n4\n\t\nBABA KINARAM ENTERPRISES\n\t\nHARAURA, AMILIYA, Chandauli\n\t\nSHAHAB GANJ\n\t\nChandauli\n\t\nUttar Pradesh\n\t\n232118\n\t\n09LGRPK9556M1ZZ\n\t\n89\n\t\n567.53\n\t\n14-01-2026\n\t\n23-03-2026\n\t"
+}

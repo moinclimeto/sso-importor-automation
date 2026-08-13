@@ -1,0 +1,58 @@
+[
+  {
+    "Sr. No.": "1",
+    "From Date": "01-11-2023",
+    "To Date": "30-11-2023",
+    "QTY of Clinker Produced (MT)": "0.0464",
+    "Qualifying Feed (MT) / Solid Waste Burnt (MT)": "154.946",
+    "Qty of PW processed for Cat I (MT)": "0",
+    "Qty of PW processed for Cat II (MT)": "123.957",
+    "Qty of PW processed for Cat III (MT)": "0",
+    "Qty of PW processed for Cat IV (MT)": "0",
+    "Energy contibution by alternative fuel (MSW/RDF)": "0.09",
+    "Date of Entry": "09-07-2024",
+    "Action": ""
+  },
+  {
+    "Sr. No.": "2",
+    "From Date": "01-12-2023",
+    "To Date": "31-12-2023",
+    "QTY of Clinker Produced (MT)": "0.4432",
+    "Qualifying Feed (MT) / Solid Waste Burnt (MT)": "265.736",
+    "Qty of PW processed for Cat I (MT)": "0",
+    "Qty of PW processed for Cat II (MT)": "207.274",
+    "Qty of PW processed for Cat III (MT)": "0",
+    "Qty of PW processed for Cat IV (MT)": "0",
+    "Energy contibution by alternative fuel (MSW/RDF)": "0.1",
+    "Date of Entry": "09-07-2024",
+    "Action": ""
+  },
+  {
+    "Sr. No.": "3",
+    "From Date": "01-02-2023",
+    "To Date": "28-02-2023",
+    "QTY of Clinker Produced (MT)": "0.0737",
+    "Qualifying Feed (MT) / Solid Waste Burnt (MT)": "1,055.99",
+    "Qty of PW processed for Cat I (MT)": "0",
+    "Qty of PW processed for Cat II (MT)": "791.994",
+    "Qty of PW processed for Cat III (MT)": "0",
+    "Qty of PW processed for Cat IV (MT)": "0",
+    "Energy contibution by alternative fuel (MSW/RDF)": "0.42",
+    "Date of Entry": "28-07-2023",
+    "Action": ""
+  },
+  {
+    "Sr. No.": "4",
+    "From Date": "01-03-2023",
+    "To Date": "31-03-2023",
+    "QTY of Clinker Produced (MT)": "0.0268",
+    "Qualifying Feed (MT) / Solid Waste Burnt (MT)": "793.059",
+    "Qty of PW processed for Cat I (MT)": "0",
+    "Qty of PW processed for Cat II (MT)": "594.794",
+    "Qty of PW processed for Cat III (MT)": "0",
+    "Qty of PW processed for Cat IV (MT)": "0",
+    "Energy contibution by alternative fuel (MSW/RDF)": "0.32",
+    "Date of Entry": "28-07-2023",
+    "Action": ""
+  }
+]

@@ -1,0 +1,37 @@
+{
+  "statusCode": 200,
+  "message": "Request successful",
+  "timestamp": "2026-08-11T10:50:27.538Z",
+  "path": "/api/v1/wallet/certificate-category",
+  "requestId": "31f9fa03-39f2-458f-b758-c4b686682377",
+  "data": [
+    {
+      "eprCertificateTypeId": 2,
+      "eprCertificateTypeName": "EoL",
+      "categoryId": 1,
+      "category": "Cat-I",
+      "certificateCategrory": "Cat-I EoL"
+    },
+    {
+      "eprCertificateTypeId": 2,
+      "eprCertificateTypeName": "EoL",
+      "categoryId": 2,
+      "category": "Cat-II",
+      "certificateCategrory": "Cat-II EoL"
+    },
+    {
+      "eprCertificateTypeId": 2,
+      "eprCertificateTypeName": "EoL",
+      "categoryId": 3,
+      "category": "Cat-III",
+      "certificateCategrory": "Cat-III EoL"
+    },
+    {
+      "eprCertificateTypeId": 2,
+      "eprCertificateTypeName": "EoL",
+      "categoryId": 4,
+      "category": "Cat-IV",
+      "certificateCategrory": "Cat-IV EoL"
+    }
+  ]
+}

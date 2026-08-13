@@ -1,0 +1,13 @@
+{
+  "statusCode": 200,
+  "message": "Request successful",
+  "timestamp": "2026-08-11T10:50:27.381Z",
+  "path": "/api/v1/wallet/epr-certificate-type",
+  "requestId": "a74f0ad8-d560-44f5-897a-07c62bc91ed3",
+  "data": [
+    {
+      "eprCertificateTypeId": 2,
+      "eprCertificateTypeName": "EoL"
+    }
+  ]
+}

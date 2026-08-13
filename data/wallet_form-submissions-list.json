@@ -1,0 +1,32 @@
+{
+  "form_type": "wallet_verification",
+  "page": 1,
+  "limit": 50,
+  "total": 1,
+  "allTrue": true,
+  "items": [
+    {
+      "id": 893,
+      "form_schema_id": 7,
+      "data": {
+        "remarks": "",
+        "unit_id": null,
+        "document_id": null,
+        "wallet_cards": true,
+        "epr_available": true,
+        "epr_generation": true,
+        "epr_debit_credit": true,
+        "applicationNumber": "95510",
+        "certificate_expiry": true
+      },
+      "created_on": "2026-07-22T10:19:31.338Z",
+      "sso_id": "S202607-00007937",
+      "email": "pwp.unit2@prismjohnson.in",
+      "company_legal_name": "PRISM JOHNSON LIMITED",
+      "company_trade_name": "PRISM JOHNSON LIMITED (CEMENT DIVISION - UNIT II)",
+      "unit_id": null,
+      "role": "PWP",
+      "allTrue": true
+    }
+  ]
+}
