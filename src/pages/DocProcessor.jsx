@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ArrowRight, Folder, CheckCircle, Factory, FileText } from 'lucide-react';
+import { Package, ArrowRight, Folder, CheckCircle, Factory } from 'lucide-react';
 
 const categories = [
   {
@@ -31,37 +31,25 @@ const categories = [
     icon: Factory,
     route: '/production-entry'
   },
-  {
-    type: 'company_document',
-    title: 'Document Process',
-    description: 'Process general documents like GST, PAN, CIN, CTO, etc.',
-    color: 'from-purple-500 to-fuchsia-400',
-    bgLight: 'bg-purple-50',
-    textDark: 'text-purple-700',
-    icon: FileText,
-    route: '/doc-upload'
-  },
 ];
 
 export default function DocProcessor() {
   const navigate = useNavigate();
-  const [counts, setCounts] = useState({ purchase: 0, sale: 0, production: 0, company_document: 0 });
+  const [counts, setCounts] = useState({ purchase: 0, sale: 0, production: 0 });
 
   useEffect(() => {
     const load = async () => {
       if (!window.pwp) return;
       try {
-        const [purchases, sales, productions, companyDocuments] = await Promise.all([
+        const [purchases, sales, productions] = await Promise.all([
           window.pwp.purchases.getAll(),
           window.pwp.sales.getAll(),
           window.pwp.localProduction ? window.pwp.localProduction.getAll() : Promise.resolve([]),
-          window.pwp.documents ? window.pwp.documents.getAll() : Promise.resolve([]),
         ]);
         setCounts({
           purchase: purchases?.length || 0,
           sale: sales?.length || 0,
           production: productions?.length || 0,
-          company_document: companyDocuments?.length || 0,
         });
       } catch {
         /* ignore */
@@ -70,7 +58,7 @@ export default function DocProcessor() {
     load();
   }, []);
 
-  const totalRecords = counts.purchase + counts.sale + counts.production + counts.company_document;
+  const totalRecords = counts.purchase + counts.sale + counts.production;
 
   return (
     <div className="space-y-6 w-full py-2">

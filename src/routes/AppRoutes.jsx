@@ -21,6 +21,7 @@ import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
+import RegistrationForm from '../pages/RegistrationForm.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -59,6 +60,7 @@ export default function AppRoutes() {
           <Route path="doc-table" element={<DocTable />} />
           <Route path="production-entry" element={<ProductionEntryPage />} />
           <Route path="credit-calculations" element={<CreditCalculations />} />
+          <Route path="registration-form" element={<RegistrationForm />} />
         </Route>
       </Routes>
     </BrowserRouter>

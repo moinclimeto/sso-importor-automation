@@ -48,6 +48,7 @@ export async function initDatabase(onDbReadyCallback) {
     CREATE TABLE IF NOT EXISTS production_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, year INTEGER);
     CREATE TABLE IF NOT EXISTS conversion_factor (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
     CREATE TABLE IF NOT EXISTS new_application (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
+    CREATE TABLE IF NOT EXISTS registration_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, applicant_type TEXT, sub_applicant_type TEXT, cepr_id TEXT, success_screenshot_path TEXT);
   `);
 }
 

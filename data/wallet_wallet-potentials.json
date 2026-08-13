@@ -1,0 +1,23 @@
+{
+  "statusCode": 200,
+  "message": "Request successful",
+  "timestamp": "2026-08-11T10:50:28.301Z",
+  "path": "/api/v1/wallet/potentials",
+  "requestId": "538436d6-e840-4b50-a9fb-5cab5e2e4646",
+  "data": [
+    {
+      "availablePotential": 27887.23,
+      "usedPotential": 26005,
+      "totalCertificateValue": 1,
+      "categoryId": 2,
+      "eprCertificateTypeId": 2,
+      "category": "Cat-II",
+      "eprCertificateType": "EoL",
+      "cumulativePotential": 53892.23,
+      "availableCertificateCount": 1,
+      "flagged": 0,
+      "flaggedCertificateValue": 0,
+      "processingCapacity": 60000
+    }
+  ]
+}

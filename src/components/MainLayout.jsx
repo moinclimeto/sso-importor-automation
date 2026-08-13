@@ -145,6 +145,28 @@ function MainLayoutInner() {
   const [syncingEpr, setSyncingEpr] = useState(false);
   const [myCompany, setMyCompany] = useState(null);
   const { toast, showToast, hideToast } = useToast();
+  const [showRegistrationModal, setShowRegistrationModal] = useState(false);
+
+  const handleRegistrationConfirm = async () => {
+    try {
+      const res = await window.pwp.registration.save({ 
+        applicant_type: 'PWP', 
+        sub_applicant_type: 'Cement Co-processing' 
+      });
+      if (res.success) {
+        if (res.inserted) {
+          showToast('Registration details saved successfully!', 'success');
+        }
+        navigate('/registration-form');
+      } else {
+        showToast('Failed to save registration: ' + res.error, 'error');
+      }
+    } catch (err) {
+      showToast('Error saving registration: ' + err.message, 'error');
+    } finally {
+      setShowRegistrationModal(false);
+    }
+  };
 
   useEffect(() => {
     if (window.pwp?.companies) {
@@ -195,6 +217,8 @@ function MainLayoutInner() {
     logout();
     navigate('/login');
   };
+
+  const showRegistrationBtn = !isDocSection && location.pathname !== '/registration-form';
 
   return (
     <div className="flex h-screen bg-[#f7f8fa] overflow-hidden">
@@ -276,6 +300,16 @@ function MainLayoutInner() {
           <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
             {pageHeader?.actions}
 
+            {showRegistrationBtn && (
+              <button
+                type="button"
+                onClick={() => setShowRegistrationModal(true)}
+                className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-white hover:bg-green-50 text-green-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
+              >
+                Registration
+              </button>
+            )}
+
             {baseHeader.showUpload && (
               <button
                 type="button"
@@ -316,6 +350,38 @@ function MainLayoutInner() {
           <Toast toast={toast} onClose={hideToast} />
           <Outlet />
         </div>
+
+        {showRegistrationModal && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+            <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+              <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+                <h3 className="text-lg font-semibold text-slate-800">Confirm Registration</h3>
+                <button onClick={() => setShowRegistrationModal(false)} className="text-slate-400 hover:text-slate-600">
+                  <X size={20} />
+                </button>
+              </div>
+              <div className="p-6">
+                <p className="text-slate-600">
+                  registration for your applicant type PWP and Cement Co-processing
+                </p>
+              </div>
+              <div className="px-6 py-4 bg-slate-50 border-t border-slate-100 flex justify-end gap-3">
+                <button
+                  onClick={() => setShowRegistrationModal(false)}
+                  className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleRegistrationConfirm}
+                  className="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 transition-colors"
+                >
+                  Confirm
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </main>
     </div>
   );

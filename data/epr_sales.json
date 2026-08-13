@@ -1,0 +1,39 @@
+{
+  "tables": [
+    [
+      [
+        "Qty of Clinker Sold (MT)",
+        "Potential Generated"
+      ],
+      [
+        "734465.693305",
+        "5280.796797"
+      ]
+    ],
+    [
+      [
+        "Sr. No.",
+        "Seller GST No",
+        "Name of the Entity",
+        "Address",
+        "District",
+        "State/Country",
+        "Total Qty. of Product Sold (Tonnes)",
+        "Total Invoice Value",
+        "Date of Sale",
+        "Invoice No",
+        "Total Potential Generated for CAT-I",
+        "Total Potential Generated for CAT-II",
+        "Total Potential Generated for CAT-III",
+        "Total Potential Generated for CAT-IV",
+        "Potential Generation Status",
+        "e-Invoice File",
+        "Action"
+      ],
+      [
+        "No data available"
+      ]
+    ]
+  ],
+  "rawText": "केंद्रीय प्रदूषण नियंत्रण बोर्ड\n\nCentral Pollution Control Board​\n\nPrism Johnson Limited\nUnit ID : 12548\nAll Applications\n\nSD\n\nSUMITABH DWIVEDI\n\ndashboard\nDashboard\nreport\nOperations\naccount_balance_wallet\nWallet\nevent_note\nAnnual Filings\nedit_document\nAmendment\npublic\nEnvironment Compensation\nsavings\nPayment History\nsupport_agent\nGrievances\nOperations\nSales Details\nInvoice Validation\nBulk Entry\nSingle Entry\nSales Details\nDay\nMonth\nYear\nFrom Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nTo Year\n2020\n2021\n2022\n2023\n2024\n2025\n2026\nFetch Data\nNote: Will be showing yearly totals from 01 Jan 2026 to 11 Aug 2026.\nData are fetched based on Date of Sales.\nDownload\nDownload\nQty of Clinker Sold (MT)\tPotential Generated\n\n734465.693305\n\t\n5280.796797\nDownload\nSr. No.\tSeller GST No\tName of the Entity\tAddress\tDistrict\tState/Country\tTotal Qty. of Product Sold (Tonnes)\tTotal Invoice Value\tDate of Sale\tInvoice No\tTotal Potential Generated for CAT-I\tTotal Potential Generated for CAT-II\tTotal Potential Generated for CAT-III\tTotal Potential Generated for CAT-IV\tPotential Generation Status\te-Invoice File\tAction\nNo data available"
+}
