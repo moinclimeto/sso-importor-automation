@@ -51,7 +51,12 @@ export default function EprNewApplicationData() {
       alert('File opener not ready. Please restart the app if you just updated it.');
       return;
     }
-    const res = await window.pwp.eprData.openDocument(filename);
+    
+    // Extract just the filename if it has extra text (e.g., "View Document XYZ.pdf")
+    const match = filename.match(/[a-zA-Z0-9_-]+\.(pdf|jpg|jpeg|png|JPG|JPEG|PNG)/);
+    const cleanFilename = match ? match[0] : filename;
+    
+    const res = await window.pwp.eprData.openDocument(cleanFilename);
     if (!res.success) {
       alert(`Could not open file: ${res.error}`);
     }

@@ -16,6 +16,13 @@ contextBridge.exposeInMainWorld('pwp', {
     update: (data) => ipcRenderer.invoke('companies:update', data),
     delete: (id) => ipcRenderer.invoke('companies:delete', id),
   },
+  // Documents
+  documents: {
+    getAll: () => ipcRenderer.invoke('documents:getAll'),
+    add: (data) => ipcRenderer.invoke('documents:add', data),
+    delete: (id) => ipcRenderer.invoke('documents:delete', id),
+    getStats: () => ipcRenderer.invoke('documents:getStats'),
+  },
   // Purchases
   purchases: {
     getAll: (filters) => ipcRenderer.invoke('purchases:getAll', filters),
