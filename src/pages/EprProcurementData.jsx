@@ -144,7 +144,7 @@ export default function EprProcurementData() {
                     <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs">{r.supplier_gst_no || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 font-mono text-xs text-slate-700">{r.invoice_no || 'N/A'}</td>
                     <td className="px-4 py-3 border-r border-slate-100 text-right font-semibold text-teal-700">
-                      {r.qty_plastic_waste_mt?.toFixed(2) || '0.00'}
+                      {Number(r.qty_plastic_waste_mt || 0).toFixed(2)}
                     </td>
                     <td className="px-4 py-3 border-r border-slate-100 text-slate-600 whitespace-nowrap">
                       {r.procurement_date ? new Date(r.procurement_date).toLocaleDateString('en-IN') : 'N/A'}

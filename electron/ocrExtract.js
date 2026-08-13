@@ -106,7 +106,7 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
         return `OCR Company Document. IDENTIFY the document type and extract accordingly. JSON only minified. 
         Determine "doc_type" from: [gst, pan, cin, cto, electricity, udyam, other].
         If gst: Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. (document_number=GSTIN)
-        If pan: Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","issue_date":"YYYY-MM-DD"}. (document_number=PAN, if 4th letter 'C' set doc_type="company_pan" else "person_pan")
+        If pan: Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","dob":"YYYY-MM-DD","issue_date":"YYYY-MM-DD"}. (document_number=PAN, if 4th letter 'C' set doc_type="company_pan" else "person_pan". For person_pan: dob=Date of Birth on card as YYYY-MM-DD, also copy to issue_date. For company_pan: dob="", issue_date=Date of Incorporation if printed.)
         If cin: Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}.
         If cto: Extract: {"doc_type":"cto","document_number":"","entity_name":"","address":"","industry_category":"","allowed_capacity":"","issue_date":"YYYY-MM-DD","validity_date":"YYYY-MM-DD"}.
         If electricity: Extract: {"doc_type":"electricity","document_number":"","entity_name":"","address":"","provider":"","issue_date":"YYYY-MM-DD","due_date":"YYYY-MM-DD","billing_month":"","units_consumed":0,"amount":0}.
@@ -115,7 +115,7 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
       case 'gst':
         return `OCR GST Certificate. JSON only minified. Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. RULES: document_number=GSTIN. entity_name=Legal Name. trade_name=Trade Name. issue_date=Date of Registration.`;
       case 'pan':
-        return `OCR PAN Card. JSON only minified. Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","issue_date":"YYYY-MM-DD"}. RULES: document_number=PAN number. If 4th letter of PAN is 'C' set doc_type="company_pan", otherwise set doc_type="person_pan". entity_name=Name. father_name=Father's Name (blank if company). issue_date=Date of Birth or Incorporation.`;
+        return `OCR PAN Card. JSON only minified. Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","dob":"YYYY-MM-DD","issue_date":"YYYY-MM-DD"}. RULES: document_number=PAN number. If 4th letter of PAN is 'C' set doc_type="company_pan", otherwise set doc_type="person_pan". entity_name=Name on card. father_name=Father's Name (blank if company). For person_pan: dob=Date of Birth exactly as on card converted to YYYY-MM-DD (look for "DOB", "Date of Birth", birth date field). Set issue_date same as dob. For company_pan: dob="", issue_date=Date of Incorporation if present.`;
       case 'cin':
         return `OCR CIN/Incorporation Certificate. JSON only minified. Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}. RULES: document_number=Corporate Identity Number (CIN). entity_name=Name of Company. issue_date=Date of Incorporation (YYYY-MM-DD, or just YYYY if full date missing). address=Registered Office Address.`;
       case 'cto':

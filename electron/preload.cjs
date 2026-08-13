@@ -52,6 +52,10 @@ contextBridge.exposeInMainWorld('pwp', {
     get: (key) => ipcRenderer.invoke('settings:get', key),
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
+  // Registration
+  registration: {
+    save: (data) => ipcRenderer.invoke('registration:save', data),
+  },
   // OCR (Gemini)
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
@@ -69,6 +73,14 @@ contextBridge.exposeInMainWorld('pwp', {
   },
   // Scraper
   scraper: {
+    startRegistrationFlow: (payload) => ipcRenderer.invoke('scraper:startRegistrationFlow', payload),
+    submitEmailOtp: (payload) => ipcRenderer.invoke('scraper:submitEmailOtp', payload),
+    resendEmailOtp: () => ipcRenderer.invoke('scraper:resendEmailOtp'),
+    submitMobileOtp: (payload) => ipcRenderer.invoke('scraper:submitMobileOtp', payload),
+    resendMobileOtp: () => ipcRenderer.invoke('scraper:resendMobileOtp'),
+    submitRegistrationCaptcha: (payload) => ipcRenderer.invoke('scraper:submitRegistrationCaptcha', payload),
+    refreshRegistrationCaptcha: () => ipcRenderer.invoke('scraper:refreshRegistrationCaptcha'),
+    closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),
     getDashboardCards: () => ipcRenderer.invoke('scraper:getDashboardCards'),

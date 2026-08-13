@@ -1,0 +1,39 @@
+{
+  "tables": [
+    [
+      [
+        "Category",
+        "Cat 1",
+        "Cat 2",
+        "Cat 3",
+        "Cat 4"
+      ],
+      [
+        "Available Potential (in MT)",
+        "0",
+        "27887.2300",
+        "0",
+        "0"
+      ],
+      [
+        "Used Potential (in MT)",
+        "0",
+        "26005.0000",
+        "0",
+        "0"
+      ]
+    ]
+  ],
+  "cards": [
+    "केंद्रीय प्रदूषण नियंत्रण बोर्ड\n\nCentral Pollution Control Board​\n\nPrism Johnson Limited\nUnit ID : 12548\nAll Applications\n\nSD\n\nSUMITABH DWIVEDI",
+    "Unit ID : 12548",
+    "Category\tCat 1\tCat 2\tCat 3\tCat 4\nAvailable Potential (in MT)\t0\t27887.2300\t0\t0\nUsed Potential (in MT)\t0\t26005.0000\t0\t0",
+    "Annual Filings\nView Details\n\nAR Window Status\n\nClosed for 2025-26\n\n!\n\nDue Date\n\nNA\n\nAR Filing Status\n\nNot Submitted",
+    "Wallet\nView Details\n\nTotal Available Potential (in MT)\n\n27887.2300\n\nConsolidated Certificates Value (in MT)\n\n1.0000",
+    "Trade\nView Details\n\nTotal certificates available for trade\n\n0\n\nTotal certificate value hold for trading (MT)\n\n27887.2300",
+    "Grievance Raised\nView Details\n\nTotal Grievance Raised (in Number)\n\n0\n\nPending\n\n0\n\nResolved\n\n0",
+    "Pending\n\n0",
+    "Resolved\n\n0"
+  ],
+  "rawText": "केंद्रीय प्रदूषण नियंत्रण बोर्ड\n\nCentral Pollution Control Board​\n\nPrism Johnson Limited\nUnit ID : 12548\nAll Applications\n\nSD\n\nSUMITABH DWIVEDI\n\ndashboard\nDashboard\nreport\nOperations\naccount_balance_wallet\nWallet\nevent_note\nAnnual Filings\nedit_document\nAmendment\npublic\nEnvironment Compensation\nsavings\nPayment History\nsupport_agent\nGrievances\nHome\nSelect Unit\nAll Dashboard Data\nThe application verification for your entity is successful. Please click on \"select unit\" button on dashboard and verify operations and wallet data of verified application.\nWelcome, SUMITABH DWIVEDI (Cement Co-processing)\nDashboard\nCategory\tCat 1\tCat 2\tCat 3\tCat 4\nAvailable Potential (in MT)\t0\t27887.2300\t0\t0\nUsed Potential (in MT)\t0\t26005.0000\t0\t0\nOperations\n\nProcurement Details\n\nView\n\nProduction Details\n\nView\n\nSales Details\n\nView\nAnnual Filings\nView Details\n\nAR Window Status\n\nClosed for 2025-26\n\n!\n\nDue Date\n\nNA\n\nAR Filing Status\n\nNot Submitted\n\nWallet\nView Details\n\nTotal Available Potential (in MT)\n\n27887.2300\n\nConsolidated Certificates Value (in MT)\n\n1.0000\n\nTrade\nView Details\n\nTotal certificates available for trade\n\n0\n\nTotal certificate value hold for trading (MT)\n\n27887.2300\n\nEnvironment Compensation\nView Details\n\nTotal Environment Composition Levied\n\nNA\n\nPaid\n\nNA\n\nPending\n\nNA\n\nGrievance Raised\nView Details\n\nTotal Grievance Raised (in Number)\n\n0\n\nPending\n\n0\n\nResolved\n\n0\n\nWallet\nAnnual Filing\nAppeal Management\nGrievances"
+}

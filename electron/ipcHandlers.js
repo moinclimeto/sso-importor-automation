@@ -21,6 +21,16 @@ import { PDFDocument } from 'pdf-lib';
 import {
   runSalesBulkFill,
 } from './cpcbSalesBulk.js';
+import {
+  startRegistrationFlow,
+  submitEmailOtp,
+  resendEmailOtp,
+  submitMobileOtp,
+  resendMobileOtp,
+  submitRegistrationCaptcha,
+  refreshRegistrationCaptcha,
+  closeRegistrationSession
+} from './cpcbRegistration.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -797,6 +807,55 @@ export function registerIpcHandlers() {
       monthlyPurchase: monthlyPurchaseData.map(row => ({ month: row.month, total: row.total || 0 })),
       monthlySale: monthlySaleData.map(row => ({ month: row.month, total: row.total || 0 })),
     };
+  });
+
+  // ─── REGISTRATION ──────────────────────────────────────────────
+  ipcMain.handle('registration:save', async (_, data) => {
+    try {
+      const { saveRegistrationDetails } = await import('./registrationDb.js');
+      return await saveRegistrationDetails(data);
+    } catch (err) {
+      console.error('registration:save error', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── REGISTRATION SCRAPER ────────────────────────────────────
+  ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
+    return await startRegistrationFlow(data, (msg) => {
+      event.sender.send('scraper:log', msg);
+    });
+  });
+  
+  ipcMain.handle('scraper:submitEmailOtp', async (event, payload) => {
+    const otp = typeof payload === 'string' ? payload : payload?.otp;
+    const mobile = typeof payload === 'object' ? payload?.mobile : undefined;
+    return await submitEmailOtp(otp, mobile, (msg) => event.sender.send('scraper:log', msg));
+  });
+  
+  ipcMain.handle('scraper:resendEmailOtp', async (event) => {
+    return await resendEmailOtp((msg) => event.sender.send('scraper:log', msg));
+  });
+  
+  ipcMain.handle('scraper:submitMobileOtp', async (event, payload) => {
+    return await submitMobileOtp(payload, (msg) => event.sender.send('scraper:log', msg));
+  });
+  
+  ipcMain.handle('scraper:resendMobileOtp', async (event) => {
+    return await resendMobileOtp((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:submitRegistrationCaptcha', async (event, payload) => {
+    const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
+    return await submitRegistrationCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:refreshRegistrationCaptcha', async (event) => {
+    return await refreshRegistrationCaptcha((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:closeRegistrationSession', async () => {
+    return await closeRegistrationSession();
   });
 
   // ─── SCRAPER / CPCB PORTAL ────────────────────────────────────
