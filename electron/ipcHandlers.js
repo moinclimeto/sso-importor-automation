@@ -21,6 +21,14 @@ import { PDFDocument } from 'pdf-lib';
 import {
   runSalesBulkFill,
 } from './cpcbSalesBulk.js';
+import {
+  startRegistrationFlow,
+  submitEmailOtp,
+  resendEmailOtp,
+  submitMobileOtp,
+  resendMobileOtp,
+  closeRegistrationSession
+} from './cpcbRegistration.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -797,6 +805,61 @@ export function registerIpcHandlers() {
       monthlyPurchase: monthlyPurchaseData.map(row => ({ month: row.month, total: row.total || 0 })),
       monthlySale: monthlySaleData.map(row => ({ month: row.month, total: row.total || 0 })),
     };
+  });
+
+  // ─── REGISTRATION ──────────────────────────────────────────────
+  ipcMain.handle('registration:save', async (_, data) => {
+    const db = getDb();
+    try {
+      // Add column if it doesn't exist to handle existing tables
+      try {
+        await db.run('ALTER TABLE registration_details ADD COLUMN sub_applicant_type TEXT');
+      } catch (e) {
+        // Ignore error if column already exists
+      }
+
+      // Check if registration already exists
+      const existing = await db.get('SELECT _internal_id FROM registration_details LIMIT 1');
+      if (existing) {
+        return { success: true, id: existing._internal_id, inserted: false };
+      }
+
+      const result = await db.run(
+        'INSERT INTO registration_details (applicant_type, sub_applicant_type) VALUES (?, ?)',
+        data.applicant_type, data.sub_applicant_type
+      );
+      return { success: true, id: result.lastID, inserted: true };
+    } catch (err) {
+      console.error('registration:save error', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  // ─── REGISTRATION SCRAPER ────────────────────────────────────
+  ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
+    return await startRegistrationFlow(data, (msg) => {
+      event.sender.send('scraper:log', msg);
+    });
+  });
+  
+  ipcMain.handle('scraper:submitEmailOtp', async (_, otp) => {
+    return await submitEmailOtp(otp);
+  });
+  
+  ipcMain.handle('scraper:resendEmailOtp', async (event) => {
+    return await resendEmailOtp((msg) => event.sender.send('scraper:log', msg));
+  });
+  
+  ipcMain.handle('scraper:submitMobileOtp', async (_, { mobile, otp }) => {
+    return await submitMobileOtp(mobile, otp);
+  });
+  
+  ipcMain.handle('scraper:resendMobileOtp', async (event) => {
+    return await resendMobileOtp((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:closeRegistrationSession', async () => {
+    return await closeRegistrationSession();
   });
 
   // ─── SCRAPER / CPCB PORTAL ────────────────────────────────────
