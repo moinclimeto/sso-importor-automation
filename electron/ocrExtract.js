@@ -98,7 +98,26 @@ export function qtyToMt(raw) {
 
  */
 
-export function buildExtractionPrompt(type, financialYear = 'all') {
+export function buildExtractionPrompt(type, financialYear = 'all', companyDocType = null) {
+
+  if (type === 'company_document') {
+    switch (companyDocType) {
+      case 'gst':
+        return `OCR GST Certificate. JSON only minified. Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. RULES: document_number=GSTIN. entity_name=Legal Name. trade_name=Trade Name. issue_date=Date of Registration.`;
+      case 'pan':
+        return `OCR PAN Card. JSON only minified. Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","issue_date":"YYYY-MM-DD"}. RULES: document_number=PAN number. If 4th letter of PAN is 'C' set doc_type="company_pan", otherwise set doc_type="person_pan". entity_name=Name. father_name=Father's Name (blank if company). issue_date=Date of Birth or Incorporation.`;
+      case 'cin':
+        return `OCR CIN/Incorporation Certificate. JSON only minified. Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}. RULES: document_number=Corporate Identity Number (CIN). entity_name=Name of Company. issue_date=Date of Incorporation (YYYY-MM-DD, or just YYYY if full date missing). address=Registered Office Address.`;
+      case 'cto':
+        return `OCR CTO (Consent to Operate). JSON only minified. Extract: {"doc_type":"cto","document_number":"","entity_name":"","address":"","industry_category":"","allowed_capacity":"","issue_date":"YYYY-MM-DD","validity_date":"YYYY-MM-DD"}. RULES: document_number=Consent Order No. entity_name=Company/Industry Name. address=Plant Address/Location. industry_category=Category (Red/Orange/Green/White). allowed_capacity=Allowed Products/Capacity limits. issue_date=Issue/Consent Date. validity_date=Valid Upto.`;
+      case 'electricity':
+        return `OCR Electricity Bill. JSON only minified. Extract: {"doc_type":"electricity","document_number":"","entity_name":"","address":"","provider":"","issue_date":"YYYY-MM-DD","due_date":"YYYY-MM-DD","billing_month":"","units_consumed":0,"amount":0}. RULES: document_number=Consumer No / K No / Account ID. entity_name=Consumer Name. address=Supply/Service Address. provider=Electricity Provider/Discom Name. issue_date=Bill Date. due_date=Payment Due Date. billing_month=Billing Period/Month. units_consumed=Total Units (kWh) consumed. amount=Net Amount Payable.`;
+      case 'udyam':
+        return `OCR Udyam Certificate. JSON only minified. Extract: {"doc_type":"udyam","document_number":"","entity_name":"","enterprise_type":"","social_category":"","address":"","date_of_incorporation":"","date_of_commencement":"","issue_date":"YYYY-MM-DD","units":[{"sno":"","name":""}],"nic_codes":[{"nic_2":"","nic_4":"","nic_5":"","activity":""}]}. RULES: document_number=Udyam Registration Number. entity_name=Name of Enterprise. enterprise_type=Type of Enterprise (e.g. SMALL MANUFACTURING). address=Full Official Address of Enterprise. date_of_incorporation=Date of Incorporation. date_of_commencement=Date of Commencement. issue_date=Date of Udyam Registration.`;
+      default:
+        return `OCR Document. JSON only minified. Extract: {"doc_type":"unknown","document_number":"","entity_name":"","issue_date":"YYYY-MM-DD"}.`;
+    }
+  }
 
   const isPurchase = type === 'purchase';
 

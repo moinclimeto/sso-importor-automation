@@ -190,7 +190,9 @@ function outcomeBadge(outcome) {
 
 function outcomeLabel(outcome, r) {
   if (outcome === 'saved') {
-    return r?.decidedType === 'purchase' ? 'Saved · Purchase' : 'Saved · Sale';
+    const decided = r?.routing?.decidedType || r?.data?.decidedType || r?.decidedType;
+    if (decided === 'company_document') return 'Saved · Document';
+    return decided === 'purchase' ? 'Saved · Purchase' : 'Saved · Sale';
   }
   if (outcome === 'save_failed') return 'Save failed';
   if (outcome === 'rejected') return 'Rejected';
@@ -205,9 +207,10 @@ export default function DocUpload() {
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
   const fyOptions = useMemo(() => getFyOptions(), []);
-  const [docType] = useState(location.state?.type === 'sale' ? 'sale' : 'purchase');
+  const [docType] = useState(location.state?.type || 'purchase');
   const isPurchase = docType === 'purchase';
   const [financialYear, setFinancialYear] = useState('all');
+  const [companyDocType, setCompanyDocType] = useState('gst');
   const [files, setFiles] = useState([]);
   const [fileStatus, setFileStatus] = useState({});
   const [stage, setStage] = useState('upload');
@@ -443,12 +446,40 @@ export default function DocUpload() {
   };
 
   const buildSavePayload = (data, sourceRow) => {
+    const decided =
+      sourceRow?.routing?.decidedType ||
+      sourceRow?.data?.decidedType ||
+      sourceRow?.decidedType ||
+      (docType === 'company_document' ? 'company_document' : isPurchase ? 'purchase' : 'sale');
+      
+    if (decided === 'company_document') {
+      return {
+        doc_type: data.doc_type || companyDocType,
+        document_number: data.document_number || data.gstin || data.pan || data.cin || data.consent_order_no || data.consumer_number || data.udyam_registration_number || '',
+        entity_name: data.entity_name || data.legal_name || data.name || data.company_name || data.enterprise_name || '',
+        issue_date: data.issue_date || data.registration_date || data.date_of_incorporation || data.dob || '',
+        constitution_of_business: data.constitution_of_business || data.enterprise_type || '',
+        address: data.address || '',
+        date_of_liability: data.date_of_liability || data.date_of_commencement || '',
+        enterprise_type: data.enterprise_type || '',
+        social_category: data.social_category || '',
+        date_of_incorporation: data.date_of_incorporation || '',
+        date_of_commencement: data.date_of_commencement || '',
+        industry_category: data.industry_category || '',
+        allowed_capacity: data.allowed_capacity || '',
+        validity_date: data.validity_date || '',
+        billing_month: data.billing_month || '',
+        amount: data.amount || 0,
+        units_consumed: data.units_consumed || 0,
+        due_date: data.due_date || '',
+        provider: data.provider || '',
+        file_path: sourceRow?.filePath || sourceRow?.fileName || '',
+        raw_json: JSON.stringify(data),
+      };
+    }
+
     const lineItems = sourceRow?.data?.lineItems || data.lineItems || [];
     const extraction = sourceRow?.data?.extraction || data.extraction || null;
-    const decided =
-      sourceRow?.decidedType ||
-      sourceRow?.routing?.decidedType ||
-      (isPurchase ? 'purchase' : 'sale');
     const companyId =
       sourceRow?.data?.company_id ?? sourceRow?.routing?.companyId ?? null;
     const companyName =
@@ -539,9 +570,16 @@ export default function DocUpload() {
   const validateRow = (data, sourceRow) => {
     const parties = sourceRow?.data?._parties || data._parties || {};
     const decided =
-      sourceRow?.decidedType ||
       sourceRow?.routing?.decidedType ||
-      (isPurchase ? 'purchase' : 'sale');
+      sourceRow?.data?.decidedType ||
+      sourceRow?.decidedType ||
+      (docType === 'company_document' ? 'company_document' : isPurchase ? 'purchase' : 'sale');
+      
+    if (decided === 'company_document') {
+       if (!data.doc_type && !companyDocType) return 'Document type is missing';
+       return ''; // Add more specific validations later if needed
+    }
+    
     if (sourceRow?.rejected) {
       return sourceRow?.routing?.reason || 'Invoice rejected — company not matched.';
     }
@@ -593,7 +631,7 @@ export default function DocUpload() {
         continue;
       }
       const payload = buildSavePayload(data, r);
-      const decided = r.decidedType || (isPurchase ? 'purchase' : 'sale');
+      const decided = r.routing?.decidedType || r.data?.decidedType || (docType === 'company_document' ? 'company_document' : isPurchase ? 'purchase' : 'sale');
       const invNo = String(payload.invoice_no || '').trim().toLowerCase();
       const compId = payload.company_id || '';
       
@@ -608,7 +646,11 @@ export default function DocUpload() {
 
     const processSave = async (item) => {
       try {
-        if (item.decided === 'purchase') {
+        if (item.decided === 'company_document') {
+          await window.pwp.documents.add(item.payload);
+          // Just incrementing one of them to satisfy existing logic, or better, keep a separate counter
+          savedPurchase += 1;
+        } else if (item.decided === 'purchase') {
           await window.pwp.purchases.add(item.payload);
           savedPurchase += 1;
         } else {
@@ -762,6 +804,7 @@ export default function DocUpload() {
         filePaths: targets.map((t) => t.path),
         type: docType,
         financialYear,
+        ...(docType === 'company_document' && { companyDocType }),
       });
       const nextStatus = { ...statusMap };
       for (const r of batch.results || []) {
@@ -931,28 +974,57 @@ export default function DocUpload() {
       {(stage === 'upload' || stage === 'processing') && (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 space-y-5">
           <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4">
-            <div className="sm:w-52">
-              <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
-                Target Financial Year
-              </label>
-              <div className="relative">
-                <Calendar
-                  size={16}
-                  className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                />
-                <select
-                  value={financialYear}
-                  onChange={(e) => setFinancialYear(e.target.value)}
-                  disabled={stage === 'processing'}
-                  className="input pl-9"
-                >
-                  {fyOptions.map((o) => (
-                    <option key={o.value} value={o.value}>
-                      {o.label}
-                    </option>
-                  ))}
-                </select>
+            <div className="flex flex-col sm:flex-row gap-4">
+              <div className="sm:w-52">
+                <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
+                  Target Financial Year
+                </label>
+                <div className="relative">
+                  <Calendar
+                    size={16}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                  />
+                  <select
+                    value={financialYear}
+                    onChange={(e) => setFinancialYear(e.target.value)}
+                    disabled={stage === 'processing'}
+                    className="input pl-9"
+                  >
+                    {fyOptions.map((o) => (
+                      <option key={o.value} value={o.value}>
+                        {o.label}
+                      </option>
+                    ))}
+                  </select>
+                </div>
               </div>
+              
+              {docType === 'company_document' && (
+                <div className="sm:w-52">
+                  <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
+                    Document Type
+                  </label>
+                  <div className="relative">
+                    <FileText
+                      size={16}
+                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
+                    />
+                    <select
+                      value={companyDocType}
+                      onChange={(e) => setCompanyDocType(e.target.value)}
+                      disabled={stage === 'processing'}
+                      className="input pl-9"
+                    >
+                      <option value="gst">GST Certificate</option>
+                      <option value="pan">PAN Card</option>
+                      <option value="cin">CIN (Incorporation)</option>
+                      <option value="cto">CTO (Consent to Operate)</option>
+                      <option value="electricity">Electricity Bill</option>
+                      <option value="udyam">Udyam Certificate</option>
+                    </select>
+                  </div>
+                </div>
+              )}
             </div>
             
             {stage === 'upload' && files.length > 0 && (

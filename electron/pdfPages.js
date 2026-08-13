@@ -72,7 +72,7 @@ export function pageDisplayName(originalName, pageNumber, pageCount) {
  * Expand selected files into per-page extract jobs.
  * 10-page PDF + 1-page PDF => 11 jobs.
  */
-export async function expandFilesToPageJobs(filePaths = []) {
+export async function expandFilesToPageJobs(filePaths = [], { type = '' } = {}) {
   const jobs = [];
   const files = [];
   let totalPages = 0;
@@ -89,17 +89,30 @@ export async function expandFilesToPageJobs(filePaths = []) {
     totalPages += pageCount;
     files.push({ filePath, name, pageCount });
 
-    for (let page = 1; page <= pageCount; page += 1) {
-      const invoiceFileName = pageInvoiceFileName(name, page, pageCount);
+    if (type === 'company_document') {
       jobs.push({
         filePath,
         sourceFileName: name,
-        pageNumber: page,
+        pageNumber: 1, // Treat as whole document
         pageCount,
-        invoiceFileName,
-        displayName: pageDisplayName(name, page, pageCount),
-        jobKey: `${name.toLowerCase()}::p${page}`,
+        invoiceFileName: name, // Keep original filename
+        displayName: name,
+        jobKey: name.toLowerCase(),
+        isWholeFile: true,
       });
+    } else {
+      for (let page = 1; page <= pageCount; page += 1) {
+        const invoiceFileName = pageInvoiceFileName(name, page, pageCount);
+        jobs.push({
+          filePath,
+          sourceFileName: name,
+          pageNumber: page,
+          pageCount,
+          invoiceFileName,
+          displayName: pageDisplayName(name, page, pageCount),
+          jobKey: `${name.toLowerCase()}::p${page}`,
+        });
+      }
     }
     
     // Yield to event loop so UI does not hang while counting pages

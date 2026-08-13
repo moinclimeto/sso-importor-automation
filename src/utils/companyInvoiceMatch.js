@@ -246,6 +246,19 @@ export function matchInvoiceToCompanies(row, companies = []) {
 export function applyCompanyRoutingToResults(results = [], companies = []) {
   return (results || []).map((r) => {
     if (!r?.ok || r.skipped) return r;
+    
+    // Bypass routing for company_document
+    if (r.data?.decidedType === 'company_document') {
+      return {
+        ...r,
+        routing: {
+          decidedType: 'company_document',
+          rejected: false,
+          reason: 'Company document (no routing needed)',
+        },
+      };
+    }
+    
     const match = matchInvoiceToCompanies(r, companies);
     const data = {
       ...(r.data || {}),
