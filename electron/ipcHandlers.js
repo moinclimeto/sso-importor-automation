@@ -222,6 +222,33 @@ export function registerIpcHandlers() {
     return { success: true };
   });
 
+  // ─── DOCUMENTS (Company Documents) ───────────────────────────
+  ipcMain.handle('documents:getAll', async () => {
+    const db = getDb();
+    return db.all('SELECT * FROM company_documents ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('documents:add', async (_, data) => {
+    const db = getDb();
+    const result = await db.run(
+      'INSERT INTO company_documents (doc_type, document_number, entity_name, issue_date, file_path, raw_json, constitution_of_business, address, date_of_liability, enterprise_type, social_category, date_of_incorporation, date_of_commencement, industry_category, allowed_capacity, validity_date, billing_month, amount, units_consumed, due_date, provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      data.doc_type || '', data.document_number || '', data.entity_name || '', data.issue_date || '', data.file_path || '', data.raw_json || '', data.constitution_of_business || '', data.address || '', data.date_of_liability || '', data.enterprise_type || '', data.social_category || '', data.date_of_incorporation || '', data.date_of_commencement || '', data.industry_category || '', data.allowed_capacity || '', data.validity_date || '', data.billing_month || '', data.amount || 0, data.units_consumed || 0, data.due_date || '', data.provider || ''
+    );
+    return { id: result.lastID, ...data };
+  });
+
+  ipcMain.handle('documents:delete', async (_, id) => {
+    const db = getDb();
+    await db.run('DELETE FROM company_documents WHERE id = ?', id);
+    return { success: true };
+  });
+
+  ipcMain.handle('documents:getStats', async () => {
+    const db = getDb();
+    const count = await db.get('SELECT COUNT(*) as count FROM company_documents');
+    return { count: count.count || 0 };
+  });
+
   async function storeInvoicePdfLocally(data) {
     if (!data._page) return data;
     const source = data._page.sourceFilePath || data._page.sourceFileName;

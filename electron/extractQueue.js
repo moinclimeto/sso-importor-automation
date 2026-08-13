@@ -26,8 +26,8 @@ export async function getExistingInvoiceHashes() {
  * Filter page jobs: skip duplicate invoiceFileName in batch or already in DB.
  * Uses fileHash for robust duplicate detection.
  */
-export async function filterPageJobs(jobs, log) { // Removed 'type' as it's not needed for hash check
-  const existingFileHashes = await getExistingInvoiceHashes(); // Await the promise
+export async function filterPageJobs(jobs, log, { type = '' } = {}) { 
+  const existingFileHashes = await getExistingInvoiceHashes();
   const seenBatch = new Set();
   const accepted = [];
   const skipped = [];
@@ -48,29 +48,31 @@ export async function filterPageJobs(jobs, log) { // Removed 'type' as it's not 
       continue;
     }
 
-    if (existingFileHashes.has(fileHash)) {
-      skipped.push({
-        ...job,
-        reason: 'already_extracted',
-        fileHash,
-      });
-      log.warn('Skip already extracted page (by hash)', {
-        invoiceFileName: job.invoiceFileName,
-        fileHash,
-      });
-      continue;
-    }
-    if (seenBatch.has(fileHash)) {
-      skipped.push({
-        ...job,
-        reason: 'duplicate_in_batch',
-        fileHash,
-      });
-      log.warn('Skip duplicate page in batch (by hash)', {
-        invoiceFileName: job.invoiceFileName,
-        fileHash,
-      });
-      continue;
+    if (type !== 'company_document') {
+      if (existingFileHashes.has(fileHash)) {
+        skipped.push({
+          ...job,
+          reason: 'already_extracted',
+          fileHash,
+        });
+        log.warn('Skip already extracted page (by hash)', {
+          invoiceFileName: job.invoiceFileName,
+          fileHash,
+        });
+        continue;
+      }
+      if (seenBatch.has(fileHash)) {
+        skipped.push({
+          ...job,
+          reason: 'duplicate_in_batch',
+          fileHash,
+        });
+        log.warn('Skip duplicate page in batch (by hash)', {
+          invoiceFileName: job.invoiceFileName,
+          fileHash,
+        });
+        continue;
+      }
     }
     seenBatch.add(fileHash);
     accepted.push({ ...job, fileHash }); // Add fileHash to the job
@@ -99,14 +101,14 @@ export async function runExtractQueue({
     financialYear,
   });
 
-  const expanded = await expandFilesToPageJobs(filePaths);
+  const expanded = await expandFilesToPageJobs(filePaths, { type });
   log.info('Pages expanded', {
     fileCount: expanded.fileCount,
     totalPages: expanded.totalPages,
     jobs: expanded.jobs.length,
   });
 
-  const { accepted, skipped } = await filterPageJobs(expanded.jobs, log); // Removed 'type'
+  const { accepted, skipped } = await filterPageJobs(expanded.jobs, log, { type });
   const total = accepted.length;
   const results = [];
   let successCount = 0;

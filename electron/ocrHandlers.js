@@ -72,6 +72,7 @@ async function extractOneInvoice({
   invoiceFileName = null,
   displayName = null,
   fileHash = null,
+  companyDocType = null,
 }) {
   loadEnvFile();
   const log = parentLog || createLogger(trackId || createTrackId('ocr'));
@@ -122,8 +123,17 @@ async function extractOneInvoice({
   let tempPng = null;
 
   try {
-    // Multi-page PDF: render ONE page → PNG for Gemini + QR (1 page = 1 invoice)
-    if (isPdf) {
+    const invoiceType = type === 'sale' ? 'sale' : type === 'company_document' ? 'company_document' : 'purchase';
+
+    if (isPdf && invoiceType === 'company_document') {
+      log.info('Passing whole PDF to Gemini', {
+        sourceName,
+        pageCount: resolvedPageCount,
+      });
+      base64 = fs.readFileSync(filePath).toString('base64');
+      mimeType = 'application/pdf';
+      qrTargetPath = filePath;
+    } else if (isPdf) {
       log.info('Rendering PDF page for extract', {
         sourceName,
         pageNo,
@@ -141,7 +151,7 @@ async function extractOneInvoice({
       base64 = fs.readFileSync(filePath).toString('base64');
     }
 
-    const invoiceType = type === 'sale' ? 'sale' : 'purchase';
+
     const qrPromise = scanQrFromDocument(qrTargetPath);
 
     const genAI = new GoogleGenerativeAI(apiKey);
@@ -158,7 +168,7 @@ async function extractOneInvoice({
     const modelNames = [
       ...new Set([...(envModel ? [envModel] : []), ...envCandidates, ...defaultModels]),
     ];
-    const prompt = buildExtractionPrompt(invoiceType, financialYear);
+    const prompt = buildExtractionPrompt(invoiceType, financialYear, companyDocType);
     let parsed = null;
     let lastError = null;
     let usedModel = null;
@@ -207,7 +217,9 @@ async function extractOneInvoice({
 
     const qrResult = await qrPromise;
     let row =
-      invoiceType === 'purchase'
+      invoiceType === 'company_document'
+        ? { ...parsed, fileName: outFileName, decidedType: 'company_document', _source_fields: {} }
+        : invoiceType === 'purchase'
         ? mapPurchaseFromOcr(parsed, outFileName)
         : mapSaleFromOcr(parsed, outFileName, sNo);
 
@@ -433,7 +445,8 @@ export function registerOcrHandlers() {
    */
   ipcMain.handle('ocr:extract-batch', async (event, payload) => {
     const filePaths = Array.isArray(payload?.filePaths) ? payload.filePaths : [];
-    const type = payload?.type === 'sale' ? 'sale' : 'purchase';
+    const type = payload?.type === 'company_document' ? 'company_document' : payload?.type === 'sale' ? 'sale' : 'purchase';
+    const companyDocType = payload?.companyDocType || null;
     const financialYear = payload?.financialYear || 'all';
     const trackId = payload?.trackId || createTrackId('batch');
 
@@ -449,10 +462,11 @@ export function registerOcrHandlers() {
       return await runExtractQueue({
         filePaths,
         type,
+        companyDocType,
         financialYear,
         trackId,
         onProgress: send,
-        extractFn: (args) => extractOneInvoice(args),
+        extractFn: (args) => extractOneInvoice({ ...args, companyDocType }),
       });
     } catch (err) {
       const log = createLogger(trackId);
