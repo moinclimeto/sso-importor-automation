@@ -10,6 +10,8 @@ import {
   resolveRegistrationData,
   isRegistrationReadyWithFallback,
   REGISTRATION_DUMMY_DATA,
+  REGISTRATION_LOGIN_DUMMY,
+  resolveRegistrationLoginCredentials,
 } from '../utils/registrationDummyData.js';
 import {
   TYPE_OF_BUSINESS_OPTIONS,
@@ -18,7 +20,7 @@ import {
   GENERAL_INFO_EMPTY,
   buildGeneralInfoFromDocData,
 } from '../utils/registrationGeneralInfo.js';
-import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw } from 'lucide-react';
+import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2 } from 'lucide-react';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -119,14 +121,129 @@ export default function RegistrationForm() {
   const [captchaSubmitting, setCaptchaSubmitting] = useState(false);
   const [captchaRefreshing, setCaptchaRefreshing] = useState(false);
 
+  const [showLoginCaptchaModal, setShowLoginCaptchaModal] = useState(false);
+  const [loginCaptchaImage, setLoginCaptchaImage] = useState('');
+  const [loginCaptchaText, setLoginCaptchaText] = useState('');
+  const [loginCaptchaError, setLoginCaptchaError] = useState('');
+  const [loginCaptchaSubmitting, setLoginCaptchaSubmitting] = useState(false);
+  const [loginCaptchaRefreshing, setLoginCaptchaRefreshing] = useState(false);
+
+  const [showLoginOtpModal, setShowLoginOtpModal] = useState(false);
+  const [loginOtp, setLoginOtp] = useState('');
+  const [loginOtpError, setLoginOtpError] = useState('');
+  const [loginOtpSubmitting, setLoginOtpSubmitting] = useState(false);
+  const [loginOtpTimer, setLoginOtpTimer] = useState(600);
+  const [loginOtpResendActive, setLoginOtpResendActive] = useState(false);
+  const [savedCeprId, setSavedCeprId] = useState('');
+  const [registrationComplete, setRegistrationComplete] = useState(false);
+  const [loadingSavedRegistration, setLoadingSavedRegistration] = useState(true);
+
+  const lockedInputClass = registrationComplete
+    ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
+    : inputClass;
+  const lockedSelectClass = registrationComplete
+    ? `${selectClass} bg-slate-50 text-slate-700 cursor-not-allowed`
+    : selectClass;
+
+  const applySavedRegistration = useCallback(async (saved) => {
+    if (!saved?.cepr_id) return;
+
+    const form = saved.formData || {};
+    const loginCreds = resolveRegistrationLoginCredentials({
+      email: saved.email || form.email,
+      mobile: saved.mobile || form.mobile,
+      password: saved.password || form.generalInfo?.password,
+    });
+
+    setRegistrationComplete(true);
+    setSavedCeprId(saved.cepr_id);
+    setUsingDummy(false);
+
+    if (form.autoData) {
+      setAutoData({ ...EMPTY_AUTO, ...form.autoData });
+    }
+
+    if (form.generalInfo) {
+      setGeneralInfo((prev) => ({
+        ...prev,
+        ...form.generalInfo,
+        password: loginCreds.password,
+        confirmPassword: loginCreds.password,
+      }));
+    } else {
+      const { data: dummyData } = resolveRegistrationData(REGISTRATION_DUMMY_DATA);
+      const fromDocs = buildGeneralInfoFromDocData(dummyData);
+      setGeneralInfo((prev) => ({
+        ...prev,
+        ...fromDocs,
+        typeOfBusiness: fromDocs.typeOfBusiness || dummyData.typeOfBusiness || prev.typeOfBusiness,
+        typeOfCompany: fromDocs.typeOfCompany || dummyData.typeOfCompany || prev.typeOfCompany,
+        registeredAddressLine1: fromDocs.registeredAddressLine1 || dummyData.registeredAddressLine1 || prev.registeredAddressLine1,
+        district: fromDocs.district || dummyData.district || prev.district,
+        cin: fromDocs.cin || dummyData.cin || prev.cin,
+        stateUt: fromDocs.stateUt || dummyData.stateUt || prev.stateUt,
+        authDesignation: dummyData.authDesignation || prev.authDesignation,
+        password: loginCreds.password,
+        confirmPassword: loginCreds.password,
+      }));
+      if (!form.autoData) {
+        setAutoData({ ...EMPTY_AUTO, ...dummyData });
+      }
+    }
+
+    setEmail(loginCreds.email);
+    setMobile(loginCreds.mobile);
+
+    const needsPersist =
+      !saved.email ||
+      !saved.mobile ||
+      !saved.password ||
+      !saved.form_data_json;
+
+    if (needsPersist && window.pwp?.registration?.save) {
+      const { data: dummyData } = resolveRegistrationData(REGISTRATION_DUMMY_DATA);
+      const fromDocs = buildGeneralInfoFromDocData(dummyData);
+      await window.pwp.registration.save({
+        applicant_type: saved.applicant_type || 'PWP',
+        sub_applicant_type: saved.sub_applicant_type || 'Cement Co-processing',
+        cepr_id: saved.cepr_id,
+        success_screenshot_path: saved.success_screenshot_path,
+        email: loginCreds.email,
+        mobile: loginCreds.mobile,
+        password: loginCreds.password,
+        form_data_json:
+          saved.form_data_json ||
+          JSON.stringify({
+            email: loginCreds.email,
+            mobile: loginCreds.mobile,
+            autoData: form.autoData || dummyData,
+            generalInfo: form.generalInfo || {
+              ...fromDocs,
+              typeOfBusiness: dummyData.typeOfBusiness,
+              typeOfCompany: dummyData.typeOfCompany,
+              registeredAddressLine1: dummyData.registeredAddressLine1,
+              district: dummyData.district,
+              stateUt: dummyData.stateUt,
+              cin: dummyData.cin,
+              authDesignation: dummyData.authDesignation,
+              password: loginCreds.password,
+              confirmPassword: loginCreds.password,
+            },
+          }),
+      });
+    }
+  }, []);
+
   useEffect(() => {
     setPageHeader({
       title: 'Registration Form',
-      subtitle: 'Upload documents & fill General Information for CPCB registration',
+      subtitle: registrationComplete
+        ? `Registration complete — CEPR ID ${savedCeprId}`
+        : 'Upload documents & fill General Information for CPCB registration',
       onBack: () => navigate(-1),
     });
     return () => setPageHeader(null);
-  }, [setPageHeader, navigate]);
+  }, [setPageHeader, navigate, registrationComplete, savedCeprId]);
 
   useEffect(() => {
     let interval = null;
@@ -138,6 +255,17 @@ export default function RegistrationForm() {
     }
     return () => { if (interval) clearInterval(interval); };
   }, [showEmailOtp, showMobileOtp, otpTimer]);
+
+  useEffect(() => {
+    let interval = null;
+    if (showLoginOtpModal && loginOtpTimer > 0) {
+      interval = setInterval(() => setLoginOtpTimer((prev) => prev - 1), 1000);
+    } else if (showLoginOtpModal && loginOtpTimer === 0) {
+      setLoginOtpResendActive(true);
+      if (interval) clearInterval(interval);
+    }
+    return () => { if (interval) clearInterval(interval); };
+  }, [showLoginOtpModal, loginOtpTimer]);
 
   useEffect(() => {
     if (window.pwp?.scraper?.onLog) {
@@ -176,8 +304,43 @@ export default function RegistrationForm() {
   }, []);
 
   useEffect(() => {
-    applyRegistrationData(REGISTRATION_DUMMY_DATA);
-  }, [applyRegistrationData]);
+    const load = async () => {
+      setLoadingSavedRegistration(true);
+      try {
+        if (window.pwp?.registration?.get) {
+          const res = await window.pwp.registration.get();
+          if (res.success && res.data?.cepr_id) {
+            if (!res.data.formData) {
+              await applyRegistrationData(REGISTRATION_DUMMY_DATA);
+            }
+            await applySavedRegistration(res.data);
+            return;
+          }
+        }
+        await applyRegistrationData(REGISTRATION_DUMMY_DATA);
+      } finally {
+        setLoadingSavedRegistration(false);
+      }
+    };
+    load();
+  }, [applyRegistrationData, applySavedRegistration]);
+
+  useEffect(() => {
+    if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
+
+    const timer = setTimeout(() => {
+      const creds = {
+        email: email.trim() || undefined,
+        mobile: mobile.trim() || undefined,
+        password: generalInfo.password?.trim() || undefined,
+      };
+      if (creds.email || creds.mobile || creds.password) {
+        window.pwp.registration.save(creds);
+      }
+    }, 700);
+
+    return () => clearTimeout(timer);
+  }, [email, mobile, generalInfo.password, registrationComplete, loadingSavedRegistration]);
 
   const handleGeneralChange = (e) => {
     const { name, value } = e.target;
@@ -190,6 +353,7 @@ export default function RegistrationForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
+    if (registrationComplete) return;
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
@@ -269,6 +433,15 @@ export default function RegistrationForm() {
     setLoadingMsg('Starting automation process...');
 
     try {
+      if (window.pwp?.registration?.save) {
+        await window.pwp.registration.save({
+          email,
+          mobile,
+          password: generalInfo.password,
+          form_data_json: JSON.stringify({ email, mobile, autoData, generalInfo }),
+        });
+      }
+
       const res = await window.pwp.scraper.startRegistrationFlow(payload);
       if (res.success && res.step === 'WAITING_EMAIL_OTP') {
         setShowEmailOtp(true);
@@ -451,6 +624,186 @@ export default function RegistrationForm() {
     }
   };
 
+  const saveRegistrationSnapshot = async (ceprId, screenshotPath) => {
+    const loginCreds = resolveRegistrationLoginCredentials({
+      email,
+      mobile,
+      password: generalInfo.password,
+    });
+    await window.pwp.registration.save({
+      applicant_type: 'PWP',
+      sub_applicant_type: 'Cement Co-processing',
+      cepr_id: ceprId,
+      success_screenshot_path: screenshotPath,
+      email: loginCreds.email,
+      mobile: loginCreds.mobile,
+      password: loginCreds.password,
+      form_data_json: JSON.stringify({
+        email: loginCreds.email,
+        mobile: loginCreds.mobile,
+        autoData,
+        generalInfo: {
+          ...generalInfo,
+          password: loginCreds.password,
+          confirmPassword: loginCreds.password,
+        },
+      }),
+    });
+    setEmail(loginCreds.email);
+    setMobile(loginCreds.mobile);
+    setGeneralInfo((prev) => ({
+      ...prev,
+      password: loginCreds.password,
+      confirmPassword: loginCreds.password,
+    }));
+    setRegistrationComplete(true);
+    setSavedCeprId(ceprId || '');
+  };
+
+  const handleNewApplication = async () => {
+    if (!savedCeprId) {
+      showToast('CEPR ID not found — complete registration first.', 'error');
+      return;
+    }
+    setLoading(true);
+    await beginLoginFlow(savedCeprId);
+    setLoading(false);
+  };
+
+  const beginLoginFlow = async (ceprId) => {
+    setSavedCeprId(ceprId || '');
+    setLoadingMsg('Starting CPCB login...');
+    const loginCreds = resolveRegistrationLoginCredentials({
+      email,
+      mobile,
+      password: generalInfo.password,
+    });
+    try {
+      const loginRes = await window.pwp.scraper.startLoginFlow({
+        ceprId,
+        password: loginCreds.password,
+        email: loginCreds.email,
+        mobile: loginCreds.mobile,
+      });
+      if (loginRes.success && loginRes.step === 'WAITING_LOGIN_CAPTCHA') {
+        setLoginCaptchaImage(loginRes.captchaImage || '');
+        setLoginCaptchaText('');
+        setLoginCaptchaError('');
+        setShowLoginCaptchaModal(true);
+        showToast('Enter login captcha to continue to application form.', 'success', { duration: 10000 });
+      } else {
+        showToast(loginRes.error || 'Could not start login flow', 'error');
+      }
+    } catch (err) {
+      showToast('Login error: ' + err.message, 'error');
+    } finally {
+      setLoadingMsg('');
+    }
+  };
+
+  const handleRefreshLoginCaptcha = async () => {
+    setLoginCaptchaRefreshing(true);
+    setLoginCaptchaError('');
+    try {
+      const res = await window.pwp.scraper.refreshLoginCaptcha();
+      if (res.success && res.captchaImage) {
+        setLoginCaptchaImage(res.captchaImage);
+        setLoginCaptchaText('');
+      } else {
+        setLoginCaptchaError(res.error || 'Could not refresh captcha');
+      }
+    } catch (err) {
+      setLoginCaptchaError(err.message);
+    } finally {
+      setLoginCaptchaRefreshing(false);
+    }
+  };
+
+  const handleSubmitLoginCaptcha = async () => {
+    const text = loginCaptchaText.trim();
+    if (!text) {
+      setLoginCaptchaError('Please enter captcha');
+      return;
+    }
+    setLoginCaptchaSubmitting(true);
+    setLoginCaptchaError('');
+    setLoadingMsg('Submitting login captcha on CPCB portal...');
+    try {
+      const res = await window.pwp.scraper.submitLoginCaptcha({ captcha: text });
+
+      if (res.success && res.step === 'WAITING_LOGIN_OTP') {
+        setShowLoginCaptchaModal(false);
+        setLoginCaptchaText('');
+        setLoginCaptchaImage('');
+        setLoginOtp('');
+        setLoginOtpError('');
+        setLoginOtpTimer(600);
+        setLoginOtpResendActive(false);
+        setShowLoginOtpModal(true);
+        showToast('Login OTP sent — enter OTP from email/SMS.', 'success');
+        return;
+      }
+
+      if (res.captchaImage) {
+        setLoginCaptchaImage(res.captchaImage);
+      }
+      setLoginCaptchaText('');
+      setLoginCaptchaError(res.error || 'Invalid captcha. Please try again.');
+    } catch (err) {
+      setLoginCaptchaError(err.message);
+    } finally {
+      setLoginCaptchaSubmitting(false);
+      setLoadingMsg('');
+    }
+  };
+
+  const handleResendLoginOtp = async () => {
+    try {
+      const res = await window.pwp.scraper.resendLoginOtp();
+      if (res.success) {
+        setLoginOtpTimer(600);
+        setLoginOtpResendActive(false);
+        showToast('Login OTP resent', 'success');
+      } else {
+        showToast(res.error || 'Resend failed', 'error');
+      }
+    } catch (err) {
+      showToast(err.message, 'error');
+    }
+  };
+
+  const handleVerifyLoginOtp = async () => {
+    const otp = loginOtp.trim().replace(/\D/g, '');
+    if (otp.length !== 6) {
+      setLoginOtpError('Please enter 6-digit OTP');
+      return;
+    }
+    setLoginOtpSubmitting(true);
+    setLoginOtpError('');
+    setLoadingMsg('Verifying login OTP on CPCB portal...');
+    try {
+      const res = await window.pwp.scraper.submitLoginOtp({ otp });
+
+      if (res.success && res.step === 'LOGIN_COMPLETE') {
+        setShowLoginOtpModal(false);
+        setLoginOtp('');
+        showToast(
+          `Login complete! Browser is open${savedCeprId ? ` for CEPR ID ${savedCeprId}` : ''} — continue application form on portal.`,
+          'success',
+          { duration: 15000 }
+        );
+        return;
+      }
+
+      setLoginOtpError(res.error || 'Login OTP verification failed');
+    } catch (err) {
+      setLoginOtpError(err.message);
+    } finally {
+      setLoginOtpSubmitting(false);
+      setLoadingMsg('');
+    }
+  };
+
   const handleSubmitCaptcha = async () => {
     const text = captchaText.trim();
     if (!text) {
@@ -469,8 +822,9 @@ export default function RegistrationForm() {
         setCaptchaImage('');
         setCaptchaSubmitting(false);
         setLoadingMsg('');
+        await saveRegistrationSnapshot(res.ceprId, res.screenshotPath);
         showToast(
-          `Registration complete! CEPR ID: ${res.ceprId || 'saved'}${res.screenshotPath ? ' — screenshot saved' : ''}`,
+          `Registration complete! CEPR ID: ${res.ceprId || 'saved'}${res.screenshotPath ? ' — screenshot saved' : ''}. Click New Application to login.`,
           'success',
           { duration: 15000 }
         );
@@ -499,10 +853,34 @@ export default function RegistrationForm() {
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PWP & Cement Co-processing Registration</h2>
       <p className="text-sm text-slate-500 mb-6">
-        Upload documents for auto-fill, then complete General Information &amp; contact details.
+        {registrationComplete
+          ? 'Registration is complete. Review saved details below and start a new application when ready.'
+          : 'Upload documents for auto-fill, then complete General Information & contact details.'}
       </p>
 
-      {usingDummy && (
+      {loadingSavedRegistration && (
+        <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
+          <Loader2 size={16} className="animate-spin" />
+          Loading saved registration...
+        </div>
+      )}
+
+      {registrationComplete && (
+        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4 flex items-start gap-3">
+          <CheckCircle2 size={22} className="text-green-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-semibold text-green-800">Registration Complete</p>
+            <p className="text-sm text-green-700 mt-1">
+              CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
+            </p>
+            <p className="text-xs text-green-600 mt-1">
+              Email, mobile and password are saved below. Click <strong>New Application</strong> to login with captcha &amp; OTP.
+            </p>
+          </div>
+        </div>
+      )}
+
+      {usingDummy && !registrationComplete && (
         <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
           <FlaskConical size={16} className="mt-0.5 flex-shrink-0 text-amber-600" />
           <span>
@@ -512,9 +890,11 @@ export default function RegistrationForm() {
         </div>
       )}
 
-      <div className="mb-6 pb-6 border-b border-slate-100">
-        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
-      </div>
+      {!registrationComplete && (
+        <div className="mb-6 pb-6 border-b border-slate-100">
+          <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+        </div>
+      )}
 
       <div className="mb-6">
         <AutoFilledPreview data={autoData} isDummy={usingDummy} />
@@ -539,7 +919,8 @@ export default function RegistrationForm() {
                 name="typeOfBusiness"
                 value={generalInfo.typeOfBusiness}
                 onChange={handleGeneralChange}
-                className={selectClass}
+                className={lockedSelectClass}
+                disabled={registrationComplete}
                 required
               >
                 <option value="">Select</option>
@@ -554,7 +935,8 @@ export default function RegistrationForm() {
                 name="typeOfCompany"
                 value={generalInfo.typeOfCompany}
                 onChange={handleGeneralChange}
-                className={selectClass}
+                className={lockedSelectClass}
+                disabled={registrationComplete}
                 required
               >
                 <option value="">Select</option>
@@ -571,7 +953,9 @@ export default function RegistrationForm() {
                 onChange={handleGeneralChange}
                 type="text"
                 placeholder="Enter registered address"
-                className={inputClass}
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
                 required
               />
             </div>
@@ -583,7 +967,9 @@ export default function RegistrationForm() {
                 onChange={handleGeneralChange}
                 type="text"
                 placeholder="Enter (optional)"
-                className={inputClass}
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
               />
             </div>
             <div>
@@ -603,7 +989,8 @@ export default function RegistrationForm() {
                 name="stateUt"
                 value={generalInfo.stateUt}
                 onChange={handleGeneralChange}
-                className={selectClass}
+                className={lockedSelectClass}
+                disabled={registrationComplete}
                 required
               >
                 <option value="">Select</option>
@@ -620,7 +1007,9 @@ export default function RegistrationForm() {
                 onChange={handleGeneralChange}
                 type="text"
                 placeholder="Enter district"
-                className={inputClass}
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
                 required
               />
             </div>
@@ -639,7 +1028,9 @@ export default function RegistrationForm() {
                 onChange={handleGeneralChange}
                 type="text"
                 placeholder="e.g. Director, Manager"
-                className={inputClass}
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
                 required
               />
             </div>
@@ -653,7 +1044,8 @@ export default function RegistrationForm() {
                   onChange={handleGeneralChange}
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter Password (min 8 chars)"
-                  className={`${inputClass} pr-10`}
+                  className={`${lockedInputClass} pr-10`}
+                  readOnly={registrationComplete}
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -678,7 +1070,8 @@ export default function RegistrationForm() {
                   onChange={handleGeneralChange}
                   type={showConfirmPassword ? 'text' : 'password'}
                   placeholder="Confirm Password"
-                  className={`${inputClass} pr-10`}
+                  className={`${lockedInputClass} pr-10`}
+                  readOnly={registrationComplete}
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -711,7 +1104,9 @@ export default function RegistrationForm() {
                 onChange={(e) => setEmail(e.target.value)}
                 type="email"
                 placeholder="Enter Email Address"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
                 required
               />
             </div>
@@ -722,14 +1117,16 @@ export default function RegistrationForm() {
                 onChange={(e) => setMobile(e.target.value)}
                 type="tel"
                 placeholder="Enter Mobile Number"
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none"
+                className={lockedInputClass}
+                disabled={registrationComplete}
+                readOnly={registrationComplete}
                 required
               />
             </div>
           </div>
         </div>
 
-        {!docReady && missingDocs.length > 0 && !usingDummy && (
+        {!docReady && missingDocs.length > 0 && !usingDummy && !registrationComplete && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             Missing documents: {missingDocs.map((d) => d.replace('_', ' ')).join(', ')}
           </div>
@@ -739,23 +1136,39 @@ export default function RegistrationForm() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            disabled={loading}
+            disabled={loading && !registrationComplete}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
           >
-            Cancel
+            {registrationComplete ? 'Back' : 'Cancel'}
           </button>
-          <button
-            type="submit"
-            disabled={loading || !docReady}
-            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-            Start Registration
-          </button>
+          {registrationComplete ? (
+            <button
+              type="button"
+              onClick={handleNewApplication}
+              disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+            >
+              {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <FilePlus size={16} />
+              )}
+              New Application
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={loading || !docReady}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
+              Start Registration
+            </button>
+          )}
         </div>
       </form>
 
-      {loading && !showEmailOtp && !showMobileOtp && (
+      {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && (
         <div className="absolute inset-0 bg-white/80 z-10 flex flex-col items-center justify-center rounded-xl">
           <Loader2 size={32} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-700 font-medium">{loadingMsg}</p>
@@ -972,6 +1385,171 @@ export default function RegistrationForm() {
               >
                 {captchaSubmitting && <Loader2 size={14} className="animate-spin" />}
                 Submit & Complete
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLoginCaptchaModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b flex items-center justify-between">
+              <div>
+                <h3 className="text-lg font-semibold text-slate-900">Login Captcha</h3>
+                <p className="text-xs text-slate-500 mt-0.5">Enter captcha to request login OTP</p>
+              </div>
+              <button
+                type="button"
+                onClick={() => !loginCaptchaSubmitting && setShowLoginCaptchaModal(false)}
+                disabled={loginCaptchaSubmitting}
+                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-50"
+              >
+                <X size={18} />
+              </button>
+            </div>
+            <div className="px-6 py-5 space-y-4">
+              <div className="flex items-center gap-3">
+                {loginCaptchaImage ? (
+                  <img
+                    src={loginCaptchaImage}
+                    alt="Login captcha"
+                    className="h-12 border border-slate-200 rounded bg-slate-50"
+                  />
+                ) : (
+                  <div className="h-12 w-32 border border-dashed border-slate-300 rounded bg-slate-50 flex items-center justify-center text-xs text-slate-400">
+                    No image
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={handleRefreshLoginCaptcha}
+                  disabled={loginCaptchaRefreshing || loginCaptchaSubmitting}
+                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+                >
+                  {loginCaptchaRefreshing ? (
+                    <Loader2 size={14} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={14} />
+                  )}
+                  Refresh
+                </button>
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-slate-600 mb-1">Captcha</label>
+                <input
+                  type="text"
+                  value={loginCaptchaText}
+                  onChange={(e) => {
+                    setLoginCaptchaText(e.target.value.slice(0, 6));
+                    if (loginCaptchaError) setLoginCaptchaError('');
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleSubmitLoginCaptcha()}
+                  placeholder="Enter captcha"
+                  maxLength={6}
+                  disabled={loginCaptchaSubmitting}
+                  className={`${inputClass} uppercase tracking-widest ${loginCaptchaError ? 'border-red-400 focus:ring-red-500 focus:border-red-500' : ''}`}
+                  autoFocus
+                />
+                {loginCaptchaError && (
+                  <p className="text-xs text-red-600 mt-1.5">{loginCaptchaError}</p>
+                )}
+              </div>
+              {loginCaptchaSubmitting && loadingMsg && (
+                <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                  <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin shrink-0" />
+                    Automation in progress
+                  </p>
+                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 bg-slate-50 border-t flex justify-end">
+              <button
+                type="button"
+                onClick={handleSubmitLoginCaptcha}
+                disabled={loginCaptchaSubmitting || !loginCaptchaText.trim()}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loginCaptchaSubmitting && <Loader2 size={14} className="animate-spin" />}
+                Get OTP
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showLoginOtpModal && (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
+              <h3 className="text-lg font-semibold text-slate-800">Login OTP</h3>
+              <button
+                type="button"
+                disabled={loginOtpSubmitting}
+                onClick={() => setShowLoginOtpModal(false)}
+                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-6">
+              <p className="text-sm text-slate-600 mb-4">
+                Enter 6-digit OTP sent to your registered email and mobile
+              </p>
+              <input
+                type="text"
+                value={loginOtp}
+                onChange={(e) => {
+                  setLoginOtp(e.target.value.replace(/\D/g, '').slice(0, 6));
+                  if (loginOtpError) setLoginOtpError('');
+                }}
+                onKeyDown={(e) => e.key === 'Enter' && !loginOtpSubmitting && handleVerifyLoginOtp()}
+                placeholder="Enter 6-digit OTP"
+                disabled={loginOtpSubmitting}
+                className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-blue-500 outline-none disabled:opacity-60 tracking-widest text-center text-lg ${loginOtpError ? 'border-red-400' : 'border-slate-300'}`}
+                autoFocus
+                maxLength={6}
+              />
+              {loginOtpError && (
+                <p className="text-xs text-red-600 mt-1.5">{loginOtpError}</p>
+              )}
+              <div className="mt-4 flex items-center justify-between text-sm">
+                {!loginOtpResendActive ? (
+                  <span className="text-slate-500">
+                    Resend OTP in <span className="font-medium">{formatTimer(loginOtpTimer)}</span>
+                  </span>
+                ) : (
+                  <button
+                    type="button"
+                    disabled={loginOtpSubmitting}
+                    onClick={handleResendLoginOtp}
+                    className="text-blue-600 hover:text-blue-700 font-medium disabled:opacity-50"
+                  >
+                    Send OTP again
+                  </button>
+                )}
+              </div>
+              {loginOtpSubmitting && loadingMsg && (
+                <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
+                  <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
+                    <Loader2 size={12} className="animate-spin shrink-0" />
+                    Automation in progress
+                  </p>
+                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 bg-slate-50 border-t flex justify-end">
+              <button
+                type="button"
+                onClick={handleVerifyLoginOtp}
+                disabled={loginOtpSubmitting || loginOtp.replace(/\D/g, '').length !== 6}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 disabled:opacity-50"
+              >
+                {loginOtpSubmitting && <Loader2 size={14} className="animate-spin" />}
+                Verify OTP & Continue
               </button>
             </div>
           </div>
