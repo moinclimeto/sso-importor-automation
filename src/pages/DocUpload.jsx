@@ -210,7 +210,7 @@ export default function DocUpload() {
   const [docType] = useState(location.state?.type || 'purchase');
   const isPurchase = docType === 'purchase';
   const [financialYear, setFinancialYear] = useState('all');
-  const [companyDocType, setCompanyDocType] = useState('gst');
+  const [companyDocType, setCompanyDocType] = useState('auto');
   const [files, setFiles] = useState([]);
   const [fileStatus, setFileStatus] = useState({});
   const [stage, setStage] = useState('upload');
@@ -998,33 +998,6 @@ export default function DocUpload() {
                   </select>
                 </div>
               </div>
-              
-              {docType === 'company_document' && (
-                <div className="sm:w-52">
-                  <label className="block text-[11px] font-semibold tracking-wide text-slate-600 uppercase mb-1.5">
-                    Document Type
-                  </label>
-                  <div className="relative">
-                    <FileText
-                      size={16}
-                      className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none"
-                    />
-                    <select
-                      value={companyDocType}
-                      onChange={(e) => setCompanyDocType(e.target.value)}
-                      disabled={stage === 'processing'}
-                      className="input pl-9"
-                    >
-                      <option value="gst">GST Certificate</option>
-                      <option value="pan">PAN Card</option>
-                      <option value="cin">CIN (Incorporation)</option>
-                      <option value="cto">CTO (Consent to Operate)</option>
-                      <option value="electricity">Electricity Bill</option>
-                      <option value="udyam">Udyam Certificate</option>
-                    </select>
-                  </div>
-                </div>
-              )}
             </div>
             
             {stage === 'upload' && files.length > 0 && (
@@ -1206,13 +1179,6 @@ export default function DocUpload() {
                   }}
                 >
                   New batch
-                </button>
-                <button
-                  type="button"
-                  className="btn-primary"
-                  onClick={() => navigate('/doc-table', { state: { type: docType } })}
-                >
-                  Open table
                 </button>
               </div>
             </div>
