@@ -2,7 +2,7 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { withRegistrationDummyFallback } from './registrationDummyData.js';
+import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from './registrationDummyData.js';
 import { saveRegistrationDetails } from './registrationDb.js';
 import {
   getCaptchaImageDataUrl,
@@ -15,6 +15,57 @@ let regContext = null;
 let regPage = null;
 let regMobile = null;
 let regPayload = null;
+
+function buildRegistrationDbPayload(ceprId, screenshotPath) {
+  const data = regPayload || {};
+  const loginCreds = resolveRegistrationLoginCredentials({
+    email: data.email,
+    mobile: data.mobile ?? regMobile,
+    password: data.password,
+  });
+  return {
+    applicant_type: 'PWP',
+    sub_applicant_type: 'Cement Co-processing',
+    cepr_id: ceprId,
+    success_screenshot_path: screenshotPath,
+    email: loginCreds.email,
+    mobile: loginCreds.mobile,
+    password: loginCreds.password,
+    form_data_json: JSON.stringify({
+      email: loginCreds.email,
+      mobile: loginCreds.mobile,
+      generalInfo: {
+        typeOfBusiness: data.typeOfBusiness,
+        typeOfCompany: data.typeOfCompany,
+        registeredAddressLine1: data.registeredAddressLine1 || data.registeredAddress,
+        registeredAddressLine2: data.registeredAddressLine2,
+        district: data.district,
+        stateUt: data.stateUt,
+        cin: data.cin,
+        authDesignation: data.authDesignation,
+        password: loginCreds.password,
+        confirmPassword: loginCreds.password,
+      },
+      autoData: {
+        gstin: data.gstin,
+        companyPan: data.companyPan,
+        companyName: data.companyName,
+        legalName: data.legalName,
+        dateOfEstablishment: data.dateOfEstablishment,
+        authPan: data.authPan,
+        authName: data.authName,
+        authDob: data.authDob,
+        constitutionOfBusiness: data.constitutionOfBusiness,
+        registeredAddress: data.registeredAddress,
+        district: data.district,
+        cin: data.cin,
+        ctoNumber: data.ctoNumber,
+        ctoValidity: data.ctoValidity,
+        dateOfCommencement: data.dateOfCommencement,
+      },
+    }),
+  };
+}
 
 const REGISTRATION_URL = 'https://epr.cpcb.gov.in/registration';
 
@@ -979,12 +1030,7 @@ export async function submitRegistrationCaptcha(captchaText, onLog) {
       const screenshotPath = successData?.screenshotPath || null;
 
       if (ceprId || screenshotPath) {
-        await saveRegistrationDetails({
-          applicant_type: 'PWP',
-          sub_applicant_type: 'Cement Co-processing',
-          cepr_id: ceprId,
-          success_screenshot_path: screenshotPath,
-        });
+        await saveRegistrationDetails(buildRegistrationDbPayload(ceprId, screenshotPath));
         if (onLog) onLog(`Saved to DB — CEPR ID: ${ceprId || 'N/A'}`);
       }
 
@@ -1013,12 +1059,7 @@ export async function submitRegistrationCaptcha(captchaText, onLog) {
       const screenshotPath = successData?.screenshotPath || null;
 
       if (ceprId || screenshotPath) {
-        await saveRegistrationDetails({
-          applicant_type: 'PWP',
-          sub_applicant_type: 'Cement Co-processing',
-          cepr_id: ceprId,
-          success_screenshot_path: screenshotPath,
-        });
+        await saveRegistrationDetails(buildRegistrationDbPayload(ceprId, screenshotPath));
       }
 
       return {
@@ -1176,10 +1217,16 @@ export async function resendMobileOtp(onLog) {
   }
 }
 
+export function getRegSession() {
+  return { browser: regBrowser, page: regPage, context: regContext };
+}
+
 export async function closeRegistrationSession() {
   if (regBrowser) {
     await regBrowser.close();
     regBrowser = null;
+    regContext = null;
+    regPage = null;
   }
   return { success: true };
 }

@@ -31,6 +31,13 @@ import {
   refreshRegistrationCaptcha,
   closeRegistrationSession
 } from './cpcbRegistration.js';
+import {
+  startLoginFlow,
+  submitLoginCaptcha,
+  refreshLoginCaptcha,
+  submitLoginOtp,
+  resendLoginOtp,
+} from './cpcbLogin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -830,6 +837,16 @@ export function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('registration:get', async () => {
+    try {
+      const { getRegistrationDetails } = await import('./registrationDb.js');
+      return await getRegistrationDetails();
+    } catch (err) {
+      console.error('registration:get error', err);
+      return { success: false, error: err.message, data: null };
+    }
+  });
+
   // ─── REGISTRATION SCRAPER ────────────────────────────────────
   ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
     return await startRegistrationFlow(data, (msg) => {
@@ -862,6 +879,28 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('scraper:refreshRegistrationCaptcha', async (event) => {
     return await refreshRegistrationCaptcha((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:startLoginFlow', async (event, payload) => {
+    return await startLoginFlow(payload, (msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:submitLoginCaptcha', async (event, payload) => {
+    const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
+    return await submitLoginCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:refreshLoginCaptcha', async (event) => {
+    return await refreshLoginCaptcha((msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
+    const otp = typeof payload === 'string' ? payload : payload?.otp;
+    return await submitLoginOtp(otp, (msg) => event.sender.send('scraper:log', msg));
+  });
+
+  ipcMain.handle('scraper:resendLoginOtp', async (event) => {
+    return await resendLoginOtp((msg) => event.sender.send('scraper:log', msg));
   });
 
   ipcMain.handle('scraper:closeRegistrationSession', async () => {
