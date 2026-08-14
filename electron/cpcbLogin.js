@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import { getRegSession } from './cpcbRegistration.js';
 import { resolveRegistrationLoginCredentials } from './registrationDummyData.js';
+import { getRegistrationDetails } from './registrationDb.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
@@ -8,6 +9,11 @@ import {
 } from './captchaPortal.js';
 
 const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
+const DASHBOARD_URL = 'https://epr.cpcb.gov.in/dashboard';
+
+function escapeRegex(value) {
+  return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
 
 let loginBrowser = null;
 let loginPage = null;
@@ -399,6 +405,118 @@ function isAuthenticatedUrl(url = '') {
   return /\/(onboarding|dashboard)\b/i.test(url);
 }
 
+async function waitForDashboard(page, onLog) {
+  if (onLog) onLog('Waiting for CPCB dashboard...');
+
+  try {
+    await page.waitForURL(/\/dashboard/i, { timeout: 45000 });
+  } catch {
+    if (onLog) onLog('Navigating to dashboard...');
+    await page.goto(DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+  }
+
+  await page.waitForTimeout(2000);
+}
+
+function getApplicantTypeModal(page) {
+  return page
+    .locator('[role="dialog"]')
+    .filter({ hasText: /Applicant Type|Please select your application type/i })
+    .last();
+}
+
+async function selectRadioByLabelInModal(page, modal, labelText, onLog) {
+  const text = String(labelText || '').trim();
+  if (!text) throw new Error('Radio label is required');
+
+  if (onLog) onLog(`Selecting "${text}"...`);
+
+  const labels = modal.locator('label').filter({
+    hasText: new RegExp(`^\\s*${escapeRegex(text)}\\s*$`, 'i'),
+  });
+  const labelCount = await labels.count();
+
+  for (let i = 0; i < labelCount; i += 1) {
+    const label = labels.nth(i);
+    if (await label.isVisible().catch(() => false)) {
+      await label.scrollIntoViewIfNeeded().catch(() => {});
+      await label.click({ timeout: 8000 });
+      await page.waitForTimeout(800);
+      return;
+    }
+  }
+
+  const row = modal.locator('div').filter({ hasText: new RegExp(escapeRegex(text), 'i') }).first();
+  const radio = row.locator('input[type="radio"]').first();
+  if (await radio.isVisible({ timeout: 3000 }).catch(() => false)) {
+    await radio.click({ timeout: 8000 });
+    await page.waitForTimeout(800);
+    return;
+  }
+
+  throw new Error(`Could not select option "${text}" in Applicant Type modal`);
+}
+
+async function clickPlasticWasteRegister(page, onLog) {
+  if (onLog) onLog('Clicking Register on Plastic Waste Management...');
+
+  const plasticCard = page.locator('.waste-card').filter({ hasText: /Plastic Waste Management/i }).first();
+  await plasticCard.waitFor({ state: 'visible', timeout: 20000 });
+  await plasticCard.scrollIntoViewIfNeeded().catch(() => {});
+
+  const registerBtn = plasticCard.locator('button.card-btn').filter({ hasText: /^Register$/i }).first();
+  await registerBtn.waitFor({ state: 'visible', timeout: 10000 });
+  await registerBtn.click({ timeout: 10000 });
+  await page.waitForTimeout(1500);
+}
+
+async function clickOnboardingButton(modal, page, onLog) {
+  if (onLog) onLog('Clicking Onboarding...');
+
+  const btn = modal.locator('button[type="submit"]').filter({ hasText: /Onboarding/i }).first();
+  await btn.waitFor({ state: 'visible', timeout: 10000 });
+  await btn.scrollIntoViewIfNeeded().catch(() => {});
+  await btn.click({ timeout: 10000 });
+  await page.waitForTimeout(3000);
+}
+
+async function startApplicationOnboarding(page, onLog) {
+  const regResult = await getRegistrationDetails();
+  const applicantType = regResult.data?.applicant_type || 'PWP';
+  const subApplicantType = regResult.data?.sub_applicant_type || 'Cement Co-processing';
+
+  if (onLog) {
+    onLog(`Starting application onboarding — ${applicantType} / ${subApplicantType}`);
+  }
+
+  await waitForDashboard(page, onLog);
+  await clickPlasticWasteRegister(page, onLog);
+
+  const modal = getApplicantTypeModal(page);
+  await modal.waitFor({ state: 'visible', timeout: 15000 });
+
+  await selectRadioByLabelInModal(page, modal, applicantType, onLog);
+
+  await modal
+    .getByText(/Please select one of the following|Recycler|Cement Co-processing/i)
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 })
+    .catch(() => {});
+
+  await page.waitForTimeout(800);
+  await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
+  await clickOnboardingButton(modal, page, onLog);
+
+  const finalUrl = page.url() || '';
+  if (onLog) onLog(`Onboarding submitted — browser at ${finalUrl}`);
+
+  return {
+    applicantType,
+    subApplicantType,
+    url: finalUrl,
+  };
+}
+
 export async function startLoginFlow(payload, onLog) {
   try {
     const ceprId = String(payload?.ceprId || payload?.userId || '').trim();
@@ -535,20 +653,35 @@ export async function submitLoginOtp(otp, onLog) {
 
     await clickContinueAfterLoginVerify(page, onLog);
 
-    const url = page.url() || '';
+    let onboardingResult = null;
+    try {
+      onboardingResult = await startApplicationOnboarding(page, onLog);
+    } catch (onboardErr) {
+      if (onLog) onLog('Application onboarding warning: ' + onboardErr.message);
+      const url = page.url() || '';
+      return {
+        success: false,
+        step: 'LOGIN_COMPLETE',
+        url,
+        authenticated: isAuthenticatedUrl(url),
+        error: `Login succeeded but application onboarding failed: ${onboardErr.message}`,
+      };
+    }
+
+    const url = onboardingResult?.url || page.url() || '';
     if (onLog) {
       onLog(
-        isAuthenticatedUrl(url)
-          ? `Login complete — browser open at ${url}`
-          : 'Login verified — browser kept open'
+        `Application onboarding complete — ${onboardingResult.applicantType} / ${onboardingResult.subApplicantType}`
       );
     }
 
     return {
       success: true,
-      step: 'LOGIN_COMPLETE',
+      step: 'APPLICATION_ONBOARDING_COMPLETE',
       url,
       authenticated: isAuthenticatedUrl(url),
+      applicantType: onboardingResult.applicantType,
+      subApplicantType: onboardingResult.subApplicantType,
     };
   } catch (err) {
     if (onLog) onLog('Login OTP error: ' + err.message);

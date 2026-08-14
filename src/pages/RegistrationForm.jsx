@@ -784,11 +784,22 @@ export default function RegistrationForm() {
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
 
+      if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+        setShowLoginOtpModal(false);
+        setLoginOtp('');
+        showToast(
+          `Application started! ${res.applicantType || 'PWP'} — ${res.subApplicantType || 'Cement Co-processing'} selected on CPCB portal. Browser is open.`,
+          'success',
+          { duration: 15000 }
+        );
+        return;
+      }
+
       if (res.success && res.step === 'LOGIN_COMPLETE') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
         showToast(
-          `Login complete! Browser is open${savedCeprId ? ` for CEPR ID ${savedCeprId}` : ''} — continue application form on portal.`,
+          `Login complete! Browser is open${savedCeprId ? ` for CEPR ID ${savedCeprId}` : ''} — continue on portal.`,
           'success',
           { duration: 15000 }
         );
