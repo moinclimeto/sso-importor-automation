@@ -55,6 +55,7 @@ contextBridge.exposeInMainWorld('pwp', {
   // Registration
   registration: {
     save: (data) => ipcRenderer.invoke('registration:save', data),
+    get: () => ipcRenderer.invoke('registration:get'),
   },
   // OCR (Gemini)
   ocr: {
@@ -80,6 +81,11 @@ contextBridge.exposeInMainWorld('pwp', {
     resendMobileOtp: () => ipcRenderer.invoke('scraper:resendMobileOtp'),
     submitRegistrationCaptcha: (payload) => ipcRenderer.invoke('scraper:submitRegistrationCaptcha', payload),
     refreshRegistrationCaptcha: () => ipcRenderer.invoke('scraper:refreshRegistrationCaptcha'),
+    startLoginFlow: (payload) => ipcRenderer.invoke('scraper:startLoginFlow', payload),
+    submitLoginCaptcha: (payload) => ipcRenderer.invoke('scraper:submitLoginCaptcha', payload),
+    refreshLoginCaptcha: () => ipcRenderer.invoke('scraper:refreshLoginCaptcha'),
+    submitLoginOtp: (payload) => ipcRenderer.invoke('scraper:submitLoginOtp', payload),
+    resendLoginOtp: () => ipcRenderer.invoke('scraper:resendLoginOtp'),
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),

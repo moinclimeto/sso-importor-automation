@@ -24,6 +24,21 @@ export const REGISTRATION_DUMMY_DATA = {
   panDocumentPath: '',
 };
 
+/** Fallback login credentials when DB has no saved contact (dev / first-time after registration). */
+export const REGISTRATION_LOGIN_DUMMY = {
+  email: 'amreen.climeto@gmail.com',
+  mobile: '9109424392',
+  password: 'Pass@321',
+};
+
+export function resolveRegistrationLoginCredentials(data = {}) {
+  return {
+    email: String(data.email || REGISTRATION_LOGIN_DUMMY.email).trim(),
+    mobile: String(data.mobile || REGISTRATION_LOGIN_DUMMY.mobile).trim(),
+    password: String(data.password || REGISTRATION_LOGIN_DUMMY.password),
+  };
+}
+
 export function withRegistrationDummyFallback(data = {}) {
   const out = { ...REGISTRATION_DUMMY_DATA };
   for (const [key, value] of Object.entries(data || {})) {
