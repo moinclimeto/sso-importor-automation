@@ -810,6 +810,16 @@ export function registerIpcHandlers() {
   });
 
   // ─── REGISTRATION ──────────────────────────────────────────────
+  ipcMain.handle('registration:get', async () => {
+    try {
+      const { getRegistrationDetails } = await import('./registrationDb.js');
+      return await getRegistrationDetails();
+    } catch (err) {
+      console.error('registration:get error', err);
+      return null;
+    }
+  });
+
   ipcMain.handle('registration:save', async (_, data) => {
     try {
       const { saveRegistrationDetails } = await import('./registrationDb.js');

@@ -31,6 +31,7 @@ export const REGISTRATION_DUMMY_DATA = {
   enterpriseType: 'Large',
   password: '',
   confirmPassword: '',
+  panDocumentPath: 'C:\\Users\\itcli\\Documents\\GitHub\\sso-importor-automation\\data\\dummy_pan.pdf',
 };
 
 function pickNonEmpty(base, override) {

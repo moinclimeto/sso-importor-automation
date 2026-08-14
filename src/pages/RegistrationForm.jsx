@@ -175,8 +175,26 @@ export default function RegistrationForm() {
     setUsingDummy(isDummy || readyDummy);
   }, []);
 
+  const [savedRegistration, setSavedRegistration] = useState(null);
+
   useEffect(() => {
     applyRegistrationData(REGISTRATION_DUMMY_DATA);
+    
+    // Fetch saved registration data (if any)
+    if (window.pwp?.registration?.get) {
+      window.pwp.registration.get().then((data) => {
+        if (data) {
+          setSavedRegistration(data);
+          if (data.email) setEmail(data.email);
+          if (data.mobile) setMobile(data.mobile);
+          setGeneralInfo(prev => ({
+            ...prev,
+            password: data.password || prev.password,
+            confirmPassword: data.confirm_password || prev.confirmPassword
+          }));
+        }
+      }).catch(console.error);
+    }
   }, [applyRegistrationData]);
 
   const handleGeneralChange = (e) => {
@@ -201,6 +219,18 @@ export default function RegistrationForm() {
     }
     if (!email || !mobile) {
       showToast('Email and Mobile Number are required.', 'error');
+      return;
+    }
+
+    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    if (!emailRegex.test(email)) {
+      showToast('Please enter a valid email address.', 'error');
+      return;
+    }
+
+    const mobileRegex = /^[0-9]{10}$/;
+    if (!mobileRegex.test(mobile)) {
+      showToast('Please enter a valid 10-digit mobile number.', 'error');
       return;
     }
     if (!generalInfo.typeOfBusiness || !generalInfo.typeOfCompany) {
@@ -263,6 +293,7 @@ export default function RegistrationForm() {
       ctoNumber: autoData.ctoNumber,
       ctoValidity: autoData.ctoValidity,
       dateOfCommencement: autoData.dateOfCommencement,
+      panDocumentPath: autoData.panDocumentPath,
     };
 
     setLoading(true);
@@ -390,6 +421,10 @@ export default function RegistrationForm() {
             sub_applicant_type: 'Cement Co-processing',
             cepr_id: res.ceprId || undefined,
             success_screenshot_path: res.screenshotPath || undefined,
+            email: email || undefined,
+            mobile: mobile || undefined,
+            password: generalInfo.password || undefined,
+            confirm_password: generalInfo.confirmPassword || undefined,
           });
         }
 
@@ -469,6 +504,18 @@ export default function RegistrationForm() {
         setCaptchaImage('');
         setCaptchaSubmitting(false);
         setLoadingMsg('');
+        
+        await window.pwp.registration.save({
+          applicant_type: 'PWP',
+          sub_applicant_type: 'Cement Co-processing',
+          cepr_id: res.ceprId || undefined,
+          success_screenshot_path: res.screenshotPath || undefined,
+          email: email || undefined,
+          mobile: mobile || undefined,
+          password: generalInfo.password || undefined,
+          confirm_password: generalInfo.confirmPassword || undefined,
+        });
+
         showToast(
           `Registration complete! CEPR ID: ${res.ceprId || 'saved'}${res.screenshotPath ? ' — screenshot saved' : ''}`,
           'success',
@@ -744,14 +791,50 @@ export default function RegistrationForm() {
           >
             Cancel
           </button>
-          <button
-            type="submit"
-            disabled={loading || !docReady}
-            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-            Start Registration
-          </button>
+          
+          {savedRegistration?.cepr_id ? (
+            <button
+              type="button"
+              disabled={loading}
+              onClick={async () => {
+                if (!savedRegistration.password) {
+                  showToast('Password missing. Please re-register.', 'error');
+                  return;
+                }
+                setLoading(true);
+                setLoadingMsg('Initiating Login...');
+                try {
+                  const res = await window.pwp.scraper.openCpcbPortal({
+                    userId: savedRegistration.cepr_id,
+                    password: savedRegistration.password
+                  });
+                  if (!res.success && res.error) {
+                    showToast(res.error, 'error');
+                  } else {
+                    showToast('Browser opened. Please complete Captcha and OTP to login.', 'success', { duration: 10000 });
+                  }
+                } catch (e) {
+                  showToast(e.message, 'error');
+                } finally {
+                  setLoading(false);
+                  setLoadingMsg('');
+                }
+              }}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <RefreshCw size={16} />}
+              New Application
+            </button>
+          ) : (
+            <button
+              type="submit"
+              disabled={loading || !docReady}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
+              Start Registration
+            </button>
+          )}
         </div>
       </form>
 

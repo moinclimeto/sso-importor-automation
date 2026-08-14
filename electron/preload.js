@@ -59,6 +59,7 @@ contextBridge.exposeInMainWorld('pwp', {
   },
   // Registration
   registration: {
+    get: () => ipcRenderer.invoke('registration:get'),
     save: (data) => ipcRenderer.invoke('registration:save', data),
   },
   // OCR (Gemini + local QR)

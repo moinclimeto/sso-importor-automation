@@ -1,6 +1,6 @@
 import { getDb } from './database.js';
 
-const OPTIONAL_COLUMNS = ['sub_applicant_type', 'cepr_id', 'success_screenshot_path'];
+const OPTIONAL_COLUMNS = ['sub_applicant_type', 'cepr_id', 'success_screenshot_path', 'email', 'mobile', 'password', 'confirm_password'];
 
 async function ensureRegistrationColumns(db) {
   for (const col of OPTIONAL_COLUMNS) {
@@ -10,6 +10,13 @@ async function ensureRegistrationColumns(db) {
       /* column exists */
     }
   }
+}
+
+export async function getRegistrationDetails() {
+  const db = getDb();
+  await ensureRegistrationColumns(db);
+  const row = await db.get('SELECT * FROM registration_details LIMIT 1');
+  return row || null;
 }
 
 export async function saveRegistrationDetails(data = {}) {
@@ -24,12 +31,20 @@ export async function saveRegistrationDetails(data = {}) {
         applicant_type = COALESCE(?, applicant_type),
         sub_applicant_type = COALESCE(?, sub_applicant_type),
         cepr_id = COALESCE(?, cepr_id),
-        success_screenshot_path = COALESCE(?, success_screenshot_path)
+        success_screenshot_path = COALESCE(?, success_screenshot_path),
+        email = COALESCE(?, email),
+        mobile = COALESCE(?, mobile),
+        password = COALESCE(?, password),
+        confirm_password = COALESCE(?, confirm_password)
       WHERE _internal_id = ?`,
       data.applicant_type ?? null,
       data.sub_applicant_type ?? null,
       data.cepr_id ?? null,
       data.success_screenshot_path ?? null,
+      data.email ?? null,
+      data.mobile ?? null,
+      data.password ?? null,
+      data.confirm_password ?? null,
       existing._internal_id
     );
     return { success: true, id: existing._internal_id, inserted: false };
@@ -37,12 +52,16 @@ export async function saveRegistrationDetails(data = {}) {
 
   const result = await db.run(
     `INSERT INTO registration_details
-      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path)
-     VALUES (?, ?, ?, ?)`,
+      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     data.applicant_type ?? null,
     data.sub_applicant_type ?? null,
     data.cepr_id ?? null,
-    data.success_screenshot_path ?? null
+    data.success_screenshot_path ?? null,
+    data.email ?? null,
+    data.mobile ?? null,
+    data.password ?? null,
+    data.confirm_password ?? null
   );
 
   return { success: true, id: result.lastID, inserted: true };

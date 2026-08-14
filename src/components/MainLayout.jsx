@@ -11,6 +11,7 @@ import { RefreshCw } from 'lucide-react';
 import { PageHeaderProvider, usePageHeader } from '../context/PageHeaderContext.jsx';
 
 const navLinks = [
+  /*
   {
     icon: LayoutDashboard,
     label: 'Overview',
@@ -18,6 +19,8 @@ const navLinks = [
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },
+  */
+  /*
   {
     icon: Database,
     label: 'EPR Data',
@@ -30,7 +33,9 @@ const navLinks = [
       { to: '/epr-conversion-factor', label: 'Conversion Factor' },
     ]
   },
-  { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
+  */
+  // { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
+  { to: '/registration-form', icon: FileScan, label: 'Registration' },
 ];
 
 const pageHeaders = {
@@ -43,6 +48,7 @@ const pageHeaders = {
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-new-application': { title: 'New Application Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
+  '/registration-form': { title: 'Registration', subtitle: 'SSO Importer Registration' },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -203,8 +209,8 @@ function MainLayoutInner() {
     location.pathname.startsWith('/doc-table');
 
   const baseHeader = pageHeaders[location.pathname] || {
-    title: 'PWP',
-    subtitle: 'Purchase & Sale Manager',
+    title: 'SSO Importer',
+    subtitle: 'Registration Management',
   };
 
   const headerTitle = pageHeader?.title

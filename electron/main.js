@@ -24,7 +24,7 @@ function createWindow() {
     },
     titleBarStyle: 'default',
     show: false,
-    title: 'Climeto PWP',
+    title: 'SSO Importer',
   });
 
   win.once('ready-to-show', () => win.show());
