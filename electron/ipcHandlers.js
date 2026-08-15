@@ -837,15 +837,7 @@ export function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('registration:get', async () => {
-    try {
-      const { getRegistrationDetails } = await import('./registrationDb.js');
-      return await getRegistrationDetails();
-    } catch (err) {
-      console.error('registration:get error', err);
-      return { success: false, error: err.message, data: null };
-    }
-  });
+  // Removed duplicate registration:get handler
 
   // ─── REGISTRATION SCRAPER ────────────────────────────────────
   ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {

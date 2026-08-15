@@ -104,13 +104,14 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
     switch (companyDocType) {
       case 'auto':
         return `OCR Company Document. IDENTIFY the document type and extract accordingly. JSON only minified. 
-        Determine "doc_type" from: [gst, pan, cin, cto, electricity, udyam, other].
+        Determine "doc_type" from: [gst, pan, cin, cto, electricity, udyam, iec, other].
         If gst: Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. (document_number=GSTIN)
         If pan: Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","dob":"YYYY-MM-DD","issue_date":"YYYY-MM-DD"}. (document_number=PAN, if 4th letter 'C' set doc_type="company_pan" else "person_pan". For person_pan: dob=Date of Birth on card as YYYY-MM-DD, also copy to issue_date. For company_pan: dob="", issue_date=Date of Incorporation if printed.)
         If cin: Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}.
         If cto: Extract: {"doc_type":"cto","document_number":"","entity_name":"","address":"","industry_category":"","allowed_capacity":"","issue_date":"YYYY-MM-DD","validity_date":"YYYY-MM-DD"}.
         If electricity: Extract: {"doc_type":"electricity","document_number":"","entity_name":"","address":"","provider":"","issue_date":"YYYY-MM-DD","due_date":"YYYY-MM-DD","billing_month":"","units_consumed":0,"amount":0}.
         If udyam: Extract: {"doc_type":"udyam","document_number":"","entity_name":"","enterprise_type":"","social_category":"","address":"","date_of_incorporation":"","date_of_commencement":"","issue_date":"YYYY-MM-DD","units":[{"sno":"","name":""}],"nic_codes":[{"nic_2":"","nic_4":"","nic_5":"","activity":""}]}.
+        If iec: Extract: {"doc_type":"iec","document_number":"","entity_name":"","address":"","issue_date":"YYYY-MM-DD"}.
         If unknown, use "other" and extract basic info: {"doc_type":"unknown","document_number":"","entity_name":"","issue_date":"YYYY-MM-DD"}.`;
       case 'gst':
         return `OCR GST Certificate. JSON only minified. Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. RULES: document_number=GSTIN. entity_name=Legal Name. trade_name=Trade Name. issue_date=Date of Registration.`;
@@ -124,6 +125,8 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
         return `OCR Electricity Bill. JSON only minified. Extract: {"doc_type":"electricity","document_number":"","entity_name":"","address":"","provider":"","issue_date":"YYYY-MM-DD","due_date":"YYYY-MM-DD","billing_month":"","units_consumed":0,"amount":0}. RULES: document_number=Consumer No / K No / Account ID. entity_name=Consumer Name. address=Supply/Service Address. provider=Electricity Provider/Discom Name. issue_date=Bill Date. due_date=Payment Due Date. billing_month=Billing Period/Month. units_consumed=Total Units (kWh) consumed. amount=Net Amount Payable.`;
       case 'udyam':
         return `OCR Udyam Certificate. JSON only minified. Extract: {"doc_type":"udyam","document_number":"","entity_name":"","enterprise_type":"","social_category":"","address":"","date_of_incorporation":"","date_of_commencement":"","issue_date":"YYYY-MM-DD","units":[{"sno":"","name":""}],"nic_codes":[{"nic_2":"","nic_4":"","nic_5":"","activity":""}]}. RULES: document_number=Udyam Registration Number. entity_name=Name of Enterprise. enterprise_type=Type of Enterprise (e.g. SMALL MANUFACTURING). address=Full Official Address of Enterprise. date_of_incorporation=Date of Incorporation. date_of_commencement=Date of Commencement. issue_date=Date of Udyam Registration.`;
+      case 'iec':
+        return `OCR IEC Certificate (Importer-Exporter Code). JSON only minified. Extract: {"doc_type":"iec","document_number":"","entity_name":"","address":"","issue_date":"YYYY-MM-DD"}. RULES: document_number=IEC Number. entity_name=Firm/Company Name. address=Registered Address. issue_date=Date of Issue.`;
       default:
         return `OCR Document. JSON only minified. Extract: {"doc_type":"unknown","document_number":"","entity_name":"","issue_date":"YYYY-MM-DD"}.`;
     }

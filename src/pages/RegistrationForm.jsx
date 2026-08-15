@@ -204,8 +204,8 @@ export default function RegistrationForm() {
       const { data: dummyData } = resolveRegistrationData(REGISTRATION_DUMMY_DATA);
       const fromDocs = buildGeneralInfoFromDocData(dummyData);
       await window.pwp.registration.save({
-        applicant_type: saved.applicant_type || 'PWP',
-        sub_applicant_type: saved.sub_applicant_type || 'Cement Co-processing',
+        applicant_type: saved.applicant_type || 'PIBO',
+        sub_applicant_type: saved.sub_applicant_type || 'Importer',
         cepr_id: saved.cepr_id,
         success_screenshot_path: saved.success_screenshot_path,
         email: loginCreds.email,
@@ -224,6 +224,10 @@ export default function RegistrationForm() {
               registeredAddressLine1: dummyData.registeredAddressLine1,
               district: dummyData.district,
               stateUt: dummyData.stateUt,
+              operatingStates: dummyData.operatingStates,
+              hasProductionFacility: dummyData.hasProductionFacility,
+              capitalInvested: dummyData.capitalInvested,
+              yearOfCommencement: dummyData.yearOfCommencement,
               cin: dummyData.cin,
               authDesignation: dummyData.authDesignation,
               password: loginCreds.password,
@@ -444,6 +448,8 @@ export default function RegistrationForm() {
       ctoValidity: autoData.ctoValidity,
       dateOfCommencement: autoData.dateOfCommencement,
       panDocumentPath: autoData.panDocumentPath,
+      gstDocumentPath: autoData.gstDocumentPath,
+      cinDocumentPath: autoData.cinDocumentPath,
     };
 
     setLoading(true);
@@ -576,8 +582,8 @@ export default function RegistrationForm() {
 
         if (res.step !== 'REGISTRATION_COMPLETE') {
           await window.pwp.registration.save({
-            applicant_type: 'PWP',
-            sub_applicant_type: 'Cement Co-processing',
+            applicant_type: 'PIBO',
+            sub_applicant_type: 'Importer',
             cepr_id: res.ceprId || undefined,
             success_screenshot_path: res.screenshotPath || undefined,
             email: email || undefined,
@@ -652,8 +658,8 @@ export default function RegistrationForm() {
       password: generalInfo.password,
     });
     await window.pwp.registration.save({
-      applicant_type: 'PWP',
-      sub_applicant_type: 'Cement Co-processing',
+      applicant_type: 'PIBO',
+      sub_applicant_type: 'Importer',
       cepr_id: ceprId,
       success_screenshot_path: screenshotPath,
       email: loginCreds.email,
@@ -810,7 +816,7 @@ export default function RegistrationForm() {
         setShowLoginOtpModal(false);
         setLoginOtp('');
         showToast(
-          `Application started! ${res.applicantType || 'PWP'} — ${res.subApplicantType || 'Cement Co-processing'} selected on CPCB portal. Browser is open.`,
+          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
           'success',
           { duration: 15000 }
         );
@@ -884,7 +890,7 @@ export default function RegistrationForm() {
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
       <Toast toast={toast} onClose={hideToast} />
 
-      <h2 className="text-lg font-semibold text-slate-800 mb-1">PWP & Cement Co-processing Registration</h2>
+      <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
       <p className="text-sm text-slate-500 mb-6">
         {registrationComplete
           ? 'Registration is complete. Review saved details below and start a new application when ready.'
@@ -923,11 +929,9 @@ export default function RegistrationForm() {
         </div>
       )}
 
-      {!registrationComplete && (
-        <div className="mb-6 pb-6 border-b border-slate-100">
-          <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
-        </div>
-      )}
+      <div className="mb-6 pb-6 border-b border-slate-100">
+        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+      </div>
 
       <div className="mb-6">
         <AutoFilledPreview data={autoData} isDummy={usingDummy} />
@@ -1031,6 +1035,208 @@ export default function RegistrationForm() {
                   <option key={s} value={s}>{s}</option>
                 ))}
               </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Operating States *</label>
+              <div 
+                className="w-full border border-slate-300 rounded-lg h-32 overflow-y-auto p-2 bg-white"
+              >
+                {INDIAN_STATES.map((s) => {
+                  const isSelected = (generalInfo.operatingStates || []).includes(s);
+                  return (
+                    <label 
+                      key={`op-${s}`} 
+                      className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer"
+                    >
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={async (e) => {
+                          const checked = e.target.checked;
+                          setGeneralInfo((prev) => {
+                            const current = prev.operatingStates || [];
+                            const newStates = checked 
+                                ? [...current, s] 
+                                : current.filter(state => state !== s);
+                            
+                            const newStateObj = {
+                              ...prev,
+                              operatingStates: newStates
+                            };
+                            
+                            // Auto-save so changes immediately persist to DB
+                            if (window.pwp?.registration?.save) {
+                              const updatedFormData = {
+                                ...(savedRegistration?.formData || {}),
+                                email,
+                                mobile,
+                                autoData,
+                                generalInfo: newStateObj
+                              };
+                              window.pwp.registration.save({
+                                ...(savedRegistration || {}),
+                                email,
+                                mobile,
+                                form_data_json: JSON.stringify(updatedFormData)
+                              }).catch(console.error);
+                            }
+                            
+                            return newStateObj;
+                          });
+                        }}
+                        className="rounded border-slate-300 text-green-600 focus:ring-green-500"
+                      />
+                      <span className="text-sm text-slate-700">{s}</span>
+                    </label>
+                  );
+                })}
+              </div>
+              <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
+              <select
+                name="hasProductionFacility"
+                value={generalInfo.hasProductionFacility || ''}
+                onChange={async (e) => {
+                  handleGeneralChange(e);
+                  // Auto-save logic
+                  if (window.pwp?.registration?.save) {
+                    const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
+                    const updatedFormData = {
+                      ...(savedRegistration?.formData || {}),
+                      email, mobile, autoData, generalInfo: newStateObj
+                    };
+                    window.pwp.registration.save({
+                      ...(savedRegistration || {}),
+                      email, mobile,
+                      form_data_json: JSON.stringify(updatedFormData)
+                    }).catch(console.error);
+                  }
+                }}
+                className={inputClass}
+              >
+                <option value="">Select</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+                <option value="Not Applicable">Not Applicable</option>
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
+              <input
+                name="capitalInvested"
+                value={generalInfo.capitalInvested || ''}
+                onChange={handleGeneralChange}
+                onBlur={async () => {
+                  // Auto-save on blur
+                  if (window.pwp?.registration?.save) {
+                    const updatedFormData = {
+                      ...(savedRegistration?.formData || {}),
+                      email, mobile, autoData, generalInfo
+                    };
+                    window.pwp.registration.save({
+                      ...(savedRegistration || {}),
+                      email, mobile,
+                      form_data_json: JSON.stringify(updatedFormData)
+                    }).catch(console.error);
+                  }
+                }}
+                type="text"
+                placeholder="Enter Total Capital Invested"
+                className={inputClass}
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
+              <select
+                name="yearOfCommencement"
+                value={generalInfo.yearOfCommencement || ''}
+                onChange={async (e) => {
+                  handleGeneralChange(e);
+                  // Auto-save logic
+                  if (window.pwp?.registration?.save) {
+                    const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
+                    const updatedFormData = {
+                      ...(savedRegistration?.formData || {}),
+                      email, mobile, autoData, generalInfo: newStateObj
+                    };
+                    window.pwp.registration.save({
+                      ...(savedRegistration || {}),
+                      email, mobile,
+                      form_data_json: JSON.stringify(updatedFormData)
+                    }).catch(console.error);
+                  }
+                }}
+                className={inputClass}
+              >
+                <option value="">Enter year</option>
+                {Array.from({ length: 50 }, (_, i) => new Date().getFullYear() + 1 - i).map((year) => (
+                  <option key={year} value={year}>{year}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg"
+                onChange={async (e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    const path = file.path;
+                    setAutoData((prev) => {
+                      const next = { ...prev, detailsOfProductsPath: path };
+                      if (window.pwp?.registration?.save) {
+                        const updatedFormData = {
+                          ...(savedRegistration?.formData || {}),
+                          email, mobile, autoData: next, generalInfo
+                        };
+                        window.pwp.registration.save({
+                          ...(savedRegistration || {}),
+                          email, mobile,
+                          form_data_json: JSON.stringify(updatedFormData)
+                        }).catch(console.error);
+                      }
+                      return next;
+                    });
+                  }
+                }}
+                className={inputClass}
+                disabled={registrationComplete}
+              />
+              {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories *</label>
+              <input
+                type="file"
+                accept=".pdf,.png,.jpg,.jpeg"
+                onChange={async (e) => {
+                  const file = e.target.files[0];
+                  if (file) {
+                    const path = file.path;
+                    setAutoData((prev) => {
+                      const next = { ...prev, representativePicturePath: path };
+                      if (window.pwp?.registration?.save) {
+                        const updatedFormData = {
+                          ...(savedRegistration?.formData || {}),
+                          email, mobile, autoData: next, generalInfo
+                        };
+                        window.pwp.registration.save({
+                          ...(savedRegistration || {}),
+                          email, mobile,
+                          form_data_json: JSON.stringify(updatedFormData)
+                        }).catch(console.error);
+                      }
+                      return next;
+                    });
+                  }
+                }}
+                className={inputClass}
+                disabled={registrationComplete}
+              />
+              {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
             </div>
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>

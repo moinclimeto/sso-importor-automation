@@ -78,13 +78,15 @@ export function extractStateFromAddress(address) {
 }
 
 export function buildGeneralInfoFromDocData(docData = {}) {
+  const defaultState = extractStateFromAddress(docData.registeredAddress) || 'MADHYA PRADESH';
   return {
     typeOfBusiness: mapConstitutionToTypeOfBusiness(docData.constitutionOfBusiness),
     typeOfCompany: mapEnterpriseToTypeOfCompany(docData.enterpriseType),
     registeredAddressLine1: docData.registeredAddress || '',
     registeredAddressLine2: docData.registeredAddressLine2 || '',
     cin: docData.cin || '',
-    stateUt: extractStateFromAddress(docData.registeredAddress) || 'MADHYA PRADESH',
+    stateUt: defaultState,
+    operatingStates: [defaultState],
     district: docData.district || '',
   };
 }
@@ -96,6 +98,7 @@ export const GENERAL_INFO_EMPTY = {
   registeredAddressLine2: '',
   cin: '',
   stateUt: 'MADHYA PRADESH',
+  operatingStates: [],
   district: '',
   authDesignation: '',
   password: '',

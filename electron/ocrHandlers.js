@@ -151,8 +151,43 @@ async function extractOneInvoice({
       base64 = fs.readFileSync(filePath).toString('base64');
     }
 
-
     const qrPromise = scanQrFromDocument(qrTargetPath);
+
+    // BYPASS OCR FOR CERTAIN REGISTRATION DOCUMENTS
+    // If the filename contains msme, udyam, iec, or cin, we just save it as a company document 
+    // without wasting time and tokens on Gemini OCR, as their data is rarely needed for automated filling.
+    if (invoiceType === 'company_document') {
+      const lowerName = sourceName.toLowerCase();
+      let fastType = null;
+      if (lowerName.includes('msme') || lowerName.includes('udyam')) fastType = 'udyam';
+      else if (lowerName.includes('iec')) fastType = 'iec';
+      else if (lowerName.includes('cin')) fastType = 'cin';
+
+      if (fastType) {
+        log.info(`Bypassing OCR extraction for ${fastType} based on filename`, { sourceName });
+        const row = {
+          doc_type: fastType,
+          document_number: '',
+          entity_name: '',
+          fileName: outFileName,
+          decidedType: 'company_document',
+          _source_fields: {}
+        };
+        row._page = {
+          pageNumber: pageNo,
+          pageCount: resolvedPageCount,
+          sourceFileName: sourceName,
+          sourceFilePath: filePath,
+          displayName: displayName || outFileName,
+        };
+        return {
+          success: true,
+          data: row,
+          fileName: outFileName,
+          trackId: log.trackId,
+        };
+      }
+    }
 
     const genAI = new GoogleGenerativeAI(apiKey);
     const envModel = process.env.GEMINI_MODEL?.trim();

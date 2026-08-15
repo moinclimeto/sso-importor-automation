@@ -1,7 +1,8 @@
 import { chromium } from 'playwright';
-import { getRegSession } from './cpcbRegistration.js';
+import { getRegSession, uploadDocumentByLabel } from './cpcbRegistration.js';
 import { resolveRegistrationLoginCredentials } from './registrationDummyData.js';
 import { getRegistrationDetails } from './registrationDb.js';
+import { getDb } from './database.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
@@ -141,9 +142,10 @@ async function clickGetOtp(page, onLog) {
   if (onLog) onLog('Clicking Get OTP...');
 
   const candidates = [
+    page.locator('.login-form button[type="submit"], form button[type="submit"]').filter({ hasText: /Login|Get OTP/i }).first(),
+    page.getByRole('button', { name: /^(Login|Get OTP)$/i }).first(),
     page.locator('.final-submit-signup-form button[type="submit"]').first(),
-    page.getByRole('button', { name: /^Get OTP$/i }).first(),
-    page.locator('button.signup-btn-fmt').filter({ hasText: /Get OTP/i }).first(),
+    page.locator('button').filter({ hasText: /^(Login|Get OTP)$/i }).first(),
   ];
 
   for (const btn of candidates) {
@@ -381,15 +383,18 @@ async function clickContinueAfterLoginVerify(page, onLog) {
   if (onLog) onLog('User verified — clicking Continue...');
 
   const continueCandidates = [
-    page.getByRole('button', { name: /^Continue$/i }),
-    page.locator('button').filter({ hasText: /^Continue$/i }),
+    page.getByRole('button', { name: /^(Continue|OK|Proceed|Close)$/i }),
+    page.locator('button, a').filter({ hasText: /^(Continue|OK|Proceed|Close)$/i }),
+    page.getByText(/^(Continue|OK)$/i),
+    page.locator('.swal2-confirm, .btn-success, .btn-primary').filter({ hasText: /^(OK|Continue)$/i })
   ];
 
   for (const locator of continueCandidates) {
     const btn = locator.last();
     try {
-      if (await btn.isVisible({ timeout: 3000 }) && await btn.isEnabled().catch(() => false)) {
-        await btn.click({ timeout: 10000 });
+      if (await btn.isVisible({ timeout: 3000 }) && await btn.isEnabled().catch(() => true)) {
+        if (onLog) onLog('Found Continue button, clicking...');
+        await btn.click({ timeout: 5000, force: true });
         await page.waitForTimeout(3000);
         return;
       }
@@ -398,21 +403,37 @@ async function clickContinueAfterLoginVerify(page, onLog) {
     }
   }
 
-  throw new Error('Could not click Continue after login OTP verification');
+  // If we couldn't find a standard button, try pressing Enter or Escape
+  await page.keyboard.press('Enter').catch(() => {});
+  await page.waitForTimeout(2000);
+
 }
 
 function isAuthenticatedUrl(url = '') {
-  return /\/(onboarding|dashboard)\b/i.test(url);
+  return /\/(onboarding|dashboard|home)\b/i.test(url);
 }
 
 async function waitForDashboard(page, onLog) {
-  if (onLog) onLog('Waiting for CPCB dashboard...');
+  if (onLog) onLog('Waiting for CPCB dashboard/home...');
 
   try {
-    await page.waitForURL(/\/dashboard/i, { timeout: 45000 });
+    // Wait for a short time to see if Angular routes automatically
+    await page.waitForURL(/\/(onboarding|dashboard|home)/i, { timeout: 8000 });
   } catch {
-    if (onLog) onLog('Navigating to dashboard...');
-    await page.goto(DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    const currentUrl = page.url();
+    if (currentUrl.includes('/login')) {
+      if (onLog) onLog('Still on login page. Reloading to force session detection...');
+      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+      try {
+        await page.waitForURL(/\/(onboarding|dashboard|home)/i, { timeout: 15000 });
+      } catch (err) {
+        if (onLog) onLog('Navigating to dashboard directly...');
+        await page.goto(DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+      }
+    } else {
+      if (onLog) onLog('Navigating to dashboard directly...');
+      await page.goto(DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    }
   }
 
   await page.waitForTimeout(2000);
@@ -460,14 +481,33 @@ async function selectRadioByLabelInModal(page, modal, labelText, onLog) {
 async function clickPlasticWasteRegister(page, onLog) {
   if (onLog) onLog('Clicking Register on Plastic Waste Management...');
 
-  const plasticCard = page.locator('.waste-card').filter({ hasText: /Plastic Waste Management/i }).first();
-  await plasticCard.waitFor({ state: 'visible', timeout: 20000 });
-  await plasticCard.scrollIntoViewIfNeeded().catch(() => {});
+  // Find the exact text "Plastic Waste Management" and go to its parent container to find the Register button
+  const plasticHeading = page.locator('h1, h2, h3, h4, h5, div, span, p').filter({ hasText: /^Plastic Waste Management$/i }).last();
+  
+  if (await plasticHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
+    // Traverse up to find a container that has the 'Register' button inside it, specifically looking for button.card-btn
+    const registerBtn = plasticHeading.locator('xpath=ancestor::div[.//button[contains(translate(text(), "REGISTER", "register"), "register")]][1]').locator('button.card-btn, button').filter({ hasText: /Register/i }).first();
+    
+    if (await registerBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (onLog) onLog('Found Plastic Waste Register button. Clicking...');
+      await registerBtn.scrollIntoViewIfNeeded().catch(() => {});
+      await registerBtn.click({ timeout: 5000 });
+      await page.waitForTimeout(1500);
+      return;
+    }
+  }
 
-  const registerBtn = plasticCard.locator('button.card-btn').filter({ hasText: /^Register$/i }).first();
-  await registerBtn.waitFor({ state: 'visible', timeout: 10000 });
-  await registerBtn.click({ timeout: 10000 });
-  await page.waitForTimeout(1500);
+  if (onLog) onLog('Could not strictly verify Plastic Waste container. Clicking the first Register button as fallback...');
+  const fallbackEl = page.locator('button.card-btn').filter({ hasText: /Register/i }).first();
+  await fallbackEl.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  
+  if (await fallbackEl.isVisible().catch(() => false)) {
+    await fallbackEl.scrollIntoViewIfNeeded().catch(() => {});
+    await fallbackEl.click({ timeout: 5000 });
+    await page.waitForTimeout(1500);
+  } else {
+    throw new Error('Could not find the Register button on the dashboard');
+  }
 }
 
 async function clickOnboardingButton(modal, page, onLog) {
@@ -482,8 +522,8 @@ async function clickOnboardingButton(modal, page, onLog) {
 
 async function startApplicationOnboarding(page, onLog) {
   const regResult = await getRegistrationDetails();
-  const applicantType = regResult.data?.applicant_type || 'PWP';
-  const subApplicantType = regResult.data?.sub_applicant_type || 'Cement Co-processing';
+  const applicantType = regResult.data?.applicant_type || 'PIBO';
+  const subApplicantType = regResult.data?.sub_applicant_type || 'Importer';
 
   if (onLog) {
     onLog(`Starting application onboarding — ${applicantType} / ${subApplicantType}`);
@@ -495,17 +535,275 @@ async function startApplicationOnboarding(page, onLog) {
   const modal = getApplicantTypeModal(page);
   await modal.waitFor({ state: 'visible', timeout: 15000 });
 
-  await selectRadioByLabelInModal(page, modal, applicantType, onLog);
+  // Select PIBO (first main option)
+  const typeRadio = modal.locator('input[formcontrolname="type"]').first();
+  await typeRadio.waitFor({ state: 'visible', timeout: 10000 });
+  // Ensure we click the element, force if needed
+  await typeRadio.click({ force: true, timeout: 5000 });
+  await page.waitForTimeout(800);
 
+  // Wait for the sub-options to appear
   await modal
-    .getByText(/Please select one of the following|Recycler|Cement Co-processing/i)
+    .getByText(/Please select one of the following|Recycler|Cement Co-processing|Importer|Producer|Brand Owner/i)
     .first()
     .waitFor({ state: 'visible', timeout: 10000 })
     .catch(() => {});
 
-  await page.waitForTimeout(800);
-  await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
+  // Select Importer (second sub-option: Producer, Importer, Brand Owner)
+  // We use nth(1) since Importer is typically the second radio button
+  const subTypeRadios = modal.locator('input[formcontrolname="typeCategory"]');
+  const subTypeCount = await subTypeRadios.count();
+  
+  if (subTypeCount > 1) {
+    // Usually it's: 0=Producer, 1=Importer, 2=Brand Owner
+    await subTypeRadios.nth(1).click({ force: true, timeout: 5000 });
+  } else {
+    // Fallback to text selection if formcontrolname is missing
+    await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
+  }
   await clickOnboardingButton(modal, page, onLog);
+
+  // POST-ONBOARDING FLOW: 'All Applications' -> 'New Application' -> 'x'
+  if (onLog) onLog('Waiting for post-onboarding dashboard...');
+  await page.waitForTimeout(3000);
+
+  const allAppsBtn = page.locator('button.applicant-btn').filter({ hasText: /All Applications/i }).first();
+  await allAppsBtn.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
+
+  if (await allAppsBtn.isVisible().catch(() => false)) {
+    if (onLog) onLog('Found "All Applications" button. Clicking it...');
+    await allAppsBtn.click({ timeout: 10000 });
+    await page.waitForTimeout(1500);
+
+    const newAppBtn = page.locator('button.action-btn.btn-design').filter({ hasText: /New Application/i }).first();
+    await newAppBtn.waitFor({ state: 'visible', timeout: 10000 });
+    await newAppBtn.click({ timeout: 10000 });
+    await page.waitForTimeout(1500);
+
+    const closeBtn = page.locator('button.close-btn').first();
+    if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (onLog) onLog('Closing popup...');
+      await closeBtn.click({ timeout: 5000 });
+      await page.waitForTimeout(1000);
+    }
+
+    try {
+      const db = getDb();
+      const docs = await db.all('SELECT doc_type, file_path, document_number FROM company_documents ORDER BY created_at DESC');
+      
+      const iecDoc = docs.find(d => d.doc_type === 'iec');
+      if (iecDoc && iecDoc.document_number) {
+        if (onLog) onLog(`Filling IEC Number: ${iecDoc.document_number}...`);
+        
+        // Wait longer because the Angular form might take time to render after popup close
+        // Use :visible to avoid matching hidden mobile/desktop elements
+        const iecInput = page.locator('input[placeholder="Enter IEC Number"]:visible, input[formcontrolname="iec_code"]:visible').first();
+        
+        try {
+          // waitFor avoids the issue where .first() locks onto a hidden element early
+          await iecInput.waitFor({ state: 'visible', timeout: 20000 });
+          await iecInput.fill(iecDoc.document_number);
+          await iecInput.dispatchEvent('input'); // Trigger Angular change detection
+          await iecInput.dispatchEvent('change');
+          await page.waitForTimeout(1000);
+          if (onLog) onLog('IEC Number filled successfully.');
+        } catch (e) {
+          if (onLog) onLog('IEC Input field not found on this form - continuing...');
+        }
+      }
+
+      // Auto-upload the rest of the documents (Company PAN, Person PAN, GST, CIN, Udyam) on the New Application dashboard
+      const companyPanDoc = docs.find(d => d.doc_type === 'company_pan');
+      const personPanDoc = docs.find(d => d.doc_type === 'person_pan');
+      const gstDoc = docs.find(d => d.doc_type === 'gst');
+      const cinDoc = docs.find(d => d.doc_type === 'cin');
+      const udyamDoc = docs.find(d => d.doc_type === 'udyam');
+
+      // Upload Company PAN
+      if (companyPanDoc && companyPanDoc.file_path) {
+        if (onLog) onLog('Attempting to upload Company PAN on dashboard...');
+        await uploadDocumentByLabel(page, 'Company PAN', companyPanDoc.file_path, onLog);
+        // If there's no separate Person PAN, try uploading Company PAN to the generic 'PAN *' field as well
+        if (!personPanDoc) {
+          await uploadDocumentByLabel(page, '^\\s*PAN\\s*\\*?\\s*$', companyPanDoc.file_path, onLog);
+        }
+      }
+
+      // Upload Person PAN
+      if (personPanDoc && personPanDoc.file_path) {
+        if (onLog) onLog('Attempting to upload Person PAN on dashboard...');
+        await uploadDocumentByLabel(page, '^\\s*PAN\\s*\\*?\\s*$', personPanDoc.file_path, onLog);
+        // If there's no Company PAN, also try uploading the Person PAN to the 'Company PAN' field
+        if (!companyPanDoc) {
+          await uploadDocumentByLabel(page, 'Company PAN', personPanDoc.file_path, onLog);
+        }
+      }
+      if (gstDoc && gstDoc.file_path) {
+        if (onLog) onLog('Attempting to upload GST on dashboard...');
+        await uploadDocumentByLabel(page, 'Unit GST', gstDoc.file_path, onLog);
+        // Safely match "GST *" ignoring leading/trailing spaces
+        await uploadDocumentByLabel(page, '^\\s*GST\\s*\\*?\\s*$', gstDoc.file_path, onLog);
+      }
+      if (cinDoc && cinDoc.file_path) {
+        if (onLog) onLog('Attempting to upload CIN on dashboard...');
+        await uploadDocumentByLabel(page, 'CIN', cinDoc.file_path, onLog);
+      }
+      if (udyamDoc && udyamDoc.file_path) {
+        if (onLog) onLog('Attempting to upload Udyam/MSME on dashboard...');
+        await uploadDocumentByLabel(page, 'Supporting document for company category', udyamDoc.file_path, onLog);
+      }
+
+      let operatingStates = [];
+      let hasProductionFacility = '';
+      let capitalInvested = '';
+      let yearOfCommencement = '';
+      let detailsOfProducts = '';
+      let representativePicture = '';
+      try {
+        const regDetails = await db.get('SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1');
+        if (regDetails) {
+           detailsOfProducts = regDetails.details_of_products_produced_marketed || '';
+           representativePicture = regDetails.representative_picture_of_plastic_packaging || '';
+        }
+        
+        if (regDetails && regDetails.form_data_json) {
+          const parsed = JSON.parse(regDetails.form_data_json);
+          if (parsed.generalInfo) {
+            if (Array.isArray(parsed.generalInfo.operatingStates)) {
+              operatingStates = parsed.generalInfo.operatingStates;
+            }
+            hasProductionFacility = parsed.generalInfo.hasProductionFacility || '';
+            capitalInvested = parsed.generalInfo.capitalInvested || '';
+            yearOfCommencement = parsed.generalInfo.yearOfCommencement || '';
+          }
+          if (parsed.autoData) {
+            if (!detailsOfProducts && parsed.autoData.detailsOfProductsPath) detailsOfProducts = parsed.autoData.detailsOfProductsPath;
+            if (!representativePicture && parsed.autoData.representativePicturePath) representativePicture = parsed.autoData.representativePicturePath;
+          }
+        }
+      } catch (err) {
+        if (onLog) onLog('Failed to fetch fields from DB: ' + err.message);
+      }
+
+      // Upload newly added files
+      if (detailsOfProducts) {
+        if (onLog) onLog('Attempting to upload Details of products produced/marketed...');
+        await uploadDocumentByLabel(page, 'Details \\( Type & Quantity \\) of products produced/marketed', detailsOfProducts, onLog);
+      }
+
+      if (representativePicture) {
+        if (onLog) onLog('Attempting to upload Representative picture...');
+        await uploadDocumentByLabel(page, 'Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories', representativePicture, onLog);
+      }
+
+      if (operatingStates.length > 0) {
+        if (onLog) onLog('Attempting to select Operating States...');
+        let foundDropdown = false;
+        
+        // Find the multiselect dropdown for states
+        let dropdownContainer = page.locator('div.selected-items').filter({ hasText: /Select states/i }).first();
+        let arrowBtn = page.locator('svg.dropdown-icon').first();
+
+        // If not found by text (e.g. already has a state selected), try finding it near the label
+        if (!(await dropdownContainer.isVisible({ timeout: 2000 }).catch(() => false))) {
+           const stateLabel = page.locator('label, div').filter({ hasText: 'Select States/UTs in which the Importer is Operating' }).last();
+           // Go up to a common wrapper (like a row or form-group) and find the dropdown inside
+           dropdownContainer = stateLabel.locator('xpath=ancestor::div[contains(@class, "row") or contains(@class, "form-group") or contains(@class, "col")][1]//div[contains(@class, "selected-items")]').first();
+           arrowBtn = dropdownContainer.locator('xpath=..//svg[contains(@class, "dropdown-icon")]').first();
+        }
+        
+        if (await dropdownContainer.isVisible({ timeout: 5000 }).catch(() => false)) {
+          // Click the container div to open the dropdown
+          await dropdownContainer.click({ force: true, timeout: 3000 }).catch(async () => {
+             await arrowBtn.click({ force: true }).catch(() => {});
+          });
+          foundDropdown = true;
+        } else if (await arrowBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await arrowBtn.click({ force: true, timeout: 3000 }).catch(() => {});
+          foundDropdown = true;
+        } else {
+          if (onLog) onLog('ERROR: Could not find or open States dropdown. Saving screenshot to states_dropdown_error.png');
+          await page.screenshot({ path: 'states_dropdown_error.png', fullPage: true }).catch(() => {});
+        }
+
+        if (foundDropdown) {
+          await page.waitForTimeout(1000);
+          
+          for (const state of operatingStates) {
+            // Type the state into the search bar to filter the list and make it visible
+            const searchInput = page.locator('input.search-input, input[placeholder="Select states"], input[placeholder="Search"]').first();
+            if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await searchInput.fill('');
+              await searchInput.fill(state);
+              // Wait for Angular to filter the list
+              await page.waitForTimeout(600);
+            } else {
+               if (onLog) onLog('WARNING: Search input not found inside dropdown. Proceeding without search...');
+            }
+
+            // Find the deepest container (div or li) that has a checkbox AND contains the state text
+            const optionRow = page.locator('div, li, span').filter({ has: page.locator('input[type="checkbox"]') }).filter({ hasText: new RegExp(escapeRegex(state), 'i') }).last();
+            
+            if (await optionRow.isVisible({ timeout: 2000 }).catch(() => false)) {
+              if (onLog) onLog(`Selecting operating state: ${state}`);
+              // Click the exact checkbox input inside that row
+              await optionRow.locator('input[type="checkbox"]').first().click({ force: true, timeout: 2000 }).catch(async () => {
+                await optionRow.click({ force: true, timeout: 2000 }).catch(() => {});
+              });
+              await page.waitForTimeout(500);
+            } else {
+              if (onLog) onLog(`ERROR: Could not find checkbox for operating state: ${state}. Saving screenshot to state_checkbox_error_${state}.png`);
+              await page.screenshot({ path: `state_checkbox_error_${state}.png` }).catch(() => {});
+            }
+          }
+          
+          // Press escape to close the dropdown
+          await page.keyboard.press('Escape');
+          await page.waitForTimeout(1000);
+        } else {
+          if (onLog) onLog('Select states dropdown not found on this form - continuing...');
+        }
+      }
+
+      // Fill new fields if present
+      if (hasProductionFacility) {
+        if (onLog) onLog(`Setting Production Facility to ${hasProductionFacility}...`);
+        // Find select that contains an option with text 'Not Applicable'
+        const prodFacSelect = page.locator('select.select-field').filter({ has: page.locator('option', { hasText: /Not Applicable/i }) }).first();
+        if (await prodFacSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
+          // Playwright will match the option text with label, or we can use value='no' if text is 'Not Applicable'
+          await prodFacSelect.selectOption({ label: hasProductionFacility }).catch(async () => {
+             // Hardcode value="no" for 'Not Applicable' based on HTML
+             if (hasProductionFacility.toLowerCase().includes('not applicable')) {
+                await prodFacSelect.selectOption({ value: 'no' }).catch(() => {});
+             } else {
+                // If it's yes/no, try exact value
+                await prodFacSelect.selectOption({ value: hasProductionFacility.toLowerCase() }).catch(() => {});
+             }
+          });
+        }
+      }
+
+      if (capitalInvested) {
+        if (onLog) onLog(`Filling Capital Invested: ${capitalInvested}...`);
+        const capInput = page.locator('input[placeholder="Enter Total Capital Invested"]').first();
+        if (await capInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await capInput.fill(capitalInvested).catch(() => {});
+        }
+      }
+
+      if (yearOfCommencement) {
+        if (onLog) onLog(`Setting Year of Commencement to ${yearOfCommencement}...`);
+        const yearSelect = page.locator('select.select-field').filter({ has: page.locator('option[value="2020"]') }).first();
+        if (await yearSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
+           await yearSelect.selectOption({ value: yearOfCommencement }).catch(() => {});
+        }
+      }
+
+    } catch (err) {
+      if (onLog) onLog('Failed to fetch/fill documents: ' + err.message);
+    }
+  }
 
   const finalUrl = page.url() || '';
   if (onLog) onLog(`Onboarding submitted — browser at ${finalUrl}`);
@@ -599,6 +897,9 @@ export async function submitLoginCaptcha(captchaText, onLog) {
     if (await isLoginOtpModalVisible(page, 5000)) {
       return { success: true, step: 'WAITING_LOGIN_OTP' };
     }
+
+    if (onLog) onLog('ERROR: OTP modal did not appear. Saving screenshot to login_stuck.png');
+    await page.screenshot({ path: 'login_stuck.png', fullPage: true }).catch(() => {});
 
     const captchaData = await getCaptchaImageDataUrl(page, onLog);
     return {

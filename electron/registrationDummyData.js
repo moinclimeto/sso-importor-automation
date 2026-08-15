@@ -14,6 +14,9 @@ export const REGISTRATION_DUMMY_DATA = {
   stateUt: 'MADHYA PRADESH',
   typeOfBusiness: 'Public Ltd.',
   typeOfCompany: 'Large',
+  hasProductionFacility: 'Not Applicable',
+  capitalInvested: '5.50',
+  yearOfCommencement: '2020',
   authDesignation: 'Director',
   password: 'Test@1234',
   cin: 'U72900KA2003PTC033028',
@@ -24,7 +27,6 @@ export const REGISTRATION_DUMMY_DATA = {
   panDocumentPath: '',
 };
 
-/** Fallback login credentials when DB has no saved contact (dev / first-time after registration). */
 export const REGISTRATION_LOGIN_DUMMY = {
   email: 'amreen.climeto@gmail.com',
   mobile: '9109424392',

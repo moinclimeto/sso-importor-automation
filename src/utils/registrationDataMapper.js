@@ -142,6 +142,11 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     industryCategory: firstNonEmpty(cto?.industry_category),
     allowedCapacity: firstNonEmpty(cto?.allowed_capacity),
     enterpriseType: firstNonEmpty(udyam?.enterprise_type),
+    
+    // File paths for automation auto-upload
+    panDocumentPath: firstNonEmpty(companyPanDoc?.file_path, personPanDoc?.file_path),
+    gstDocumentPath: firstNonEmpty(gst?.file_path),
+    cinDocumentPath: firstNonEmpty(cin?.file_path),
   };
 }
 
@@ -157,7 +162,7 @@ function extractDistrictFromAddress(address) {
 
 export const REQUIRED_REGISTRATION_DOCS = ['gst', 'person_pan', 'company_pan', 'cto'];
 
-export const OPTIONAL_REGISTRATION_DOCS = ['cin', 'udyam'];
+export const OPTIONAL_REGISTRATION_DOCS = ['cin', 'udyam', 'iec'];
 
 export function getRegistrationReadiness(docs = []) {
   const types = new Set((docs || []).map((d) => d.doc_type));

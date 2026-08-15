@@ -15,7 +15,7 @@ import {
 } from '../utils/registrationDataMapper.js';
 
 const REGISTRATION_DOC_TYPES = new Set([
-  'gst', 'person_pan', 'company_pan', 'cto', 'cin', 'udyam',
+  'gst', 'person_pan', 'company_pan', 'cto', 'cin', 'udyam', 'iec',
 ]);
 
 const DOC_TYPE_LABELS = {
@@ -25,6 +25,7 @@ const DOC_TYPE_LABELS = {
   cto: 'CTO Certificate',
   cin: 'CIN Certificate',
   udyam: 'Udyam Certificate',
+  iec: 'IEC Certificate',
   unknown: 'Unknown Document',
 };
 

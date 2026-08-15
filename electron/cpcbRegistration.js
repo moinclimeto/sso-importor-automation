@@ -4,6 +4,7 @@ import os from 'os';
 import path from 'path';
 import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from './registrationDummyData.js';
 import { saveRegistrationDetails } from './registrationDb.js';
+import { compressPdf } from './pdfCompressor.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
@@ -250,6 +251,106 @@ async function fillInputByLabel(page, labelPattern, value, onLog) {
   await page.waitForTimeout(300);
 }
 
+export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
+  if (!filePath) return;
+  if (!fs.existsSync(filePath)) {
+    if (onLog) onLog(`File not found for ${labelText}: ${filePath}`);
+    return;
+  }
+
+  let finalUploadPath = filePath;
+  const isPdf = filePath.toLowerCase().endsWith('.pdf');
+  const sizeBytes = fs.statSync(filePath).size;
+  const MAX_SIZE = 1 * 1024 * 1024; // 1 MB limit
+  const tempDir = os.tmpdir();
+
+  // Create a safe filename to avoid 400 Bad Request on the backend
+  const safeFilename = `doc_${Date.now()}_${Math.floor(Math.random()*1000)}.pdf`;
+  const safePath = path.join(tempDir, safeFilename);
+
+  if (isPdf && sizeBytes > MAX_SIZE) {
+    if (onLog) onLog(`Compressing ${labelText} (${(sizeBytes / 1024 / 1024).toFixed(2)} MB) to under 1MB using Ghostscript...`);
+    const success = await compressPdf(filePath, safePath);
+    if (success && fs.existsSync(safePath)) {
+      const newSize = fs.statSync(safePath).size;
+      if (onLog) onLog(`Compression successful. New size: ${(newSize / 1024 / 1024).toFixed(2)} MB.`);
+      finalUploadPath = safePath;
+    } else {
+      if (onLog) onLog(`Compression failed or file missing. Copying to safe name.`);
+      fs.copyFileSync(filePath, safePath);
+      finalUploadPath = safePath;
+    }
+  } else {
+    // Even if not compressing, copy to safe name
+    fs.copyFileSync(filePath, safePath);
+    finalUploadPath = safePath;
+  }
+
+  if (onLog) onLog(`Uploading ${labelText} (as ${safeFilename})...`);
+
+  try {
+    const labelRegex = new RegExp(labelText, 'i');
+    const labelEl = page.getByText(labelRegex).first();
+    await labelEl.waitFor({ state: 'visible', timeout: 5000 });
+
+    let button = null;
+    let fileInput = null;
+    let currentEl = labelEl;
+    for (let i = 0; i < 6; i++) {
+      currentEl = currentEl.locator('xpath=..');
+      
+      // Look for a file input directly within this wrapper
+      const inputFile = currentEl.locator('input[type="file"]').first();
+      if (await inputFile.count().catch(() => 0) > 0) {
+        fileInput = inputFile;
+        break;
+      }
+
+      // Look for the exact "Upload" text (link/button)
+      const btn = currentEl.getByText('Upload', { exact: true }).first();
+      const fallbackBtn = currentEl.locator('.upload-button, a:has-text("Upload"), button:has-text("Upload")').first();
+      
+      if (await btn.isVisible({ timeout: 500 }).catch(() => false)) {
+        button = btn;
+        break;
+      } else if (await fallbackBtn.isVisible({ timeout: 500 }).catch(() => false)) {
+        button = fallbackBtn;
+        break;
+      }
+    }
+
+    if (!button && !fileInput) {
+      // Fallback: search globally if the container search failed
+      const globalLabel = page.locator('label').filter({ hasText: labelRegex }).first();
+      if (await globalLabel.isVisible({ timeout: 1000 }).catch(() => false)) {
+        // Try finding next sibling or nearest element
+        const globalBtn = globalLabel.locator('xpath=..//..').locator('.upload-button, a:has-text("Upload"), button:has-text("Upload")').first();
+        if (await globalBtn.isVisible({ timeout: 1000 }).catch(() => false)) {
+          button = globalBtn;
+        }
+      }
+    }
+
+    if (fileInput) {
+      await fileInput.setInputFiles(finalUploadPath);
+      await page.waitForTimeout(2000);
+      if (onLog) onLog(`${labelText} uploaded successfully (direct file input).`);
+    } else if (button) {
+      const [fileChooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 15000 }),
+        button.click(),
+      ]);
+      await fileChooser.setFiles(finalUploadPath);
+      await page.waitForTimeout(2000);
+      if (onLog) onLog(`${labelText} uploaded successfully (clicked button).`);
+    } else {
+      if (onLog) onLog(`Could not find Upload button or file input near ${labelText}.`);
+    }
+  } catch (err) {
+    if (onLog) onLog(`Failed to upload ${labelText}: ${err.message}`);
+  }
+}
+
 /** Fill Step 2 — General Information on CPCB portal after User Verification. */
 async function fillGeneralInformation(page, data, onLog) {
   if (onLog) onLog('Waiting for General Information step...');
@@ -258,6 +359,17 @@ async function fillGeneralInformation(page, data, onLog) {
   await portalSelect(page, 'typeOfBusiness').waitFor({ state: 'visible', timeout: 20000 });
 
   const addressLine1 = data.registeredAddressLine1 || data.registeredAddress;
+
+  if (data.panDocumentPath) {
+    await uploadDocumentByLabel(page, 'Company PAN', data.panDocumentPath, onLog);
+  }
+  if (data.gstDocumentPath) {
+    await uploadDocumentByLabel(page, 'Unit GST', data.gstDocumentPath, onLog);
+    await uploadDocumentByLabel(page, 'GST', data.gstDocumentPath, onLog);
+  }
+  if (data.cinDocumentPath) {
+    await uploadDocumentByLabel(page, 'CIN', data.cinDocumentPath, onLog);
+  }
 
   await selectPortalDropdown(page, 'typeOfBusiness', data.typeOfBusiness, onLog, 'Type of Business');
   await selectPortalDropdown(page, 'typeOfCompany', data.typeOfCompany, onLog, 'Type of Company');

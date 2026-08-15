@@ -9,6 +9,11 @@ const OPTIONAL_COLUMNS = [
   'password',
   'confirm_password',
   'form_data_json',
+  'has_production_facility',
+  'capital_invested',
+  'year_of_commencement',
+  'details_of_products_produced_marketed',
+  'representative_picture_of_plastic_packaging'
 ];
 
 async function ensureRegistrationColumns(db) {
@@ -29,6 +34,30 @@ export async function saveRegistrationDetails(data = {}) {
     data.form_data_json ??
     (data.formData ? JSON.stringify(data.formData) : null);
 
+  // Extract the specific fields from formDataJson if present to populate the physical columns
+  let hasProductionFacility = data.has_production_facility ?? null;
+  let capitalInvested = data.capital_invested ?? null;
+  let yearOfCommencement = data.year_of_commencement ?? null;
+  let detailsOfProducts = data.details_of_products_produced_marketed ?? null;
+  let representativePicture = data.representative_picture_of_plastic_packaging ?? null;
+  
+  if (formDataJson) {
+    try {
+      const parsed = JSON.parse(formDataJson);
+      if (parsed.generalInfo) {
+        if (parsed.generalInfo.hasProductionFacility !== undefined) hasProductionFacility = parsed.generalInfo.hasProductionFacility;
+        if (parsed.generalInfo.capitalInvested !== undefined) capitalInvested = parsed.generalInfo.capitalInvested;
+        if (parsed.generalInfo.yearOfCommencement !== undefined) yearOfCommencement = parsed.generalInfo.yearOfCommencement;
+      }
+      if (parsed.autoData) {
+        if (parsed.autoData.detailsOfProductsPath !== undefined) detailsOfProducts = parsed.autoData.detailsOfProductsPath;
+        if (parsed.autoData.representativePicturePath !== undefined) representativePicture = parsed.autoData.representativePicturePath;
+      }
+    } catch (e) {
+      // ignore parse error
+    }
+  }
+
   const existing = await db.get('SELECT _internal_id FROM registration_details LIMIT 1');
 
   if (existing) {
@@ -42,7 +71,12 @@ export async function saveRegistrationDetails(data = {}) {
         mobile = COALESCE(?, mobile),
         password = COALESCE(?, password),
         confirm_password = COALESCE(?, confirm_password),
-        form_data_json = COALESCE(?, form_data_json)
+        form_data_json = COALESCE(?, form_data_json),
+        has_production_facility = ?,
+        capital_invested = ?,
+        year_of_commencement = ?,
+        details_of_products_produced_marketed = ?,
+        representative_picture_of_plastic_packaging = ?
       WHERE _internal_id = ?`,
       data.applicant_type ?? null,
       data.sub_applicant_type ?? null,
@@ -53,6 +87,11 @@ export async function saveRegistrationDetails(data = {}) {
       data.password ?? null,
       data.confirm_password ?? null,
       formDataJson,
+      hasProductionFacility,
+      capitalInvested,
+      yearOfCommencement,
+      detailsOfProducts,
+      representativePicture,
       existing._internal_id
     );
     return { success: true, id: existing._internal_id, inserted: false };
@@ -60,8 +99,8 @@ export async function saveRegistrationDetails(data = {}) {
 
   const result = await db.run(
     `INSERT INTO registration_details
-      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     data.applicant_type ?? null,
     data.sub_applicant_type ?? null,
     data.cepr_id ?? null,
@@ -70,7 +109,12 @@ export async function saveRegistrationDetails(data = {}) {
     data.mobile ?? null,
     data.password ?? null,
     data.confirm_password ?? null,
-    formDataJson
+    formDataJson,
+    hasProductionFacility,
+    capitalInvested,
+    yearOfCommencement,
+    detailsOfProducts,
+    representativePicture
   );
 
   return { success: true, id: result.lastID, inserted: true };
