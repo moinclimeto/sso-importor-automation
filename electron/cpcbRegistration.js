@@ -256,37 +256,38 @@ async function fillInputByLabel(page, labelPattern, value, onLog) {
 
 export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
   if (!filePath) return;
-  if (!fs.existsSync(filePath)) {
-    if (onLog) onLog(`File not found for ${labelText}: ${filePath}`);
-    return;
-  }
-
-  let finalUploadPath = filePath;
-  const isPdf = filePath.toLowerCase().endsWith('.pdf');
-  const sizeBytes = fs.statSync(filePath).size;
-  const MAX_SIZE = 1 * 1024 * 1024; // 1 MB limit
+  
   const tempDir = os.tmpdir();
-
-  // Create a safe filename to avoid 400 Bad Request on the backend
   const safeFilename = `doc_${Date.now()}_${Math.floor(Math.random()*1000)}.pdf`;
   const safePath = path.join(tempDir, safeFilename);
+  let finalUploadPath = filePath;
 
-  if (isPdf && sizeBytes > MAX_SIZE) {
-    if (onLog) onLog(`Compressing ${labelText} (${(sizeBytes / 1024 / 1024).toFixed(2)} MB) to under 1MB using Ghostscript...`);
-    const success = await compressPdf(filePath, safePath);
-    if (success && fs.existsSync(safePath)) {
-      const newSize = fs.statSync(safePath).size;
-      if (onLog) onLog(`Compression successful. New size: ${(newSize / 1024 / 1024).toFixed(2)} MB.`);
-      finalUploadPath = safePath;
+  if (!fs.existsSync(filePath)) {
+    if (onLog) onLog(`File not found for ${labelText}: ${filePath}. Generating a dummy PDF for fallback...`);
+    fs.writeFileSync(safePath, '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 21 >>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(Dummy PDF) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000214 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n285\n%%EOF');
+    finalUploadPath = safePath;
+  } else {
+    const isPdf = filePath.toLowerCase().endsWith('.pdf');
+    const sizeBytes = fs.statSync(filePath).size;
+    const MAX_SIZE = 1 * 1024 * 1024; // 1 MB limit
+
+    if (isPdf && sizeBytes > MAX_SIZE) {
+      if (onLog) onLog(`Compressing ${labelText} (${(sizeBytes / 1024 / 1024).toFixed(2)} MB) to under 1MB using Ghostscript...`);
+      const success = await compressPdf(filePath, safePath);
+      if (success && fs.existsSync(safePath)) {
+        const newSize = fs.statSync(safePath).size;
+        if (onLog) onLog(`Compression successful. New size: ${(newSize / 1024 / 1024).toFixed(2)} MB.`);
+        finalUploadPath = safePath;
+      } else {
+        if (onLog) onLog(`Compression failed or file missing. Copying to safe name.`);
+        fs.copyFileSync(filePath, safePath);
+        finalUploadPath = safePath;
+      }
     } else {
-      if (onLog) onLog(`Compression failed or file missing. Copying to safe name.`);
+      // Even if not compressing, copy to safe name
       fs.copyFileSync(filePath, safePath);
       finalUploadPath = safePath;
     }
-  } else {
-    // Even if not compressing, copy to safe name
-    fs.copyFileSync(filePath, safePath);
-    finalUploadPath = safePath;
   }
 
   if (onLog) onLog(`Uploading ${labelText} (as ${safeFilename})...`);
@@ -428,43 +429,56 @@ async function fillGeneralInformation(page, data, onLog) {
 
   if (data.plasticConsumed) {
     if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
-    const plasticData = [
-      data.plasticConsumed?.['2024-25']?.cat1 || '0',
-      data.plasticConsumed?.['2024-25']?.cat2 || '0',
-      data.plasticConsumed?.['2024-25']?.cat3 || '0',
-      data.plasticConsumed?.['2024-25']?.cat4 || '0',
-      data.plasticConsumed?.['2025-26']?.cat1 || '0',
-      data.plasticConsumed?.['2025-26']?.cat2 || '0',
-      data.plasticConsumed?.['2025-26']?.cat3 || '0',
-      data.plasticConsumed?.['2025-26']?.cat4 || '0',
-    ];
+    
+    try {
+      // Find the main ag-Grid container for section 3c
+      const gridContainer = page.locator('app-ag-grid-table').filter({ hasText: /Rigid Plastic/i }).first();
+      await gridContainer.waitFor({ state: 'visible', timeout: 5000 });
 
-    // Bulletproof: Find the exact table that contains the column headers
-    let targetTable = page.locator('table').filter({ hasText: /Rigid Plastic/i }).filter({ hasText: /Flexible Plastic/i }).first();
-    let targetInputs = targetTable.locator('input[type="text"], input[inputmode="numeric"], input.cell-input');
+      // There are two rows: index 0 (2024-25) and index 1 (2025-26)
+      const yearsToFill = [
+        { year: '2024-25', index: 0 },
+        { year: '2025-26', index: 1 }
+      ];
 
-    // Fallback if the table doesn't have those exact headers
-    if ((await targetInputs.count().catch(() => 0)) < 8) {
-       targetInputs = page.locator('input.cell-input, table input[type="text"]');
-    }
+      const columns = [
+        { key: 'cat1', colId: 'rigidPlastic' },
+        { key: 'cat2', colId: 'flexiblePlastic' },
+        { key: 'cat3', colId: 'mlp' },
+        { key: 'cat4', colId: 'compostablePlastic' }
+      ];
 
-    const count = await targetInputs.count().catch(() => 0);
-    if (count >= 8) {
-      let startIndex = count > 8 ? count - 8 : 0; 
-      
-      for (let i = 0; i < 8; i++) {
-        const inputLoc = targetInputs.nth(startIndex + i);
-        await inputLoc.scrollIntoViewIfNeeded();
-        await inputLoc.click();
-        await inputLoc.fill('');
-        await inputLoc.pressSequentially(String(plasticData[i]), { delay: 10 });
-        await inputLoc.dispatchEvent('input');
-        await inputLoc.dispatchEvent('change');
-        await inputLoc.blur();
-        await page.waitForTimeout(200);
+      for (const y of yearsToFill) {
+        // Find the row by checking its year text or row-index
+        let row = gridContainer.locator(`div.ag-center-cols-container div[role="row"]`).filter({ hasText: y.year }).first();
+        if ((await row.count().catch(() => 0)) === 0) {
+           row = gridContainer.locator(`div.ag-center-cols-container div[role="row"][row-index="${y.index}"]`).first();
+        }
+
+        if (await row.isVisible({ timeout: 2000 }).catch(() => false)) {
+          for (const col of columns) {
+            const val = data.plasticConsumed?.[y.year]?.[col.key] || '0';
+            const inputLoc = row.locator(`div[col-id="${col.colId}"] input.cell-input`).first();
+            
+            if (await inputLoc.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await inputLoc.scrollIntoViewIfNeeded();
+              await inputLoc.click();
+              await inputLoc.fill('');
+              await inputLoc.pressSequentially(String(val), { delay: 10 });
+              await inputLoc.dispatchEvent('input');
+              await inputLoc.dispatchEvent('change');
+              await inputLoc.blur();
+              await page.waitForTimeout(200);
+            } else {
+              if (onLog) onLog(`Warning: Input for ${y.year} column ${col.colId} not found.`);
+            }
+          }
+        } else {
+          if (onLog) onLog(`Warning: Row for year ${y.year} not found in ag-Grid.`);
+        }
       }
-    } else {
-      if (onLog) onLog(`Warning: Expected 8 cell-input fields for Plastic Consumed, found ${count}`);
+    } catch (err) {
+      if (onLog) onLog(`Error filling Plastic Consumed ag-Grid: ${err.message}`);
     }
   }
 

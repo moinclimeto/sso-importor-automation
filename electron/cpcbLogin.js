@@ -758,7 +758,10 @@ async function startApplicationOnboarding(page, onLog) {
             // Type the state into the search bar to filter the list and make it visible
             const searchInput = page.locator('input.search-input, input[placeholder="Select states"], input[placeholder="Search"]').first();
             if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await searchInput.click();
               await searchInput.fill('');
+              await page.keyboard.press('Control+A');
+              await page.keyboard.press('Backspace');
               await searchInput.fill(state);
               // Wait for Angular to filter the list
               await page.waitForTimeout(600);
@@ -834,8 +837,23 @@ async function startApplicationOnboarding(page, onLog) {
       
       // Execute the massive Phase 2 automation for new fields
       await fillRemainingPartA(page, mergedGeneralInfo, mergedAutoData, onLog);
+      
+      if (onLog) onLog('Clicking Save & Next for Part A...');
+      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
+      await page.waitForTimeout(2000);
+
       await fillPartBSection4(page, mergedGeneralInfo.partBSection4 || mergedGeneralInfo.section4Data, onLog);
+      
+      if (onLog) onLog('Clicking Save & Next for Part B Section 4...');
+      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
+      await page.waitForTimeout(2000);
+
       await fillPartBSection5(page, mergedGeneralInfo.partBTransactions, onLog);
+      
+      if (onLog) onLog('Clicking Save & Next for Part B...');
+      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
+      await page.waitForTimeout(2000);
+
       await fillPartC(page, mergedGeneralInfo, onLog);
     } catch (err) {
       if (onLog) onLog('Failed to fetch/fill documents: ' + err.message);

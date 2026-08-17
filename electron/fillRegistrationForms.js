@@ -65,6 +65,56 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
     }
   }
 
+  // 3c) Total Quantity of Plastic Consumed
+  if (generalInfo.plasticConsumed) {
+    if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
+    try {
+      const gridContainer = page.locator('app-ag-grid-table').filter({ hasText: /Rigid Plastic/i }).first();
+      await gridContainer.waitFor({ state: 'visible', timeout: 5000 });
+
+      const yearsToFill = [
+        { year: '2024-25', index: 0 },
+        { year: '2025-26', index: 1 }
+      ];
+
+      const columns = [
+        { key: 'cat1', colId: 'rigidPlastic' },
+        { key: 'cat2', colId: 'flexiblePlastic' },
+        { key: 'cat3', colId: 'mlp' },
+        { key: 'cat4', colId: 'compostablePlastic' }
+      ];
+
+      for (const y of yearsToFill) {
+        let row = gridContainer.locator(`div.ag-center-cols-container div[role="row"]`).filter({ hasText: y.year }).first();
+        if ((await row.count().catch(() => 0)) === 0) {
+           row = gridContainer.locator(`div.ag-center-cols-container div[role="row"][row-index="${y.index}"]`).first();
+        }
+
+        if (await row.isVisible({ timeout: 2000 }).catch(() => false)) {
+          for (const col of columns) {
+            const val = generalInfo.plasticConsumed?.[y.year]?.[col.key] || '0';
+            const inputLoc = row.locator(`div[col-id="${col.colId}"] input.cell-input`).first();
+            
+            if (await inputLoc.isVisible({ timeout: 2000 }).catch(() => false)) {
+              await inputLoc.scrollIntoViewIfNeeded();
+              await inputLoc.click();
+              await inputLoc.fill('');
+              await inputLoc.pressSequentially(String(val), { delay: 10 });
+              await inputLoc.dispatchEvent('input');
+              await inputLoc.dispatchEvent('change');
+              await inputLoc.blur();
+              await page.waitForTimeout(200);
+            } else {
+              if (onLog) onLog(`Warning: Input for ${y.year} column ${col.colId} not found.`);
+            }
+          }
+        }
+      }
+    } catch (err) {
+      if (onLog) onLog(`Error filling Plastic Consumed ag-Grid: ${err.message}`);
+    }
+  }
+
   // 3d) Compliance Status
   if (generalInfo.complianceStatus) {
     const complianceSelect = getFieldContainer('Status of compliance with PWM Rules').locator('select');
@@ -87,51 +137,67 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
 
 export async function fillPartBSection4(page, section4Data, onLog) {
   if (!section4Data || !section4Data.length) return;
-  if (onLog) onLog('Filling Part B Section 4 (3c AG Grid)...');
-  
-  // Aggregate data by year since the portal's grid for importers groups only by year
-  const aggregatedByYear = {};
-  section4Data.forEach(row => {
-    if (!row.year) return;
-    if (!aggregatedByYear[row.year]) {
-      aggregatedByYear[row.year] = { rigid: 0, flexible: 0, mlp: 0, compostable: 0 };
+  if (onLog) onLog('Filling Part B Section 4 (State-wise PW generated)...');
+
+  try {
+    const agGrid = page.locator('app-ag-grid-table').filter({ hasText: /Pre Consumer Waste/i }).first();
+    if (!(await agGrid.isVisible({ timeout: 5000 }).catch(() => false))) {
+      if (onLog) onLog('Part B Section 4 grid not found on this page.');
+      return;
     }
-    aggregatedByYear[row.year].rigid += Number(row.rigid || 0);
-    aggregatedByYear[row.year].flexible += Number(row.flexible || 0);
-    aggregatedByYear[row.year].mlp += Number(row.mlp || 0);
-    aggregatedByYear[row.year].compostable += Number(row.compostable || 0);
-  });
 
-  const agGrid = page.locator('ag-grid-angular').first();
-  if (await agGrid.isVisible().catch(() => false)) {
-    for (const year of Object.keys(aggregatedByYear)) {
-      const data = aggregatedByYear[year];
-      // Find the row by looking for the year cell
-      const row = agGrid.locator('.ag-center-cols-container div[role="row"]').filter({ has: page.locator(`div[col-id="year"]`, { hasText: year }) }).first();
+    const rows = agGrid.locator('.ag-center-cols-container div[role="row"]:not(.ag-row-last)');
+    const rowCount = await rows.count();
+
+    let currentState = '';
+    let currentYear = '';
+
+    for (let i = 0; i < rowCount; i++) {
+      const row = rows.nth(i);
       
-      if (await row.isVisible().catch(() => false)) {
-        if (onLog) onLog(`Filling Section 4 grid for year ${year}...`);
-        
-        const fillCell = async (colId, value) => {
-          if (value > 0) {
-            const input = row.locator(`div[col-id="${colId}"] input`).first();
-            if (await input.isVisible().catch(() => false)) {
-              await input.fill(String(value));
-              await input.dispatchEvent('change');
-            }
-          }
-        };
+      const stateText = await row.locator('div[col-id="stateName"]').innerText().catch(() => '');
+      if (stateText && stateText.trim() && stateText.toLowerCase() !== 'total') {
+        currentState = stateText.trim().toUpperCase();
+      }
 
-        await fillCell('rigidPlastic', data.rigid);
-        await fillCell('flexiblePlastic', data.flexible);
-        await fillCell('mlp', data.mlp);
-        await fillCell('compostablePlastic', data.compostable);
-      } else {
-        if (onLog) onLog(`Row for year ${year} not found in the grid.`);
+      const yearText = await row.locator('div[col-id="year"]').innerText().catch(() => '');
+      if (yearText && yearText.trim()) {
+        currentYear = yearText.trim();
+      }
+
+      const catText = await row.locator('div[col-id="categoryOfPlastic"]').innerText().catch(() => '');
+      const category = catText.trim();
+
+      if (!currentState || !currentYear || !category || currentState.toLowerCase() === 'total') continue;
+
+      const groupData = section4Data.find(g => g.state.toUpperCase() === currentState && g.year === currentYear);
+      if (groupData && groupData.categories) {
+        const catData = groupData.categories.find(c => c.category === category || category.includes(c.category) || c.category.includes(category));
+        
+        if (catData) {
+          const fillCell = async (colId, value) => {
+            if (value && String(value).trim() !== '' && String(value) !== '0') {
+              const input = row.locator(`div[col-id="${colId}"] input.cell-input`).first();
+              if (await input.isVisible({ timeout: 2000 }).catch(() => false)) {
+                await input.scrollIntoViewIfNeeded();
+                await input.click();
+                await input.fill('');
+                await input.pressSequentially(String(value), { delay: 10 });
+                await input.dispatchEvent('input');
+                await input.dispatchEvent('change');
+                await input.blur();
+              }
+            }
+          };
+
+          await fillCell('preConsumerPlasticQuantity', catData.preConsumer);
+          await fillCell('postConsumerPlasticQuantity', catData.postConsumer);
+          await fillCell('exportPlasticQuantity', catData.exportQuantity);
+        }
       }
     }
-  } else {
-    if (onLog) onLog('AG Grid for 3c not found.');
+  } catch (err) {
+    if (onLog) onLog(`Error filling Part B Section 4 grid: ${err.message}`);
   }
 }
 

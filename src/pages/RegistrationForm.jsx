@@ -358,6 +358,36 @@ export default function RegistrationForm() {
     return () => clearTimeout(timer);
   }, [email, mobile, generalInfo.password, generalInfo.confirmPassword, registrationComplete, loadingSavedRegistration]);
 
+  useEffect(() => {
+    if (usingDummy && generalInfo.typeOfBusiness && generalInfo.typeOfCompany) {
+      setSaved(true);
+    }
+  }, [generalInfo, usingDummy]);
+
+  // Debounced auto-save for all form state
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (window.pwp?.registration?.save && email && mobile && !registrationComplete) {
+        const updatedFormData = {
+          ...(savedRegistration?.formData || {}),
+          email,
+          mobile,
+          autoData,
+          generalInfo
+        };
+        window.pwp.registration.save({
+          ...(savedRegistration || {}),
+          applicant_type: savedRegistration?.applicant_type || 'PIBO',
+          sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
+          email,
+          mobile,
+          form_data_json: JSON.stringify(updatedFormData)
+        }).catch(err => console.error('Auto-save failed:', err));
+      }
+    }, 1500);
+    return () => clearTimeout(timer);
+  }, [generalInfo, autoData, email, mobile, savedRegistration, registrationComplete]);
+
   const handleGeneralChange = (e) => {
     const { name, value } = e.target;
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
@@ -395,10 +425,12 @@ export default function RegistrationForm() {
       showToast('Please enter a valid 10-digit mobile number.', 'error');
       return;
     }
+
     if (!generalInfo.typeOfBusiness || !generalInfo.typeOfCompany) {
       showToast('Type of Business and Type of Company are required.', 'error');
       return;
     }
+
     if (!generalInfo.registeredAddressLine1?.trim()) {
       showToast('Registered Address Line 1 is required.', 'error');
       return;
@@ -1259,7 +1291,7 @@ export default function RegistrationForm() {
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
                     <select
                       name="hasProductionFacility"
-                      value={generalInfo.hasProductionFacility || ''}
+                      value={generalInfo.hasProductionFacility || 'Not Applicable'}
                       onChange={async (e) => {
                         handleGeneralChange(e);
                         // Auto-save logic
@@ -1278,9 +1310,6 @@ export default function RegistrationForm() {
                       }}
                       className={inputClass}
                     >
-                      <option value="">Select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
                       <option value="Not Applicable">Not Applicable</option>
                     </select>
                   </div>
