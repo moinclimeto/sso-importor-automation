@@ -417,7 +417,7 @@ async function fillGeneralInformation(page, data, onLog) {
     await fillPortalInput(page, 'confirmPassword', data.password, onLog, 'Confirm Password');
   }
 
-  const portalErr = await checkPortalError(page);
+  const portalErr = await checkPortalError(page, onLog);
   if (portalErr) throw new Error(portalErr);
 
   if (onLog) onLog('General Information filled on portal');
@@ -567,7 +567,7 @@ async function clickSupportingDocContinue(page, onLog) {
 
 async function isRegistrationSuccessVisible(page, timeoutMs = 3000) {
   return page
-    .getByText(/Registration Completed Successfully/i)
+    .getByText(/Registration Completed Successfully|Registration Successful|CEPR\s*ID/i)
     .first()
     .isVisible({ timeout: timeoutMs })
     .catch(() => false);
@@ -626,9 +626,9 @@ async function captureRegistrationSuccess(page, onLog, { alreadyVisible = false 
 
   let saved = false;
   const dialogCandidates = [
-    page.locator('[role="dialog"]').filter({ hasText: /Registration Completed Successfully/i }).first(),
-    page.locator('.modal, .cdk-overlay-pane, .mat-dialog-container').filter({ hasText: /Registration Completed Successfully/i }).first(),
-    page.getByText(/Registration Completed Successfully/i).first(),
+    page.locator('[role="dialog"]').filter({ hasText: /Registration Completed Successfully|Registration Successful|CEPR\s*ID/i }).first(),
+    page.locator('.modal, .cdk-overlay-pane, .mat-dialog-container').filter({ hasText: /Registration Completed Successfully|Registration Successful|CEPR\s*ID/i }).first(),
+    page.getByText(/Registration Completed Successfully|Registration Successful|CEPR\s*ID/i).first(),
   ];
 
   for (const dialog of dialogCandidates) {
@@ -749,23 +749,40 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
 function isSuccessPortalMessage(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  return /success|verified|sent successfully|otp has been|valid otp|otp sent/i.test(t);
+  return /success|verified|submitted|otp has been|valid otp|otp sent/i.test(t);
 }
 
-async function checkPortalError(page) {
+async function checkPortalError(page, onLog) {
   try {
-    await page.waitForTimeout(500);
-    const overlay = page.locator('.overlay-container');
-    if (await overlay.isVisible()) {
-      const text = await overlay.innerText();
-      if (text && text.trim().length > 0) {
-        const normalized = text.trim().replace(/\n/g, ' ');
-        if (isSuccessPortalMessage(normalized)) {
-          await page.waitForTimeout(1500);
-          return null;
+    await page.waitForTimeout(1000);
+    const overlayLocators = [
+      page.locator('.overlay-container'),
+      page.locator('#toast-container'),
+      page.locator('snack-bar-container'),
+      page.locator('.alert-danger'),
+      page.locator('.swal2-container'),
+      page.locator('mat-error')
+    ];
+
+    for (const overlay of overlayLocators) {
+      if (await overlay.count() > 0 && await overlay.first().isVisible()) {
+        const text = await overlay.first().innerText();
+        if (text && text.trim().length > 0) {
+          const normalized = text.trim().replace(/\n/g, ' ');
+          if (isSuccessPortalMessage(normalized)) {
+            if (onLog) onLog('PORTAL_SUCCESS: ' + normalized);
+            await page.waitForTimeout(1500);
+            return null;
+          }
+          return normalized;
         }
-        return normalized;
       }
+    }
+    
+    const inlineError = page.getByText(/Invalid OTP|Incorrect OTP|OTP mismatch|OTP expired|Failed|Error/i).first();
+    if (await inlineError.isVisible().catch(() => false)) {
+        const text = await inlineError.innerText();
+        return text.trim() || 'Invalid OTP';
     }
   } catch (e) {}
   return null;
@@ -980,7 +997,7 @@ async function requestMobileOtp(page, mobile, onLog) {
   }
 
   await page.waitForTimeout(2500);
-  const portalErr = await checkPortalError(page);
+  const portalErr = await checkPortalError(page, onLog);
   if (portalErr) throw new Error(portalErr);
 
   if (onLog) onLog('Mobile OTP sent — check your phone');
@@ -1013,7 +1030,7 @@ export async function startRegistrationFlow(data, onLog) {
     // Wait for verify success
     await regPage.waitForTimeout(2000);
     
-    let portalErr = await checkPortalError(regPage);
+    let portalErr = await checkPortalError(regPage, onLog);
     if (portalErr) throw new Error(portalErr);
     
     // Date of Establishment
@@ -1054,7 +1071,7 @@ export async function startRegistrationFlow(data, onLog) {
     
     await regPage.waitForTimeout(2000);
 
-    portalErr = await checkPortalError(regPage);
+    portalErr = await checkPortalError(regPage, onLog);
     if (portalErr) throw new Error(portalErr);
 
     // Email Address
@@ -1091,7 +1108,7 @@ export async function submitEmailOtp(otp, mobile, onLog) {
 
     await fillOtpAndVerify(regPage, otp, 0, onLog);
 
-    const portalErr = await checkPortalError(regPage);
+    const portalErr = await checkPortalError(regPage, onLog);
     if (portalErr) throw new Error(portalErr);
 
     if (mobile) {
@@ -1154,7 +1171,7 @@ export async function submitRegistrationCaptcha(captchaText, onLog) {
       };
     }
 
-    const portalErr = await checkPortalError(regPage);
+    const portalErr = await checkPortalError(regPage, onLog);
     if (portalErr && /captcha|invalid|incorrect|mismatch/i.test(portalErr)) {
       await clearCaptchaField(regPage);
       const captchaData = await getCaptchaImageDataUrl(regPage, onLog);
@@ -1236,7 +1253,7 @@ export async function submitMobileOtp(payload, onLog) {
     if (onLog) onLog('Entering Mobile OTP...');
     await fillOtpAndVerify(regPage, otp, 1, onLog);
 
-    const portalErr = await checkPortalError(regPage);
+    const portalErr = await checkPortalError(regPage, onLog);
     if (portalErr) throw new Error(portalErr);
 
     await clickContinueButton(regPage, onLog);

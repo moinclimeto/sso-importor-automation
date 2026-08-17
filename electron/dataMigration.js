@@ -1,33 +1,45 @@
-import fs from 'fs';
-import path from 'path';
+import fs from "fs";
+import path from "path";
 
 export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
   if (!fs.existsSync(oldDbJsonPath)) {
-    console.log('db.json not found, skipping migration.');
+    console.log("db.json not found, skipping migration.");
     return;
   }
 
   // Check if SQLite tables are empty
-  const companyCount = (await db.get('SELECT COUNT(*) as count FROM companies')).count;
-  const purchaseCount = (await db.get('SELECT COUNT(*) as count FROM purchases')).count;
-  const saleCount = (await db.get('SELECT COUNT(*) as count FROM sales')).count;
-  const fileHashCount = (await db.get('SELECT COUNT(*) as count FROM file_hashes')).count;
+  const companyCount = (await db.get("SELECT COUNT(*) as count FROM companies"))
+    .count;
+  const purchaseCount = (
+    await db.get("SELECT COUNT(*) as count FROM purchases")
+  ).count;
+  const saleCount = (await db.get("SELECT COUNT(*) as count FROM sales")).count;
+  const fileHashCount = (
+    await db.get("SELECT COUNT(*) as count FROM file_hashes")
+  ).count;
 
-  if (companyCount > 0 || purchaseCount > 0 || saleCount > 0 || fileHashCount > 0) {
-    console.log('SQLite tables already contain data, skipping migration from db.json.');
+  if (
+    companyCount > 0 ||
+    purchaseCount > 0 ||
+    saleCount > 0 ||
+    fileHashCount > 0
+  ) {
+    console.log(
+      "SQLite tables already contain data, skipping migration from db.json.",
+    );
     // Optionally delete db.json if data exists in SQLite to prevent re-migration attempts
     // fs.unlinkSync(oldDbJsonPath);
     return;
   }
 
-  console.log('Migrating data from db.json to SQLite...');
+  console.log("Migrating data from db.json to SQLite...");
 
   let oldDbData;
   try {
-    const raw = fs.readFileSync(oldDbJsonPath, 'utf8').replace(/^\uFEFF/, '');
+    const raw = fs.readFileSync(oldDbJsonPath, "utf8").replace(/^\uFEFF/, "");
     oldDbData = JSON.parse(raw);
   } catch (e) {
-    console.error('Failed to read or parse db.json:', e);
+    console.error("Failed to read or parse db.json:", e);
     return;
   }
 
@@ -35,8 +47,13 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
   if (Array.isArray(oldDbData.companies) && oldDbData.companies.length > 0) {
     for (const company of oldDbData.companies) {
       await db.run(
-        'INSERT INTO companies (id, name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?, ?)',
-        company.id, company.name, company.gstin, company.pan, company.entity_type, company.created_at
+        "INSERT INTO companies (id, name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        company.id,
+        company.name,
+        company.gstin,
+        company.pan,
+        company.entity_type,
+        company.created_at,
       );
     }
     console.log(`Migrated ${oldDbData.companies.length} companies.`);
@@ -47,7 +64,10 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
     for (const purchase of oldDbData.purchases) {
       // Ensure fileHash is migrated if it exists
       if (purchase.fileHash) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', purchase.fileHash);
+        await db.run(
+          "INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)",
+          purchase.fileHash,
+        );
       }
 
       await db.run(
@@ -88,10 +108,12 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
         purchase.total_amount,
         purchase.lineItems ? JSON.stringify(purchase.lineItems) : null, // old db.json might have lineItems
         purchase.extraction ? JSON.stringify(purchase.extraction) : null,
-        purchase._source_fields ? JSON.stringify(purchase._source_fields) : null,
+        purchase._source_fields
+          ? JSON.stringify(purchase._source_fields)
+          : null,
         purchase._routing ? JSON.stringify(purchase._routing) : null,
         purchase.fileHash || null,
-        purchase.created_at
+        purchase.created_at,
       );
     }
     console.log(`Migrated ${oldDbData.purchases.length} purchases.`);
@@ -102,7 +124,10 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
     for (const sale of oldDbData.sales) {
       // Ensure fileHash is migrated if it exists
       if (sale.fileHash) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', sale.fileHash);
+        await db.run(
+          "INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)",
+          sale.fileHash,
+        );
       }
 
       await db.run(
@@ -150,7 +175,7 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
         sale._source_fields ? JSON.stringify(sale._source_fields) : null,
         sale._routing ? JSON.stringify(sale._routing) : null,
         sale.fileHash || null,
-        sale.created_at
+        sale.created_at,
       );
     }
     console.log(`Migrated ${oldDbData.sales.length} sales.`);
@@ -159,7 +184,7 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
   // Migrate fileHashes (if any existed outside of purchases/sales)
   if (Array.isArray(oldDbData.fileHashes) && oldDbData.fileHashes.length > 0) {
     for (const hash of oldDbData.fileHashes) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', hash);
+      await db.run("INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)", hash);
     }
     console.log(`Migrated ${oldDbData.fileHashes.length} file hashes.`);
   }
@@ -169,6 +194,6 @@ export async function migrateFromJsonToSqlite(db, oldDbJsonPath) {
   // if we insert with existing IDs, sqlite will continue from MAX(id) + 1 automatically.
   // We just need to ensure old nextId doesn't cause issues. If oldId > MAX(current_id), it will take over.
 
-  console.log('Data migration to SQLite complete. Removing db.json...');
+  console.log("Data migration to SQLite complete. Removing db.json...");
   fs.unlinkSync(oldDbJsonPath); // Delete old db.json after successful migration
 }

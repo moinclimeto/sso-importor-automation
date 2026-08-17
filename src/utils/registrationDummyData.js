@@ -35,7 +35,7 @@ export const REGISTRATION_DUMMY_DATA = {
   enterpriseType: 'Large',
   password: '',
   confirmPassword: '',
-  panDocumentPath: 'C:\\Users\\itcli\\Documents\\GitHub\\sso-importor-automation\\data\\dummy_pan.pdf',
+  panDocumentPath: 'C:\\Users\\PC\\Documents\\pan.pdf',
 };
 
 /** Fallback login credentials when DB has no saved contact (dev / first-time after registration). */

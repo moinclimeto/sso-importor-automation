@@ -840,59 +840,78 @@ export function registerIpcHandlers() {
   // Removed duplicate registration:get handler
 
   // ─── REGISTRATION SCRAPER ────────────────────────────────────
+  const logDir = path.join(app.getPath('userData'), 'logs');
+  if (!fs.existsSync(logDir)) {
+    fs.mkdirSync(logDir, { recursive: true });
+  }
+  const logFile = path.join(logDir, 'automation.log');
+
+  const createEventLogger = (prefix, event) => {
+    return (msg) => {
+      try {
+        const timestamp = new Date().toISOString();
+        let textMsg = typeof msg === 'string' ? msg : (msg && msg.text ? msg.text : JSON.stringify(msg));
+        const formatted = `[${timestamp}] [${prefix}] ${textMsg}\n`;
+        fs.appendFileSync(logFile, formatted);
+        console.log(`[${prefix}] ${textMsg}`);
+      } catch(e) {}
+      if (event && event.sender) {
+        event.sender.send('scraper:log', msg);
+      }
+    };
+  };
+
   ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
-    return await startRegistrationFlow(data, (msg) => {
-      event.sender.send('scraper:log', msg);
-    });
+    return await startRegistrationFlow(data, createEventLogger('REGISTRATION', event));
   });
   
   ipcMain.handle('scraper:submitEmailOtp', async (event, payload) => {
     const otp = typeof payload === 'string' ? payload : payload?.otp;
     const mobile = typeof payload === 'object' ? payload?.mobile : undefined;
-    return await submitEmailOtp(otp, mobile, (msg) => event.sender.send('scraper:log', msg));
+    return await submitEmailOtp(otp, mobile, createEventLogger('REGISTRATION', event));
   });
   
   ipcMain.handle('scraper:resendEmailOtp', async (event) => {
-    return await resendEmailOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendEmailOtp(createEventLogger('REGISTRATION', event));
   });
   
   ipcMain.handle('scraper:submitMobileOtp', async (event, payload) => {
-    return await submitMobileOtp(payload, (msg) => event.sender.send('scraper:log', msg));
+    return await submitMobileOtp(payload, createEventLogger('REGISTRATION', event));
   });
   
   ipcMain.handle('scraper:resendMobileOtp', async (event) => {
-    return await resendMobileOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendMobileOtp(createEventLogger('REGISTRATION', event));
   });
 
   ipcMain.handle('scraper:submitRegistrationCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitRegistrationCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+    return await submitRegistrationCaptcha(captchaText, createEventLogger('REGISTRATION', event));
   });
 
   ipcMain.handle('scraper:refreshRegistrationCaptcha', async (event) => {
-    return await refreshRegistrationCaptcha((msg) => event.sender.send('scraper:log', msg));
+    return await refreshRegistrationCaptcha(createEventLogger('REGISTRATION', event));
   });
 
   ipcMain.handle('scraper:startLoginFlow', async (event, payload) => {
-    return await startLoginFlow(payload, (msg) => event.sender.send('scraper:log', msg));
+    return await startLoginFlow(payload, createEventLogger('LOGIN', event));
   });
 
   ipcMain.handle('scraper:submitLoginCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitLoginCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+    return await submitLoginCaptcha(captchaText, createEventLogger('LOGIN', event));
   });
 
   ipcMain.handle('scraper:refreshLoginCaptcha', async (event) => {
-    return await refreshLoginCaptcha((msg) => event.sender.send('scraper:log', msg));
+    return await refreshLoginCaptcha(createEventLogger('LOGIN', event));
   });
 
   ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
     const otp = typeof payload === 'string' ? payload : payload?.otp;
-    return await submitLoginOtp(otp, (msg) => event.sender.send('scraper:log', msg));
+    return await submitLoginOtp(otp, createEventLogger('LOGIN', event));
   });
 
   ipcMain.handle('scraper:resendLoginOtp', async (event) => {
-    return await resendLoginOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendLoginOtp(createEventLogger('LOGIN', event));
   });
 
   ipcMain.handle('scraper:closeRegistrationSession', async () => {

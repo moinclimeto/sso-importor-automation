@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
@@ -23,7 +23,7 @@ import {
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2 } from 'lucide-react';
 
 const inputClass =
-  'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
+  'w-full px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-sm text-slate-800 placeholder-slate-400 transition-all duration-200 focus:bg-white focus:ring-2 focus:ring-green-500/20 focus:border-green-500 hover:border-slate-300 outline-none shadow-sm';
 const selectClass = inputClass;
 
 const EMPTY_AUTO = {
@@ -56,7 +56,7 @@ function AutoFilledPreview({ data, isDummy }) {
   }
 
   return (
-    <div className={`rounded-xl border p-4 space-y-3 ${isDummy ? 'border-amber-200 bg-amber-50/40' : 'border-green-100 bg-green-50/30'}`}>
+    <div className={`rounded-2xl border p-5 space-y-4 shadow-sm transition-all duration-300 ${isDummy ? 'border-amber-200 bg-gradient-to-br from-amber-50/60 to-amber-100/30' : 'border-green-200 bg-gradient-to-br from-green-50/60 to-green-100/30'}`}>
       <div className="flex items-center gap-2 flex-wrap">
         {isDummy ? (
           <FlaskConical size={16} className="text-amber-600" />
@@ -75,11 +75,11 @@ function AutoFilledPreview({ data, isDummy }) {
           {filled.length} fields
         </span>
       </div>
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
         {filled.map((field) => (
-          <div key={field.key} className="rounded-lg bg-white border border-slate-100 px-3 py-2.5">
-            <p className="text-[10px] font-semibold uppercase tracking-wide text-slate-400">{field.label}</p>
-            <p className="text-sm font-medium text-slate-800 mt-0.5 break-words">{data[field.key]}</p>
+          <div key={field.key} className="rounded-xl bg-white/80 backdrop-blur-sm border border-white/60 shadow-[0_4px_15px_rgb(0,0,0,0.02)] px-4 py-3 hover:shadow-md hover:-translate-y-0.5 transition-all duration-300">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">{field.label}</p>
+            <p className="text-sm font-semibold text-slate-800 mt-0.5 break-words">{data[field.key]}</p>
             <p className="text-[10px] text-green-600 mt-0.5">{field.source}</p>
           </div>
         ))}
@@ -100,6 +100,18 @@ export default function RegistrationForm() {
   const [generalInfo, setGeneralInfo] = useState({ ...GENERAL_INFO_EMPTY });
   const [docReady, setDocReady] = useState(true);
   const [missingDocs, setMissingDocs] = useState([]);
+  const [isStatesOpen, setIsStatesOpen] = useState(false);
+  const statesDropdownRef = useRef(null);
+
+  useEffect(() => {
+    function handleClickOutside(event) {
+      if (statesDropdownRef.current && !statesDropdownRef.current.contains(event.target)) {
+        setIsStatesOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handleClickOutside);
+    return () => document.removeEventListener("mousedown", handleClickOutside);
+  }, []);
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -273,9 +285,17 @@ export default function RegistrationForm() {
 
   useEffect(() => {
     if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog((msg) => setLoadingMsg(msg));
+      return window.pwp.scraper.onLog((msg) => {
+        if (typeof msg === 'string' && msg.startsWith('PORTAL_SUCCESS:')) {
+          showToast(msg.replace('PORTAL_SUCCESS:', '').trim(), 'success', { duration: 5000 });
+        } else if (typeof msg === 'object' && msg.type === 'toast') {
+          showToast(msg.text || msg.message, msg.variant || 'success', { duration: 5000 });
+        } else {
+          setLoadingMsg(msg);
+        }
+      });
     }
-  }, []);
+  }, [showToast]);
 
   const applyRegistrationData = useCallback(async (docData = {}) => {
     const { data, isDummy } = resolveRegistrationData(docData);
@@ -516,9 +536,13 @@ export default function RegistrationForm() {
         showToast(`Email verified! Mobile OTP sent to ${mobile}.`, 'success');
       } else {
         showToast('Email OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        setOtpTimer(0);
+        setIsResendActive(true);
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
+      setOtpTimer(0);
+      setIsResendActive(true);
     } finally {
       setOtpSubmitting(false);
     }
@@ -624,9 +648,13 @@ export default function RegistrationForm() {
         }
       } else {
         showToast('Mobile OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        setOtpTimer(0);
+        setIsResendActive(true);
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
+      setOtpTimer(0);
+      setIsResendActive(true);
     } finally {
       setOtpSubmitting(false);
       setLoadingMsg('');
@@ -835,8 +863,12 @@ export default function RegistrationForm() {
       }
 
       setLoginOtpError(res.error || 'Login OTP verification failed');
+      setLoginOtpTimer(0);
+      setLoginOtpResendActive(true);
     } catch (err) {
       setLoginOtpError(err.message);
+      setLoginOtpTimer(0);
+      setLoginOtpResendActive(true);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -887,7 +919,9 @@ export default function RegistrationForm() {
     `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
+    <div className="bg-gradient-to-br from-white to-slate-50 rounded-xl shadow-[0_8px_30px_rgb(0,0,0,0.04)] border border-slate-200/60 p-4 md:p-5 relative overflow-hidden">
+      {/* Decorative gradient blob */}
+      <div className="absolute -top-24 -right-24 w-96 h-96 bg-green-500/5 rounded-full blur-3xl pointer-events-none"></div>
       <Toast toast={toast} onClose={hideToast} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
@@ -937,7 +971,7 @@ export default function RegistrationForm() {
         <AutoFilledPreview data={autoData} isDummy={usingDummy} />
       </div>
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form onSubmit={handleSubmit} className="space-y-5">
         <div>
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
             <Building2 size={16} className="text-green-600" />
@@ -949,7 +983,7 @@ export default function RegistrationForm() {
             Company Details — blank fields from CPCB portal. Auto-filled where possible from documents.
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5 items-start">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Type of Business *</label>
               <select
@@ -982,7 +1016,19 @@ export default function RegistrationForm() {
                 ))}
               </select>
             </div>
-            <div className="md:col-span-2">
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Company CIN Number</label>
+              <input
+                name="cin"
+                value={generalInfo.cin}
+                onChange={handleGeneralChange}
+                type="text"
+                placeholder="Enter CIN (Pvt/Public Ltd only)"
+                className={`${lockedInputClass} uppercase`}
+                disabled={registrationComplete}
+              />
+            </div>
+            <div className="md:col-span-2 lg:col-span-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">Registered Address Line 1 *</label>
               <input
                 name="registeredAddressLine1"
@@ -996,7 +1042,7 @@ export default function RegistrationForm() {
                 required
               />
             </div>
-            <div className="md:col-span-2">
+            <div className="md:col-span-2 lg:col-span-3">
               <label className="block text-sm font-medium text-slate-700 mb-1">Registered Address Line 2</label>
               <input
                 name="registeredAddressLine2"
@@ -1009,17 +1055,7 @@ export default function RegistrationForm() {
                 readOnly={registrationComplete}
               />
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Company CIN Number</label>
-              <input
-                name="cin"
-                value={generalInfo.cin}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="Enter CIN (Pvt/Public Ltd only)"
-                className={`${inputClass} uppercase`}
-              />
-            </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">State/UT *</label>
               <select
@@ -1036,63 +1072,100 @@ export default function RegistrationForm() {
                 ))}
               </select>
             </div>
-            <div>
+
+            <div className="relative" ref={statesDropdownRef}>
               <label className="block text-sm font-medium text-slate-700 mb-1">Operating States *</label>
+              
               <div 
-                className="w-full border border-slate-300 rounded-lg h-32 overflow-y-auto p-2 bg-white"
+                className={`w-full min-h-[38px] bg-slate-50 border border-slate-200 rounded-lg p-1.5 shadow-sm transition-all flex flex-wrap gap-1.5 items-center ${
+                  registrationComplete ? 'cursor-not-allowed' : 'cursor-pointer hover:border-slate-300'
+                } ${isStatesOpen && !registrationComplete ? 'ring-2 ring-green-500/20 border-green-500 bg-white' : ''}`}
+                onClick={() => {
+                  setIsStatesOpen(prev => !prev);
+                }}
               >
-                {INDIAN_STATES.map((s) => {
-                  const isSelected = (generalInfo.operatingStates || []).includes(s);
-                  return (
-                    <label 
-                      key={`op-${s}`} 
-                      className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={async (e) => {
-                          const checked = e.target.checked;
-                          setGeneralInfo((prev) => {
-                            const current = prev.operatingStates || [];
-                            const newStates = checked 
-                                ? [...current, s] 
-                                : current.filter(state => state !== s);
-                            
-                            const newStateObj = {
-                              ...prev,
-                              operatingStates: newStates
-                            };
-                            
-                            // Auto-save so changes immediately persist to DB
-                            if (window.pwp?.registration?.save) {
-                              const updatedFormData = {
-                                ...(savedRegistration?.formData || {}),
-                                email,
-                                mobile,
-                                autoData,
-                                generalInfo: newStateObj
-                              };
+                {(generalInfo.operatingStates || []).map(s => (
+                  <span key={`chip-${s}`} className="inline-flex items-center gap-1 px-2 py-0.5 bg-green-100/80 border border-green-200 text-green-800 text-[11px] font-medium rounded-md">
+                    {s}
+                    <button 
+                      type="button" 
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        if (registrationComplete) return;
+                        setGeneralInfo((prev) => {
+                          const newStates = (prev.operatingStates || []).filter(state => state !== s);
+                          const newStateObj = { ...prev, operatingStates: newStates };
+                          
+                          if (window.pwp?.registration?.save) {
+                            setTimeout(() => {
                               window.pwp.registration.save({
-                                ...(savedRegistration || {}),
-                                email,
-                                mobile,
-                                form_data_json: JSON.stringify(updatedFormData)
-                              }).catch(console.error);
-                            }
-                            
-                            return newStateObj;
-                          });
-                        }}
-                        className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                      />
-                      <span className="text-sm text-slate-700">{s}</span>
-                    </label>
-                  );
-                })}
+                                email, mobile, password: newStateObj.password, form_data_json: JSON.stringify({ email, mobile, autoData, generalInfo: newStateObj })
+                              }).catch(() => {});
+                            }, 0);
+                          }
+                          return newStateObj;
+                        });
+                      }}
+                      className="text-green-600 hover:text-green-900 focus:outline-none ml-0.5"
+                    >
+                      <X size={12} />
+                    </button>
+                  </span>
+                ))}
+                
+                <div className="flex-1 min-w-[120px]">
+                   {(!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) && (
+                     <span className="text-slate-400 text-sm px-1.5">Select states...</span>
+                   )}
+                </div>
               </div>
-              <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+
+              {isStatesOpen && (
+                <div className="absolute z-20 w-full mt-1 bg-white border border-slate-200 rounded-lg shadow-lg max-h-56 overflow-y-auto p-1 custom-scrollbar">
+                  {INDIAN_STATES.map((s) => {
+                    const isSelected = (generalInfo.operatingStates || []).includes(s);
+                    return (
+                      <label 
+                        key={`op-${s}`} 
+                        className={`flex items-center gap-3 px-3 py-2 rounded-md cursor-pointer transition-colors ${isSelected ? 'bg-green-50' : 'hover:bg-slate-50'}`}
+                      >
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={(e) => {
+                            const checked = e.target.checked;
+                            setGeneralInfo((prev) => {
+                              const current = prev.operatingStates || [];
+                              const newStates = checked 
+                                  ? [...current, s] 
+                                  : current.filter(state => state !== s);
+                              
+                              const newStateObj = {
+                                ...prev,
+                                operatingStates: newStates
+                              };
+                              
+                              if (window.pwp?.registration?.save) {
+                                setTimeout(() => {
+                                  window.pwp.registration.save({
+                                    email, mobile, password: newStateObj.password, form_data_json: JSON.stringify({ email, mobile, autoData, generalInfo: newStateObj })
+                                  }).catch(() => {});
+                                }, 0);
+                              }
+                              return newStateObj;
+                            });
+                          }}
+                          className="rounded border-slate-300 text-green-600 focus:ring-green-500"
+                          disabled={registrationComplete}
+                        />
+                        <span className="text-sm text-slate-700">{s}</span>
+                      </label>
+                    );
+                  })}
+                </div>
+              )}
             </div>
+
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
               <select
@@ -1207,7 +1280,7 @@ export default function RegistrationForm() {
               />
               {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
             </div>
-            <div>
+            <div className="md:col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories *</label>
               <input
                 type="file"
@@ -1258,7 +1331,7 @@ export default function RegistrationForm() {
             Authorized Person Details &amp; Set Password
           </p>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5 items-start">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Designation *</label>
               <input
@@ -1273,7 +1346,6 @@ export default function RegistrationForm() {
                 required
               />
             </div>
-            <div />
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
               <div className="relative">
@@ -1335,7 +1407,7 @@ export default function RegistrationForm() {
             Contact Details
             <span className="text-xs font-normal text-slate-400">(Step 1 — User Verification)</span>
           </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-6 gap-y-5 items-start mt-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Email Address *</label>
               <input
@@ -1415,8 +1487,8 @@ export default function RegistrationForm() {
       )}
 
       {showEmailOtp && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all duration-300">
+          <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-white/50 w-full max-w-sm overflow-hidden transform transition-all">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-semibold text-slate-800">Email OTP</h3>
               <button
@@ -1473,8 +1545,8 @@ export default function RegistrationForm() {
       )}
 
       {showMobileOtp && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all duration-300">
+          <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-white/50 w-full max-w-sm overflow-hidden transform transition-all">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-semibold text-slate-800">Mobile OTP</h3>
               <button
@@ -1542,7 +1614,7 @@ export default function RegistrationForm() {
       )}
 
       {showCaptchaModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all duration-300">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <div>
@@ -1631,7 +1703,7 @@ export default function RegistrationForm() {
       )}
 
       {showLoginCaptchaModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all duration-300">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b flex items-center justify-between">
               <div>
@@ -1720,8 +1792,8 @@ export default function RegistrationForm() {
       )}
 
       {showLoginOtpModal && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 transition-all duration-300">
+          <div className="bg-white/95 backdrop-blur-xl rounded-2xl shadow-[0_20px_50px_rgba(0,0,0,0.15)] border border-white/50 w-full max-w-sm overflow-hidden transform transition-all">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
               <h3 className="text-lg font-semibold text-slate-800">Login OTP</h3>
               <button
