@@ -113,7 +113,6 @@ export const SALE_EXCEL_HEADERS = [
 
 export const SALE_TABLE_COLUMNS = [
   { key: 'category_of_plastic', label: 'Category of Plastic' },
-  { key: 'product_type', label: 'Product Type' },
   { key: 'quantity_sold_mt', label: 'Quantity Sold (MT)' },
   { key: 'entity_name', label: 'Name of the Entity' },
   { key: 'address', label: 'Address' },

@@ -521,6 +521,10 @@ export default function DocUpload() {
         quantity: parseFloat(data.quantity_mt) || 0,
         unit: 'MT',
         total_amount: sourceRow?.data?.total_amount || 0,
+        entity_type: data.entity_type || data.entityType || '',
+        registration_type: data.registration_type || data.registrationType || '',
+        financial_year: data.financial_year || data.financialYear || financialYear || '',
+        supplier_mobile_number: data.mobile || data.supplier_mobile_number || '',
         lineItems,
         extraction,
         _routing: sourceRow?.routing || data._routing,
@@ -560,10 +564,15 @@ export default function DocUpload() {
       quantity: parseFloat(data.quantity_sold_mt || data.quantity_mt) || 0,
       unit: 'MT',
       total_amount: parseFloat(data.gst_other_charges || data.total_amount) || 0,
+      entity_type: data.entity_type || data.entityType || '',
+      registration_type: data.registration_type || data.registrationType || '',
+      financial_year: data.financial_year || data.financialYear || financialYear || '',
+      mobile_number: data.mobile || data.mobile_number || '',
       lineItems,
       extraction,
       _routing: sourceRow?.routing || data._routing,
       _page: data._page || (sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined),
+      invoice_date: data.invoice_date || data.date_of_entry || data.procurement_date || '',
     };
   };
 
@@ -833,7 +842,7 @@ export default function DocUpload() {
       } catch {
         companies = [];
       }
-      const routed = applyCompanyRoutingToResults(rawResults, companies);
+      const routed = applyCompanyRoutingToResults(rawResults, companies, docType);
 
       setProgress((prev) => ({
         ...(prev || {}),

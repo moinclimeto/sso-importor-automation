@@ -150,34 +150,19 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
 
 
   if (isPurchase) {
-
     return `OCR PURCHASE. JSON only minified.
-
 Counterparty=SELLER (supplier).Also extract buyer GST+name for company match.
-
 ${fy}
-
-{"inv":"","dt":"YYYY-MM-DD","cpy":"original","sellerName":"","sellerGst":"","buyerName":"","buyerGst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
-
-RULES:sellerName/sellerGst/a*/city/st/pin/mob=seller(supplier).buyerName/buyerGst=buyer.dt=issue date.tot=grand total.GSTIN 15ch O→0 I→1.cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
-
+{"inv":"","dt":"YYYY-MM-DD","cpy":"original","sellerName":"","sellerGst":"","buyerName":"","buyerGst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","ent":"","reg":"","fy":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+RULES:sellerName/sellerGst/a*/city/st/pin/mob=seller(supplier).buyerName/buyerGst=buyer.dt=issue date.tot=grand total.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).GSTIN 15ch O->0 I->1.cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
   }
 
-
-
   return `OCR SALE. JSON only minified.
-
 Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Seller bank for bank fields.
-
 ${fy}
-
-{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","ac":"","ifsc":"","tot":0,"reg":"","pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
-
-RULES:buyerName/buyerGst/addr/st/dist=buyer(customer).sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
-
+{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+RULES:buyerName/buyerGst/addr/st/dist/mob=buyer(customer).sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
 }
-
-
 
 /** Normalize raw Gemini JSON (short or long keys) → common shape */
 
@@ -274,6 +259,10 @@ export function expandRawExtraction(raw = {}) {
     totalInvoiceAmount: num(raw.tot ?? raw.gstOtherCharges ?? raw.totalInvoiceAmount ?? raw.total_amount),
 
     registrationType: nf(raw.reg ?? raw.registrationType),
+    
+    entityType: nf(raw.ent ?? raw.entityType ?? raw.entity_type),
+    
+    financialYear: nf(raw.fy ?? raw.financialYear ?? raw.financial_year),
 
     processCode: nf(raw.pc ?? raw.processCode),
 

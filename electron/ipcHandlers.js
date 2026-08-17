@@ -120,6 +120,60 @@ export function registerIpcHandlers() {
     return [];
   });
 
+  // ─── EXTRACTOR DATA ──────────────────────────────────────────
+  ipcMain.handle('extractor:getData', async () => {
+    const db = getDb();
+    try {
+      // Just return the most recent one
+      const row = await db.get('SELECT * FROM extractor_data ORDER BY id DESC LIMIT 1');
+      return row || null;
+    } catch (err) {
+      console.error('extractor:getData error', err);
+      return null;
+    }
+  });
+
+  ipcMain.handle('extractor:saveData', async (_, data) => {
+    const db = getDb();
+    try {
+      const existing = await db.get('SELECT id FROM extractor_data ORDER BY id DESC LIMIT 1');
+
+      // Sync with companies table so invoices can be matched and saved against a valid company_id
+      if (data.companyName) {
+        let companyExists;
+        if (data.gst) {
+          companyExists = await db.get('SELECT id FROM companies WHERE gstin = ?', data.gst);
+        } else {
+          companyExists = await db.get('SELECT id FROM companies WHERE name = ?', data.companyName);
+        }
+        
+        if (!companyExists) {
+          const gstStr = data.gst || '';
+          const panStr = gstStr.length >= 15 ? gstStr.substring(2, 12) : '';
+          await db.run(
+            'INSERT INTO companies (name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?)',
+            data.companyName,
+            gstStr,
+            panStr,
+            'Other',
+            new Date().toISOString()
+          );
+        }
+      }
+
+      if (existing) {
+        await db.run('UPDATE extractor_data SET company_name = ?, gst = ? WHERE id = ?', data.companyName, data.gst || '', existing.id);
+        return { success: true, id: existing.id };
+      } else {
+        const res = await db.run('INSERT INTO extractor_data (company_name, gst) VALUES (?, ?)', data.companyName, data.gst || '');
+        return { success: true, id: res.lastID };
+      }
+    } catch (err) {
+      console.error('extractor:saveData error', err);
+      return { success: false, error: err.message };
+    }
+  });
+
   // ─── SETTINGS ──────────────────────────────────────────────────
   const ensureSettingsTable = async () => {
     const db = getDb();
@@ -388,8 +442,8 @@ export function registerIpcHandlers() {
         supplier_gst_number, supplier_mobile_number, procurement_date, quantity_mt,
         invoice_number, hsn_code, invoice_filename, vendor_name, vendor_gstin, invoice_no,
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
-        _source_fields, _routing, file_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        _source_fields, _routing, file_hash, created_at, registration_type, entity_type, financial_year
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -419,12 +473,15 @@ export function registerIpcHandlers() {
       processedData.quantity,
       processedData.unit,
       processedData.total_amount,
-      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
-      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
-      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
-      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      JSON.stringify(processedData.lineItems || []),
+      JSON.stringify(processedData.extraction || {}),
+      JSON.stringify(processedData._source_fields || {}),
+      JSON.stringify(processedData._routing || {}),
       processedData.fileHash || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      processedData.registration_type,
+      processedData.entity_type,
+      processedData.financial_year
     );
     await stmt.finalize();
 
@@ -446,7 +503,7 @@ export function registerIpcHandlers() {
         supplier_gst_number = ?, supplier_mobile_number = ?, procurement_date = ?, quantity_mt = ?,
         invoice_number = ?, hsn_code = ?, invoice_filename = ?, vendor_name = ?, vendor_gstin = ?, invoice_no = ?,
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
-        _source_fields = ?, _routing = ?, file_hash = ?
+        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?, financial_year = ?
       WHERE id = ?
     `);
 
@@ -482,6 +539,9 @@ export function registerIpcHandlers() {
       data._source_fields ? JSON.stringify(data._source_fields) : null,
       data._routing ? JSON.stringify(data._routing) : null,
       data.fileHash || null,
+      data.entity_type,
+      data.registration_type,
+      data.financial_year,
       data.id
     );
     await stmt.finalize();
@@ -605,8 +665,8 @@ export function registerIpcHandlers() {
         address, state, district, account_number, ifsc_code, gst_other_charges,
         invoice_file_name, application_number, customer_name, customer_gstin, invoice_no,
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
-        _source_fields, _routing, file_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        _source_fields, _routing, file_hash, created_at, entity_type, financial_year, mobile_number
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -644,7 +704,10 @@ export function registerIpcHandlers() {
       processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
       processedData._routing ? JSON.stringify(processedData._routing) : null,
       processedData.fileHash || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      processedData.entity_type,
+      processedData.financial_year,
+      processedData.mobile_number
     );
     await stmt.finalize();
 
@@ -667,7 +730,7 @@ export function registerIpcHandlers() {
         address = ?, state = ?, district = ?, account_number = ?, ifsc_code = ?, gst_other_charges = ?,
         invoice_file_name = ?, application_number = ?, customer_name = ?, customer_gstin = ?, invoice_no = ?,
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
-        _source_fields = ?, _routing = ?, file_hash = ?
+        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, financial_year = ?, mobile_number = ?
       WHERE id = ?
     `);
 
@@ -706,6 +769,9 @@ export function registerIpcHandlers() {
       data._source_fields ? JSON.stringify(data._source_fields) : null,
       data._routing ? JSON.stringify(data._routing) : null,
       data.fileHash || null,
+      data.entity_type,
+      data.financial_year,
+      data.mobile_number,
       data.id
     );
     await stmt.finalize();

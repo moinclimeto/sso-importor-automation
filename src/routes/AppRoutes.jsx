@@ -4,7 +4,7 @@ import LoginPage from '../pages/Login.jsx';
 import MainLayout from '../components/MainLayout.jsx';
 import Dashboard from '../pages/Dashboard.jsx';
 
-// import Companies from '../pages/Companies.jsx';
+import Companies from '../pages/Companies.jsx';
 import Purchases from '../pages/Purchases.jsx';
 import Sales from '../pages/Sales.jsx';
 import Summary from '../pages/Summary.jsx';
@@ -43,7 +43,7 @@ export default function AppRoutes() {
           }
         >
           <Route path="dashboard" element={<Dashboard />} />
-          {/* <Route path="companies" element={<Companies />} /> */}
+          <Route path="companies" element={<Companies />} />
           <Route path="purchases" element={<Purchases />} />
           <Route path="sales" element={<Sales />} />
           <Route path="summary" element={<Summary />} />

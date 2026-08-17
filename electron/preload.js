@@ -57,6 +57,11 @@ contextBridge.exposeInMainWorld('pwp', {
     get: (key) => ipcRenderer.invoke('settings:get', key),
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
+  // Extractor
+  extractor: {
+    saveData: (data) => ipcRenderer.invoke('extractor:saveData', data),
+    getData: () => ipcRenderer.invoke('extractor:getData'),
+  },
   // Registration
   registration: {
     get: () => ipcRenderer.invoke('registration:get'),

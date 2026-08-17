@@ -25,7 +25,6 @@ const navLinks = [
     icon: Database,
     label: 'EPR Data',
     subLinks: [
-      // { to: '/production-entry', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
@@ -34,7 +33,9 @@ const navLinks = [
     ]
   },
   */
-  // { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
+  { to: '/production-entry', icon: FileSpreadsheet, label: 'Packaging Declaration' },
+  { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
+  { to: '/companies', icon: Building2, label: 'Company Master' },
   { to: '/registration-form', icon: FileScan, label: 'Registration' },
 ];
 
@@ -174,15 +175,31 @@ function MainLayoutInner() {
     }
   };
 
-  useEffect(() => {
-    if (window.pwp?.companies) {
-      window.pwp.companies.getAll().then(companies => {
-        if (companies && companies.length > 0) {
-          setMyCompany(companies[0]);
+    useEffect(() => {
+      const loadCompany = async () => {
+        let found = false;
+        if (window.pwp?.extractor) {
+          try {
+            const data = await window.pwp.extractor.getData();
+            if (data && data.company_name) {
+              setMyCompany({ name: data.company_name, gstin: data.gst || '' });
+              found = true;
+            }
+          } catch (err) {
+            console.error('Failed to load extractor data', err);
+          }
         }
-      });
-    }
-  }, []);
+        
+        if (!found && window.pwp?.companies) {
+          window.pwp.companies.getAll().then(companies => {
+            if (companies && companies.length > 0) {
+              setMyCompany(companies[0]);
+            }
+          });
+        }
+      };
+      loadCompany();
+    }, []);
 
   const handleSyncEpr = async () => {
     setSyncingEpr(true);

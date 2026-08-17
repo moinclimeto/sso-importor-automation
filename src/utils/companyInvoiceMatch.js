@@ -150,7 +150,7 @@ function matchCompanyByName(companies, name) {
  *   parties: object,
  * }}
  */
-export function matchInvoiceToCompanies(row, companies = []) {
+export function matchInvoiceToCompanies(row, companies = [], docType = null) {
   const list = Array.isArray(companies) ? companies.filter(Boolean) : [];
   const parties = extractInvoiceParties(row);
 
@@ -163,6 +163,24 @@ export function matchInvoiceToCompanies(row, companies = []) {
       company: null,
       parties,
     };
+  }
+
+  // If this is a procurement (purchase) invoice upload, only check by company name for the buyer.
+  if (docType === 'purchase') {
+    const buyerNameHit = matchCompanyByName(list, parties.buyerName);
+    if (buyerNameHit) {
+      return {
+        decidedType: 'purchase',
+        rejected: false,
+        reason: `Matched company name as buyer ("${buyerNameHit.name}") → Procurement`,
+        zone: 'buyer',
+        company: buyerNameHit,
+        parties,
+      };
+    }
+    // Note: User requested ONLY checking by company name for importers, so if it doesn't match by name,
+    // we can still fall back to the existing GST logic below just in case they added a GST in the future,
+    // or we can reject it. Let's fall back to existing logic to be safe, since it won't hurt if buyer GST is empty.
   }
 
   const buyerHit = matchCompanyByGstOrPan(list, parties.buyerGst);
@@ -201,13 +219,9 @@ export function matchInvoiceToCompanies(row, companies = []) {
     };
   }
 
-  // Name fallback when GST missing on one side
-  const buyerNameHit = !parties.buyerGst
-    ? matchCompanyByName(list, parties.buyerName)
-    : null;
-  const sellerNameHit = !parties.sellerGst
-    ? matchCompanyByName(list, parties.sellerName)
-    : null;
+  // Name fallback when GST didn't match (removed !parties.buyerGst restriction to allow fallback even if GST was wrongly extracted)
+  const buyerNameHit = matchCompanyByName(list, parties.buyerName);
+  const sellerNameHit = matchCompanyByName(list, parties.sellerName);
 
   if (buyerNameHit && !sellerNameHit) {
     return {
@@ -243,7 +257,7 @@ export function matchInvoiceToCompanies(row, companies = []) {
   };
 }
 
-export function applyCompanyRoutingToResults(results = [], companies = []) {
+export function applyCompanyRoutingToResults(results = [], companies = [], docType = null) {
   return (results || []).map((r) => {
     if (!r?.ok || r.skipped) return r;
     
@@ -259,7 +273,7 @@ export function applyCompanyRoutingToResults(results = [], companies = []) {
       };
     }
     
-    const match = matchInvoiceToCompanies(r, companies);
+    const match = matchInvoiceToCompanies(r, companies, docType);
     const data = {
       ...(r.data || {}),
       company_id: match.company?.id ?? null,

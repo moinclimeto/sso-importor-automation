@@ -38,6 +38,10 @@ const emptyPurchase = (buyerGst = '') => ({
   quantity_kg: '',
   date_of_entry: todayIso(),
   procurement_date: '',
+  entity_type: '',
+  registration_type: '',
+  financial_year: '',
+  supplier_mobile_number: '',
 });
 
 const emptySale = () => ({
@@ -51,7 +55,11 @@ const emptySale = () => ({
   available_quantity_mt: '',
   quantity_sold_mt: '',
   registration_type: '',
+  entity_type: '',
+  financial_year: '',
+  mobile_number: '',
   entity_name: '',
+  customer_gstin: '',
   address: '',
   state: '',
   district: '',
@@ -306,6 +314,10 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
         date_of_entry: form.date_of_entry || todayIso(),
         procurement_date: form.procurement_date,
         invoice_filename: (form.invoice_filename || '').trim(),
+        entity_type: (form.entity_type || '').trim(),
+        registration_type: (form.registration_type || '').trim(),
+        financial_year: (form.financial_year || '').trim(),
+        supplier_mobile_number: (form.supplier_mobile_number || '').trim(),
         // compat
         vendor_name: (form.supplier_name || '').trim(),
         vendor_gstin: (form.supplier_gst_number || '').trim().toUpperCase(),
@@ -368,8 +380,12 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
       ifsc_code: (form.ifsc_code || '').trim().toUpperCase(),
       gst_other_charges: parseFloat(form.gst_other_charges) || 0,
       invoice_file_name: (form.invoice_file_name || '').trim(),
+      entity_type: (form.entity_type || '').trim(),
+      financial_year: (form.financial_year || '').trim(),
+      mobile_number: (form.mobile_number || '').trim(),
       application_number: (form.application_number || '').trim(),
       customer_name: (form.entity_name || '').trim(),
+      customer_gstin: (form.customer_gstin || '').trim().toUpperCase(),
       invoice_no: (form.application_number || '').trim() || (form.invoice_file_name || '').trim(),
       item_name: (form.product_type || '').trim() || (form.plastic_type || '').trim() || form.category_of_plastic,
       quantity: sold,
@@ -545,6 +561,37 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
                   />
                 </Field>
 
+                <Field label="Entity Type">
+                  <select className="input bg-white" value={form.entity_type || ''} onChange={(e) => set('entity_type', e.target.value)}>
+                    <option value="">Select Entity Type</option>
+                    <option value="PWPs">PWPs</option>
+                    <option value="Producers">Producers</option>
+                    <option value="Brand Owners">Brand Owners</option>
+                    <option value="PIBOs">PIBOs</option>
+                    <option value="Importers">Importers</option>
+                  </select>
+                </Field>
+                <Field label="Registration Type">
+                  <select className="input bg-white" value={form.registration_type || ''} onChange={(e) => set('registration_type', e.target.value)}>
+                    <option value="">Select</option>
+                    <option value="Registered">Registered</option>
+                    <option value="Unregistered">Unregistered</option>
+                  </select>
+                </Field>
+                <Field label="Mobile Number">
+                  <input className="input" value={form.supplier_mobile_number || ''} onChange={(e) => set('supplier_mobile_number', e.target.value)} />
+                </Field>
+                <Field label="Financial Year">
+                  <select className="input bg-white" value={form.financial_year || ''} onChange={(e) => set('financial_year', e.target.value)}>
+                    <option value="">Select Financial Year</option>
+                    <option value="2025-26">2025-26</option>
+                    <option value="2024-25">2024-25</option>
+                    <option value="2023-24">2023-24</option>
+                    <option value="2022-23">2022-23</option>
+                    <option value="2021-22">2021-22</option>
+                  </select>
+                </Field>
+
                 <Field label="State" required>
                   <select
                     className={errCls('state')}
@@ -703,26 +750,29 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Category of Plastic" required>
-                <select className="input bg-slate-100 text-slate-600" value={form.category_of_plastic || 'Cat-II'} disabled>
-                  <option value="">Select Category</option>
-                  {PLASTIC_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+                <Field label="Category of Plastic" required>
+                  <select className="input" value={form.category_of_plastic || 'Cat-II'} onChange={(e) => set('category_of_plastic', e.target.value)}>
+                    <option value="">Select Category</option>
+                    {PLASTIC_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               <Field label="Plastic Type">
-                <input className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)} />
-              </Field>
-              <Field label="Product Type">
-                <select className="input" value={form.product_type} onChange={(e) => set('product_type', e.target.value)}>
-                  <option value="">Select Product Type</option>
-                  <option value="Cement">Cement</option>
-                  <option value="Clinker">Clinker</option>
+                <select className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)}>
+                  <option value="">Select Plastic Type</option>
+                  <option value="PET">PET</option>
+                  <option value="HDPE">HDPE</option>
+                  <option value="PVC">PVC</option>
+                  <option value="LDPE">LDPE</option>
+                  <option value="PP">PP</option>
+                  <option value="PS">PS</option>
+                  <option value="Other">Other</option>
                 </select>
               </Field>
+
               <Field label="(%) of Recycled Plastic">
                 <input type="number" step="any" className="input" value={form.recycled_plastic_percent} onChange={(e) => set('recycled_plastic_percent', e.target.value)} />
               </Field>
@@ -737,6 +787,40 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               </Field>
               <Field label="Name of the Entity" required>
                 <input className="input" value={form.entity_name} onChange={(e) => set('entity_name', e.target.value)} />
+              </Field>
+              <Field label="GST Number">
+                <input className="input uppercase" value={form.customer_gstin || ''} onChange={(e) => set('customer_gstin', e.target.value.toUpperCase())} maxLength={15} />
+              </Field>
+
+              <Field label="Entity Type">
+                <select className="input bg-white" value={form.entity_type || ''} onChange={(e) => set('entity_type', e.target.value)}>
+                  <option value="">Select Entity Type</option>
+                  <option value="PWPs">PWPs</option>
+                  <option value="Producers">Producers</option>
+                  <option value="Brand Owners">Brand Owners</option>
+                  <option value="PIBOs">PIBOs</option>
+                  <option value="Importers">Importers</option>
+                </select>
+              </Field>
+              <Field label="Registration Type">
+                <select className="input bg-white" value={form.registration_type || ''} onChange={(e) => set('registration_type', e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="Registered">Registered</option>
+                  <option value="Unregistered">Unregistered</option>
+                </select>
+              </Field>
+              <Field label="Mobile Number">
+                <input className="input" value={form.mobile_number || ''} onChange={(e) => set('mobile_number', e.target.value)} />
+              </Field>
+              <Field label="Financial Year">
+                <select className="input bg-white" value={form.financial_year || ''} onChange={(e) => set('financial_year', e.target.value)}>
+                  <option value="">Select Financial Year</option>
+                  <option value="2025-26">2025-26</option>
+                  <option value="2024-25">2024-25</option>
+                  <option value="2023-24">2023-24</option>
+                  <option value="2022-23">2022-23</option>
+                  <option value="2021-22">2021-22</option>
+                </select>
               </Field>
 
               <Field label="Address" className="sm:col-span-2">
