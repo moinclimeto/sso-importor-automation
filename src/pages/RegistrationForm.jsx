@@ -3,6 +3,8 @@ import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
+import RegistrationPartB from '../components/RegistrationPartB.jsx';
+import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import {
   AUTO_FILLED_FIELDS,
 } from '../utils/registrationDataMapper.js';
@@ -20,7 +22,7 @@ import {
   GENERAL_INFO_EMPTY,
   buildGeneralInfoFromDocData,
 } from '../utils/registrationGeneralInfo.js';
-import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2 } from 'lucide-react';
+import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -137,6 +139,9 @@ export default function RegistrationForm() {
   const [savedCeprId, setSavedCeprId] = useState('');
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [loadingSavedRegistration, setLoadingSavedRegistration] = useState(true);
+
+  const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
+  const [automationLogs, setAutomationLogs] = useState([]);
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -273,7 +278,10 @@ export default function RegistrationForm() {
 
   useEffect(() => {
     if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog((msg) => setLoadingMsg(msg));
+      return window.pwp.scraper.onLog((msg) => {
+        setLoadingMsg(msg);
+        setAutomationLogs((prev) => [...prev, { type: 'info', message: msg }]);
+      });
     }
   }, []);
 
@@ -696,6 +704,65 @@ export default function RegistrationForm() {
       showToast('CEPR ID not found — complete registration first.', 'error');
       return;
     }
+
+    // Strict Validation for Automation
+    const requiredGeneral = [
+      { key: 'typeOfBusiness', label: 'Type of Business' },
+      { key: 'typeOfCompany', label: 'Type of Company' },
+      { key: 'registeredAddressLine1', label: 'Registered Address' },
+      { key: 'yearOfCommencement', label: 'Year of Commencement' },
+      { key: 'stateUt', label: 'State/UT' },
+      { key: 'complianceStatus', label: 'Compliance Status (3d)' },
+      { key: 'thicknessOfPlastic', label: 'Thickness of Plastic (3e)' },
+      { key: 'partCCoveringLetter', label: 'Part C: Covering Letter' },
+      { key: 'partCSignature', label: 'Part C: Signature' },
+      { key: 'partCAuditedStatement', label: 'Part C: Audited Statement' },
+    ];
+
+    const missing = [];
+    for (const req of requiredGeneral) {
+      if (!generalInfo[req.key]) missing.push(req.label);
+    }
+    
+    if (!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) {
+      missing.push('Operating States (minimum 1 required)');
+    } else if (generalInfo.operatingStates.length === 2) {
+      missing.push('Operating States (Cannot select exactly 2 states. Select 1, or 3+ states)');
+    }
+    
+    if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
+      missing.push('Type of Company Document (MSME/Declaration)');
+    }
+
+    if (!generalInfo.isSameAsRegisteredAddress) {
+      if (!generalInfo.plantAddress) missing.push('Plant/Unit Address');
+      if (!generalInfo.unitGst) missing.push('Unit GST');
+      if (!autoData.unitGstDoc) missing.push('Unit GST Document');
+    }
+
+    if (missing.length > 0) {
+      showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
+      return;
+    }
+
+    // Save all form data to database so the backend automation can read the latest fields
+    if (window.pwp?.registration?.save) {
+      try {
+        await window.pwp.registration.save({
+          email,
+          mobile,
+          applicant_type: generalInfo.applicantType || 'PIBO',
+          sub_applicant_type: generalInfo.subApplicantType || 'Importer',
+          cepr_id: savedCeprId || '',
+          form_data_json: JSON.stringify({ ...generalInfo, ...autoData })
+        });
+      } catch (err) {
+        console.error('Failed to save data before automation', err);
+      }
+    }
+
+    setAutomationLogs([]);
+    setShowAutomationLogsModal(true);
     setLoading(true);
     await beginLoginFlow(savedCeprId);
     setLoading(false);
@@ -722,10 +789,16 @@ export default function RegistrationForm() {
         setLoginCaptchaError('');
         setShowLoginCaptchaModal(true);
         showToast('Enter login captcha to continue to application form.', 'success', { duration: 10000 });
+      } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+        setAutomationLogs(prev => [...prev, { type: 'success', message: 'Application onboarding completed successfully!' }]);
+        showToast('Application onboarding completed successfully!', 'success');
       } else {
-        showToast(loginRes.error || 'Could not start login flow', 'error');
+        const err = loginRes.error || 'Could not start login flow';
+        setAutomationLogs(prev => [...prev, { type: 'error', message: err }]);
+        showToast(err, 'error');
       }
     } catch (err) {
+      setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login error: ' + err.message }]);
       showToast('Login error: ' + err.message, 'error');
     } finally {
       setLoadingMsg('');
@@ -779,9 +852,12 @@ export default function RegistrationForm() {
         setLoginCaptchaImage(res.captchaImage);
       }
       setLoginCaptchaText('');
-      setLoginCaptchaError(res.error || 'Invalid captcha. Please try again.');
+      const errMsg = res.error || 'Invalid captcha. Please try again.';
+      setLoginCaptchaError(errMsg);
+      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
     } catch (err) {
       setLoginCaptchaError(err.message);
+      setAutomationLogs(prev => [...prev, { type: 'error', message: 'Captcha submit error: ' + err.message }]);
     } finally {
       setLoginCaptchaSubmitting(false);
       setLoadingMsg('');
@@ -829,17 +905,21 @@ export default function RegistrationForm() {
       if (res.success && res.step === 'LOGIN_COMPLETE') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
+        setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error }]);
         showToast(
-          `Login complete! Browser is open${savedCeprId ? ` for CEPR ID ${savedCeprId}` : ''} — continue on portal.`,
-          'success',
+          `Login successful, but onboarding failed. See logs for details.`,
+          'error',
           { duration: 15000 }
         );
         return;
       }
 
-      setLoginOtpError(res.error || 'Login OTP verification failed');
+      const errMsg = res.error || 'Invalid OTP. Please try again.';
+      setLoginOtpError(errMsg);
+      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
     } catch (err) {
       setLoginOtpError(err.message);
+      setAutomationLogs(prev => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -985,6 +1065,32 @@ export default function RegistrationForm() {
                 ))}
               </select>
             </div>
+            
+            {generalInfo.typeOfCompany && (
+              <div className="md:col-span-2 bg-slate-50 p-3 rounded-lg border">
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany) 
+                    ? 'Upload MSME Certificate (PDF) *' 
+                    : 'Upload Declaration of Large Entity (PDF) *'}
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={(e) => {
+                    const file = e.target.files[0];
+                    if (file) {
+                      setAutoData(prev => ({ ...prev, typeOfCompanyDoc: file.path || file.name }));
+                    }
+                  }}
+                  className={inputClass}
+                />
+                {autoData.typeOfCompanyDoc && (
+                  <p className="text-xs text-green-600 mt-1 truncate" title={autoData.typeOfCompanyDoc}>
+                    Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
+                  </p>
+                )}
+              </div>
+            )}
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-slate-700 mb-1">Registered Address Line 1 *</label>
               <input
@@ -1008,10 +1114,68 @@ export default function RegistrationForm() {
                 type="text"
                 placeholder="Enter (optional)"
                 className={lockedInputClass}
-                
-                
               />
             </div>
+            <div className="md:col-span-2 mt-2">
+              <label className="flex items-center gap-2 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={generalInfo.isSameAsRegisteredAddress}
+                  onChange={(e) => setGeneralInfo(prev => ({ ...prev, isSameAsRegisteredAddress: e.target.checked }))}
+                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
+                />
+                <span className="text-sm font-medium text-slate-700">Plant/Unit Address is same as Registered Address</span>
+              </label>
+            </div>
+            
+            {!generalInfo.isSameAsRegisteredAddress && (
+              <>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Plant/Unit Address *</label>
+                  <input
+                    name="plantAddress"
+                    value={generalInfo.plantAddress}
+                    onChange={handleGeneralChange}
+                    type="text"
+                    placeholder="Enter Plant/Unit Address"
+                    className={inputClass}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Unit GST Number *</label>
+                  <input
+                    name="unitGst"
+                    value={generalInfo.unitGst}
+                    onChange={handleGeneralChange}
+                    type="text"
+                    placeholder="Enter Unit GST"
+                    className={`${inputClass} uppercase`}
+                    required
+                  />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        setAutoData(prev => ({ ...prev, unitGstDoc: file.path || file.name }));
+                      }
+                    }}
+                    className={inputClass}
+                    required
+                  />
+                  {autoData.unitGstDoc && (
+                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
+                      Selected: {autoData.unitGstDoc.split(/[/\\]/).pop()}
+                    </p>
+                  )}
+                </div>
+              </>
+            )}
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Company CIN Number</label>
               <input
@@ -1039,285 +1203,223 @@ export default function RegistrationForm() {
                 ))}
               </select>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Operating States *</label>
-              <div 
-                className="w-full border border-slate-300 rounded-lg h-32 overflow-y-auto p-2 bg-white"
-              >
-                {INDIAN_STATES.map((s) => {
-                  const isSelected = (generalInfo.operatingStates || []).includes(s);
-                  return (
-                    <label 
-                      key={`op-${s}`} 
-                      className="flex items-center gap-2 px-2 py-1.5 hover:bg-slate-50 rounded cursor-pointer"
-                    >
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={async (e) => {
-                          const checked = e.target.checked;
-                          setGeneralInfo((prev) => {
-                            const current = prev.operatingStates || [];
-                            const newStates = checked 
-                                ? [...current, s] 
-                                : current.filter(state => state !== s);
-                            
-                            const newStateObj = {
-                              ...prev,
-                              operatingStates: newStates
-                            };
-                            
-                            // Auto-save so changes immediately persist to DB
-                            if (window.pwp?.registration?.save) {
-                              const updatedFormData = {
-                                ...(savedRegistration?.formData || {}),
-                                email,
-                                mobile,
-                                autoData,
-                                generalInfo: newStateObj
-                              };
-                              window.pwp.registration.save({
-                                ...(savedRegistration || {}),
-                                email,
-                                mobile,
-                                form_data_json: JSON.stringify(updatedFormData)
-                              }).catch(console.error);
-                            }
-                            
-                            return newStateObj;
-                          });
-                        }}
-                        className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                      />
-                      <span className="text-sm text-slate-700">{s}</span>
-                    </label>
-                  );
-                })}
-              </div>
-              <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
-              <select
-                name="hasProductionFacility"
-                value={generalInfo.hasProductionFacility || ''}
-                onChange={async (e) => {
-                  handleGeneralChange(e);
-                  // Auto-save logic
-                  if (window.pwp?.registration?.save) {
-                    const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
-                    const updatedFormData = {
-                      ...(savedRegistration?.formData || {}),
-                      email, mobile, autoData, generalInfo: newStateObj
-                    };
-                    window.pwp.registration.save({
-                      ...(savedRegistration || {}),
-                      email, mobile,
-                      form_data_json: JSON.stringify(updatedFormData)
-                    }).catch(console.error);
-                  }
-                }}
-                className={inputClass}
-              >
-                <option value="">Select</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-                <option value="Not Applicable">Not Applicable</option>
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
-              <input
-                name="capitalInvested"
-                value={generalInfo.capitalInvested || ''}
-                onChange={handleGeneralChange}
-                onBlur={async () => {
-                  // Auto-save on blur
-                  if (window.pwp?.registration?.save) {
-                    const updatedFormData = {
-                      ...(savedRegistration?.formData || {}),
-                      email, mobile, autoData, generalInfo
-                    };
-                    window.pwp.registration.save({
-                      ...(savedRegistration || {}),
-                      email, mobile,
-                      form_data_json: JSON.stringify(updatedFormData)
-                    }).catch(console.error);
-                  }
-                }}
-                type="text"
-                placeholder="Enter Total Capital Invested"
-                className={inputClass}
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
-              <select
-                name="yearOfCommencement"
-                value={generalInfo.yearOfCommencement || ''}
-                onChange={async (e) => {
-                  handleGeneralChange(e);
-                  // Auto-save logic
-                  if (window.pwp?.registration?.save) {
-                    const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
-                    const updatedFormData = {
-                      ...(savedRegistration?.formData || {}),
-                      email, mobile, autoData, generalInfo: newStateObj
-                    };
-                    window.pwp.registration.save({
-                      ...(savedRegistration || {}),
-                      email, mobile,
-                      form_data_json: JSON.stringify(updatedFormData)
-                    }).catch(console.error);
-                  }
-                }}
-                className={inputClass}
-              >
-                <option value="">Enter year</option>
-                {Array.from({ length: 50 }, (_, i) => new Date().getFullYear() + 1 - i).map((year) => (
-                  <option key={year} value={year}>{year}</option>
-                ))}
-              </select>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
-              <input
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg"
-                onChange={async (e) => {
-                  const file = e.target.files[0];
-                  if (file) {
-                    const path = file.path;
-                    setAutoData((prev) => {
-                      const next = { ...prev, detailsOfProductsPath: path };
-                      if (window.pwp?.registration?.save) {
-                        const updatedFormData = {
-                          ...(savedRegistration?.formData || {}),
-                          email, mobile, autoData: next, generalInfo
-                        };
-                        window.pwp.registration.save({
-                          ...(savedRegistration || {}),
-                          email, mobile,
-                          form_data_json: JSON.stringify(updatedFormData)
-                        }).catch(console.error);
-                      }
-                      return next;
-                    });
-                  }
-                }}
-                className={inputClass}
-                
-              />
-              {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories *</label>
-              <input
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg"
-                onChange={async (e) => {
-                  const file = e.target.files[0];
-                  if (file) {
-                    const path = file.path;
-                    setAutoData((prev) => {
-                      const next = { ...prev, representativePicturePath: path };
-                      if (window.pwp?.registration?.save) {
-                        const updatedFormData = {
-                          ...(savedRegistration?.formData || {}),
-                          email, mobile, autoData: next, generalInfo
-                        };
-                        window.pwp.registration.save({
-                          ...(savedRegistration || {}),
-                          email, mobile,
-                          form_data_json: JSON.stringify(updatedFormData)
-                        }).catch(console.error);
-                      }
-                      return next;
-                    });
-                  }
-                }}
-                className={inputClass}
-                
-              />
-              {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
-              <input
-                name="district"
-                value={generalInfo.district || ''}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="Enter district"
-                className={lockedInputClass}
-                required
-              />
-            </div>
+          </div>
 
-            <div className="md:col-span-2 mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-              <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                <table className="w-full text-sm text-left">
-                  <thead className="bg-[#0b6c7a] text-white">
-                    <tr>
-                      <th className="px-4 py-3 font-medium">Year</th>
-                      <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                      <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                      <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                      <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-200 bg-white">
-                    {['2024-25', '2025-26'].map((year) => (
-                      <tr key={year}>
-                        <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
-                        {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
-                          <td key={cat} className="px-4 py-2">
+          <div className="space-y-6 mt-8 border-t pt-8">
+            <div>
+              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
+              <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
+                      {INDIAN_STATES.map((s) => {
+                        const isChecked = (generalInfo.operatingStates || []).includes(s);
+                        return (
+                          <label key={s} className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
                             <input
-                              type="number"
-                              min="0"
-                              className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                              value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
+                              type="checkbox"
+                              checked={isChecked}
                               onChange={(e) => {
-                                setGeneralInfo(prev => ({
-                                  ...prev,
-                                  plasticConsumed: {
-                                    ...prev.plasticConsumed,
-                                    [year]: {
-                                      ...prev.plasticConsumed?.[year],
-                                      [cat]: e.target.value
-                                    }
+                                setGeneralInfo(prev => {
+                                  const current = prev.operatingStates || [];
+                                  const newState = e.target.checked
+                                    ? [...current, s]
+                                    : current.filter(x => x !== s);
+                                  
+                                  const newStateObj = { ...prev, operatingStates: newState };
+                                  
+                                  // Auto-save logic
+                                  if (window.pwp?.registration?.save) {
+                                    const updatedFormData = {
+                                      ...(savedRegistration?.formData || {}),
+                                      email, mobile, autoData, generalInfo: newStateObj
+                                    };
+                                    window.pwp.registration.save({
+                                      ...(savedRegistration || {}),
+                                      email,
+                                      mobile,
+                                      form_data_json: JSON.stringify(updatedFormData)
+                                    }).catch(console.error);
                                   }
-                                }));
+                                  
+                                  return newStateObj;
+                                });
                               }}
+                              className="rounded border-slate-300 text-green-600 focus:ring-green-500"
                             />
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
+                            <span className="text-sm text-slate-700">{s}</span>
+                          </label>
+                        );
+                      })}
+                    </div>
+                    <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
+                    <select
+                      name="hasProductionFacility"
+                      value={generalInfo.hasProductionFacility || ''}
+                      onChange={async (e) => {
+                        handleGeneralChange(e);
+                        // Auto-save logic
+                        if (window.pwp?.registration?.save) {
+                          const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
+                          const updatedFormData = {
+                            ...(savedRegistration?.formData || {}),
+                            email, mobile, autoData, generalInfo: newStateObj
+                          };
+                          window.pwp.registration.save({
+                            ...(savedRegistration || {}),
+                            email, mobile,
+                            form_data_json: JSON.stringify(updatedFormData)
+                          }).catch(console.error);
+                        }
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="">Select</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                      <option value="Not Applicable">Not Applicable</option>
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
+                    <input
+                      name="capitalInvested"
+                      value={generalInfo.capitalInvested || ''}
+                      onChange={handleGeneralChange}
+                      onBlur={async () => {
+                        // Auto-save on blur
+                        if (window.pwp?.registration?.save) {
+                          const updatedFormData = {
+                            ...(savedRegistration?.formData || {}),
+                            email, mobile, autoData, generalInfo
+                          };
+                          window.pwp.registration.save({
+                            ...(savedRegistration || {}),
+                            email, mobile,
+                            form_data_json: JSON.stringify(updatedFormData)
+                          }).catch(console.error);
+                        }
+                      }}
+                      type="text"
+                      placeholder="Enter Total Capital Invested"
+                      className={inputClass}
+                    />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
+                    <select
+                      name="yearOfCommencement"
+                      value={generalInfo.yearOfCommencement || ''}
+                      onChange={async (e) => {
+                        handleGeneralChange(e);
+                        // Auto-save logic
+                        if (window.pwp?.registration?.save) {
+                          const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
+                          const updatedFormData = {
+                            ...(savedRegistration?.formData || {}),
+                            email, mobile, autoData, generalInfo: newStateObj
+                          };
+                          window.pwp.registration.save({
+                            ...(savedRegistration || {}),
+                            email, mobile,
+                            form_data_json: JSON.stringify(updatedFormData)
+                          }).catch(console.error);
+                        }
+                      }}
+                      className={inputClass}
+                    >
+                      <option value="">Enter year</option>
+                      {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                        <option key={year} value={year}>{year}</option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
+                    <input
+                      name="district"
+                      value={generalInfo.district || ''}
+                      onChange={handleGeneralChange}
+                      type="text"
+                      placeholder="Enter district"
+                      className={lockedInputClass}
+                      required
+                    />
+                  </div>
+                  
+                  <div className="md:col-span-2 mt-4">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
+                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                      <table className="w-full text-sm text-left">
+                        <thead className="bg-[#0b6c7a] text-white">
+                          <tr>
+                            <th className="px-4 py-3 font-medium">Year</th>
+                            <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                            <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                            <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                            <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
+                          </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-200 bg-white">
+                          {['2024-25', '2025-26'].map((year) => (
+                            <tr key={year}>
+                              <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
+                              {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
+                                <td key={cat} className="px-4 py-2">
+                                  <input
+                                    type="number"
+                                    min="0"
+                                    className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                                    value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
+                                    onChange={(e) => {
+                                      setGeneralInfo(prev => ({
+                                        ...prev,
+                                        plasticConsumed: {
+                                          ...(prev.plasticConsumed || {}),
+                                          [year]: {
+                                            ...(prev.plasticConsumed?.[year] || {}),
+                                            [cat]: e.target.value
+                                          }
+                                        }
+                                      }));
+                                    }}
+                                  />
+                                </td>
+                              ))}
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                    <select
+                      name="complianceStatus"
+                      value={generalInfo.complianceStatus || ''}
+                      onChange={handleGeneralChange}
+                      className={inputClass}
+                    >
+                      <option value="">Select</option>
+                      <option value="Yes">Yes</option>
+                      <option value="No">No</option>
+                    </select>
+                    {generalInfo.complianceStatus === 'No' && (
+                      <p className="text-xs text-red-600 mt-1 font-medium">
+                        ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                      </p>
+                    )}
+                  </div>
 
             <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
-              <select
-                name="complianceStatus"
-                value={generalInfo.complianceStatus || ''}
-                onChange={handleGeneralChange}
-                className={inputClass}
-                required
-              >
-                <option value="">Select</option>
-                <option value="Yes">Yes</option>
-                <option value="No">No</option>
-                <option value="Not Applicable">Not Applicable</option>
-              </select>
-            </div>
-
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">3e) Thickness of Plastic Packaging (In Microns) *</label>
+              <label className="block text-sm font-medium text-slate-700 mb-1">
+                3e) Thickness of Plastic Packaging (In Microns) *
+              </label>
               <input
                 type="text"
                 name="thicknessOfPlastic"
@@ -1327,9 +1429,95 @@ export default function RegistrationForm() {
                 className={inputClass}
                 required
               />
+              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                <strong>Approved Minimum Thickness:</strong>
+                <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                  <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
+                  <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
+                  <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
+                </ul>
+              </div>
             </div>
           </div>
+        </div>
+        </div>
+        </div>
 
+        <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+
+        <div className="space-y-6 mt-8 border-t pt-8">
+          <div>
+            <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
+            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const path = file.path;
+                        setAutoData((prev) => {
+                          const next = { ...prev, detailsOfProductsPath: path };
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email, mobile, autoData: next, generalInfo
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                          return next;
+                        });
+                      }
+                    }}
+                    className={inputClass}
+                  />
+                  {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
+                  <input
+                    type="file"
+                    accept=".pdf,.png,.jpg,.jpeg"
+                    onChange={async (e) => {
+                      const file = e.target.files[0];
+                      if (file) {
+                        const path = file.path;
+                        setAutoData((prev) => {
+                          const next = { ...prev, representativePicturePath: path };
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email, mobile, autoData: next, generalInfo
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                          return next;
+                        });
+                      }
+                    }}
+                    className={inputClass}
+                  />
+                  {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <RegistrationPartC generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+
+        <div className="mt-8">
           <p className="text-xs text-slate-500 mt-6 mb-4">
             Authorized Person Details &amp; Set Password
           </p>
@@ -1403,6 +1591,7 @@ export default function RegistrationForm() {
               </div>
             </div>
           </div>
+        </div>
         </div>
 
         <div>
@@ -1865,6 +2054,58 @@ export default function RegistrationForm() {
               >
                 {loginOtpSubmitting && <Loader2 size={14} className="animate-spin" />}
                 Verify OTP & Continue
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showAutomationLogsModal && (
+        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
+            <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
+              <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
+                <Terminal size={18} className="text-blue-600" />
+                Automation Form Filling Logs
+              </h3>
+              <button
+                type="button"
+                onClick={() => setShowAutomationLogsModal(false)}
+                className="text-slate-400 hover:text-slate-600 p-1"
+                disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+              >
+                <X size={20} />
+              </button>
+            </div>
+            <div className="p-4 bg-slate-900 flex-1 overflow-y-auto font-mono text-sm leading-relaxed text-slate-300">
+              {automationLogs.length === 0 ? (
+                <div className="text-slate-500 italic">Waiting for automation to start...</div>
+              ) : (
+                <div className="space-y-1">
+                  {automationLogs.map((log, i) => (
+                    <div key={i} className={log.type === 'error' ? 'text-red-400 font-medium' : log.type === 'success' ? 'text-green-400 font-medium' : 'text-slate-300'}>
+                      <span className="text-slate-500 opacity-50 select-none mr-2">[{String(i).padStart(3, '0')}]</span>
+                      {log.message}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            <div className="px-6 py-4 bg-slate-50 border-t flex justify-between items-center">
+              <div className="text-sm text-slate-500 flex items-center gap-2">
+                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                   <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
+                ) : (
+                   <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={() => setShowAutomationLogsModal(false)}
+                disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+              >
+                Close Logs
               </button>
             </div>
           </div>
