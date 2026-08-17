@@ -741,15 +741,25 @@ async function startApplicationOnboarding(page, onLog) {
                if (onLog) onLog('WARNING: Search input not found inside dropdown. Proceeding without search...');
             }
 
-            // Find the deepest container (div or li) that has a checkbox AND contains the state text
-            const optionRow = page.locator('div, li, span').filter({ has: page.locator('input[type="checkbox"]') }).filter({ hasText: new RegExp(escapeRegex(state), 'i') }).last();
+            // Find any visible option in the dropdown that contains the state text
+            let optionRow = page.locator('.ng-option, .dropdown-item, li, mat-option').filter({ hasText: new RegExp(escapeRegex(state), 'i') }).first();
             
-            if (await optionRow.isVisible({ timeout: 2000 }).catch(() => false)) {
+            if ((await optionRow.count().catch(() => 0)) === 0) {
+               optionRow = page.getByText(new RegExp(escapeRegex(state), 'i')).filter({ visible: true }).last();
+            }
+            
+            if (await optionRow.isVisible({ timeout: 3000 }).catch(() => false)) {
               if (onLog) onLog(`Selecting operating state: ${state}`);
-              // Click the exact checkbox input inside that row
-              await optionRow.locator('input[type="checkbox"]').first().click({ force: true, timeout: 2000 }).catch(async () => {
-                await optionRow.click({ force: true, timeout: 2000 }).catch(() => {});
-              });
+              // Click the row directly
+              await optionRow.scrollIntoViewIfNeeded().catch(() => {});
+              
+              // If there IS a real checkbox inside, try clicking that first, otherwise click the row
+              const realCheckbox = optionRow.locator('input[type="checkbox"]').first();
+              if (await realCheckbox.isVisible({ timeout: 500 }).catch(() => false)) {
+                 await realCheckbox.click({ force: true }).catch(() => optionRow.click({ force: true }));
+              } else {
+                 await optionRow.click({ force: true });
+              }
               await page.waitForTimeout(500);
             } else {
               if (onLog) onLog(`ERROR: Could not find checkbox for operating state: ${state}. Saving screenshot to state_checkbox_error_${state}.png`);

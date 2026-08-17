@@ -450,6 +450,9 @@ export default function RegistrationForm() {
       panDocumentPath: autoData.panDocumentPath,
       gstDocumentPath: autoData.gstDocumentPath,
       cinDocumentPath: autoData.cinDocumentPath,
+      plasticConsumed: generalInfo.plasticConsumed,
+      complianceStatus: generalInfo.complianceStatus,
+      thicknessOfPlastic: generalInfo.thicknessOfPlastic,
     };
 
     setLoading(true);
@@ -887,7 +890,7 @@ export default function RegistrationForm() {
     `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative pb-32">
       <Toast toast={toast} onClose={hideToast} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
@@ -957,7 +960,7 @@ export default function RegistrationForm() {
                 value={generalInfo.typeOfBusiness}
                 onChange={handleGeneralChange}
                 className={lockedSelectClass}
-                disabled={registrationComplete}
+                
                 required
               >
                 <option value="">Select</option>
@@ -973,7 +976,7 @@ export default function RegistrationForm() {
                 value={generalInfo.typeOfCompany}
                 onChange={handleGeneralChange}
                 className={lockedSelectClass}
-                disabled={registrationComplete}
+                
                 required
               >
                 <option value="">Select</option>
@@ -991,8 +994,8 @@ export default function RegistrationForm() {
                 type="text"
                 placeholder="Enter registered address"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                
+                
                 required
               />
             </div>
@@ -1005,8 +1008,8 @@ export default function RegistrationForm() {
                 type="text"
                 placeholder="Enter (optional)"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                
+                
               />
             </div>
             <div>
@@ -1027,7 +1030,7 @@ export default function RegistrationForm() {
                 value={generalInfo.stateUt}
                 onChange={handleGeneralChange}
                 className={lockedSelectClass}
-                disabled={registrationComplete}
+                
                 required
               >
                 <option value="">Select</option>
@@ -1203,7 +1206,7 @@ export default function RegistrationForm() {
                   }
                 }}
                 className={inputClass}
-                disabled={registrationComplete}
+                
               />
               {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
             </div>
@@ -1234,7 +1237,7 @@ export default function RegistrationForm() {
                   }
                 }}
                 className={inputClass}
-                disabled={registrationComplete}
+                
               />
               {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
             </div>
@@ -1242,13 +1245,86 @@ export default function RegistrationForm() {
               <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
               <input
                 name="district"
-                value={generalInfo.district}
+                value={generalInfo.district || ''}
                 onChange={handleGeneralChange}
                 type="text"
                 placeholder="Enter district"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                required
+              />
+            </div>
+
+            <div className="md:col-span-2 mt-4">
+              <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
+              <div className="overflow-x-auto border border-slate-200 rounded-lg">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-[#0b6c7a] text-white">
+                    <tr>
+                      <th className="px-4 py-3 font-medium">Year</th>
+                      <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                      <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                      <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
+                      <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-200 bg-white">
+                    {['2024-25', '2025-26'].map((year) => (
+                      <tr key={year}>
+                        <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
+                        {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
+                          <td key={cat} className="px-4 py-2">
+                            <input
+                              type="number"
+                              min="0"
+                              className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
+                              value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
+                              onChange={(e) => {
+                                setGeneralInfo(prev => ({
+                                  ...prev,
+                                  plasticConsumed: {
+                                    ...prev.plasticConsumed,
+                                    [year]: {
+                                      ...prev.plasticConsumed?.[year],
+                                      [cat]: e.target.value
+                                    }
+                                  }
+                                }));
+                              }}
+                            />
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+              <select
+                name="complianceStatus"
+                value={generalInfo.complianceStatus || ''}
+                onChange={handleGeneralChange}
+                className={inputClass}
+                required
+              >
+                <option value="">Select</option>
+                <option value="Yes">Yes</option>
+                <option value="No">No</option>
+                <option value="Not Applicable">Not Applicable</option>
+              </select>
+            </div>
+
+            <div className="mt-4">
+              <label className="block text-sm font-medium text-slate-700 mb-1">3e) Thickness of Plastic Packaging (In Microns) *</label>
+              <input
+                type="text"
+                name="thicknessOfPlastic"
+                value={generalInfo.thicknessOfPlastic || ''}
+                onChange={handleGeneralChange}
+                placeholder="Enter thickness"
+                className={inputClass}
                 required
               />
             </div>
@@ -1268,8 +1344,8 @@ export default function RegistrationForm() {
                 type="text"
                 placeholder="e.g. Director, Manager"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                
+                
                 required
               />
             </div>
@@ -1284,7 +1360,7 @@ export default function RegistrationForm() {
                   type={showPassword ? 'text' : 'password'}
                   placeholder="Enter Password (min 8 chars)"
                   className={`${lockedInputClass} pr-10`}
-                  readOnly={registrationComplete}
+                  
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -1310,7 +1386,7 @@ export default function RegistrationForm() {
                   type={showConfirmPassword ? 'text' : 'password'}
                   placeholder="Confirm Password"
                   className={`${lockedInputClass} pr-10`}
-                  readOnly={registrationComplete}
+                  
                   required
                   minLength={8}
                   autoComplete="new-password"
@@ -1344,8 +1420,8 @@ export default function RegistrationForm() {
                 type="email"
                 placeholder="Enter Email Address"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                
+                
                 required
               />
             </div>
@@ -1357,8 +1433,8 @@ export default function RegistrationForm() {
                 type="tel"
                 placeholder="Enter Mobile Number"
                 className={lockedInputClass}
-                disabled={registrationComplete}
-                readOnly={registrationComplete}
+                
+                
                 required
               />
             </div>

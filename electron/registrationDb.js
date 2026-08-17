@@ -13,7 +13,10 @@ const OPTIONAL_COLUMNS = [
   'capital_invested',
   'year_of_commencement',
   'details_of_products_produced_marketed',
-  'representative_picture_of_plastic_packaging'
+  'representative_picture_of_plastic_packaging',
+  'plastic_consumed_json',
+  'compliance_status',
+  'thickness_of_plastic'
 ];
 
 async function ensureRegistrationColumns(db) {
@@ -40,6 +43,9 @@ export async function saveRegistrationDetails(data = {}) {
   let yearOfCommencement = data.year_of_commencement ?? null;
   let detailsOfProducts = data.details_of_products_produced_marketed ?? null;
   let representativePicture = data.representative_picture_of_plastic_packaging ?? null;
+  let plasticConsumedJson = data.plastic_consumed_json ?? null;
+  let complianceStatus = data.compliance_status ?? null;
+  let thicknessOfPlastic = data.thickness_of_plastic ?? null;
   
   if (formDataJson) {
     try {
@@ -48,6 +54,9 @@ export async function saveRegistrationDetails(data = {}) {
         if (parsed.generalInfo.hasProductionFacility !== undefined) hasProductionFacility = parsed.generalInfo.hasProductionFacility;
         if (parsed.generalInfo.capitalInvested !== undefined) capitalInvested = parsed.generalInfo.capitalInvested;
         if (parsed.generalInfo.yearOfCommencement !== undefined) yearOfCommencement = parsed.generalInfo.yearOfCommencement;
+        if (parsed.generalInfo.plasticConsumed !== undefined) plasticConsumedJson = JSON.stringify(parsed.generalInfo.plasticConsumed);
+        if (parsed.generalInfo.complianceStatus !== undefined) complianceStatus = parsed.generalInfo.complianceStatus;
+        if (parsed.generalInfo.thicknessOfPlastic !== undefined) thicknessOfPlastic = parsed.generalInfo.thicknessOfPlastic;
       }
       if (parsed.autoData) {
         if (parsed.autoData.detailsOfProductsPath !== undefined) detailsOfProducts = parsed.autoData.detailsOfProductsPath;
@@ -76,7 +85,10 @@ export async function saveRegistrationDetails(data = {}) {
         capital_invested = ?,
         year_of_commencement = ?,
         details_of_products_produced_marketed = ?,
-        representative_picture_of_plastic_packaging = ?
+        representative_picture_of_plastic_packaging = ?,
+        plastic_consumed_json = ?,
+        compliance_status = ?,
+        thickness_of_plastic = ?
       WHERE _internal_id = ?`,
       data.applicant_type ?? null,
       data.sub_applicant_type ?? null,
@@ -92,6 +104,9 @@ export async function saveRegistrationDetails(data = {}) {
       yearOfCommencement,
       detailsOfProducts,
       representativePicture,
+      plasticConsumedJson,
+      complianceStatus,
+      thicknessOfPlastic,
       existing._internal_id
     );
     return { success: true, id: existing._internal_id, inserted: false };
@@ -99,8 +114,8 @@ export async function saveRegistrationDetails(data = {}) {
 
   const result = await db.run(
     `INSERT INTO registration_details
-      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging, plastic_consumed_json, compliance_status, thickness_of_plastic)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     data.applicant_type ?? null,
     data.sub_applicant_type ?? null,
     data.cepr_id ?? null,
@@ -114,7 +129,10 @@ export async function saveRegistrationDetails(data = {}) {
     capitalInvested,
     yearOfCommencement,
     detailsOfProducts,
-    representativePicture
+    representativePicture,
+    plasticConsumedJson,
+    complianceStatus,
+    thicknessOfPlastic
   );
 
   return { success: true, id: result.lastID, inserted: true };

@@ -103,4 +103,10 @@ export const GENERAL_INFO_EMPTY = {
   authDesignation: '',
   password: '',
   confirmPassword: '',
+  plasticConsumed: {
+    '2024-25': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' },
+    '2025-26': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }
+  },
+  complianceStatus: '',
+  thicknessOfPlastic: '',
 };
