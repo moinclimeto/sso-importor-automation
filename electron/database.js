@@ -85,7 +85,11 @@ async function runMigrations() {
     if (!appliedMigrations.has(file)) {
       const migration = await import('file:///' + path.join(migrationsDir, file)); // Use file:/// for dynamic import
       console.log(`Applying migration: ${file}`);
-      await db.exec(migration.up); // Each migration file should export an 'up' string
+      if (migration.up) {
+        await db.exec(migration.up); // Each migration file should export an 'up' string
+      } else {
+        console.warn(`Migration ${file} has no 'up' export. Skipping execution.`);
+      }
       await db.run('INSERT INTO _migrations (name) VALUES (?)', file);
     }
   }

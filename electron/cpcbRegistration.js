@@ -46,6 +46,9 @@ function buildRegistrationDbPayload(ceprId, screenshotPath) {
         authDesignation: data.authDesignation,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
+        plasticConsumed: data.plasticConsumed,
+        complianceStatus: data.complianceStatus,
+        thicknessOfPlastic: data.thicknessOfPlastic,
       },
       autoData: {
         gstin: data.gstin,
@@ -417,7 +420,107 @@ async function fillGeneralInformation(page, data, onLog) {
     await fillPortalInput(page, 'confirmPassword', data.password, onLog, 'Confirm Password');
   }
 
-  const portalErr = await checkPortalError(page, onLog);
+  if (onLog) {
+    onLog(`[DEBUG] plasticConsumed: ${JSON.stringify(data.plasticConsumed)}`);
+    onLog(`[DEBUG] complianceStatus: ${data.complianceStatus}`);
+    onLog(`[DEBUG] thicknessOfPlastic: ${data.thicknessOfPlastic}`);
+  }
+
+  if (data.plasticConsumed) {
+    if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
+    const plasticData = [
+      data.plasticConsumed?.['2024-25']?.cat1 || '0',
+      data.plasticConsumed?.['2024-25']?.cat2 || '0',
+      data.plasticConsumed?.['2024-25']?.cat3 || '0',
+      data.plasticConsumed?.['2024-25']?.cat4 || '0',
+      data.plasticConsumed?.['2025-26']?.cat1 || '0',
+      data.plasticConsumed?.['2025-26']?.cat2 || '0',
+      data.plasticConsumed?.['2025-26']?.cat3 || '0',
+      data.plasticConsumed?.['2025-26']?.cat4 || '0',
+    ];
+
+    // Bulletproof: Find the exact table that contains the column headers
+    let targetTable = page.locator('table').filter({ hasText: /Rigid Plastic/i }).filter({ hasText: /Flexible Plastic/i }).first();
+    let targetInputs = targetTable.locator('input[type="text"], input[inputmode="numeric"], input.cell-input');
+
+    // Fallback if the table doesn't have those exact headers
+    if ((await targetInputs.count().catch(() => 0)) < 8) {
+       targetInputs = page.locator('input.cell-input, table input[type="text"]');
+    }
+
+    const count = await targetInputs.count().catch(() => 0);
+    if (count >= 8) {
+      let startIndex = count > 8 ? count - 8 : 0; 
+      
+      for (let i = 0; i < 8; i++) {
+        const inputLoc = targetInputs.nth(startIndex + i);
+        await inputLoc.scrollIntoViewIfNeeded();
+        await inputLoc.click();
+        await inputLoc.fill('');
+        await inputLoc.pressSequentially(String(plasticData[i]), { delay: 10 });
+        await inputLoc.dispatchEvent('input');
+        await inputLoc.dispatchEvent('change');
+        await inputLoc.blur();
+        await page.waitForTimeout(200);
+      }
+    } else {
+      if (onLog) onLog(`Warning: Expected 8 cell-input fields for Plastic Consumed, found ${count}`);
+    }
+  }
+
+  if (data.complianceStatus?.trim()) {
+    if (onLog) onLog(`Selecting 3d) Status of compliance: ${data.complianceStatus}`);
+    
+    // Bulletproof: Find the select element that has a 'Yes' option, and is near the 3d text
+    let complianceSelect = page.locator('select').filter({ hasText: /Yes/i }).first();
+    
+    if ((await complianceSelect.count().catch(() => 0)) === 0) {
+      complianceSelect = page.locator('xpath=//*[contains(., "Status of compliance") or contains(., "3d)")]/following::select[1]').first();
+    }
+    
+    await complianceSelect.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    const count = await complianceSelect.count().catch(() => 0);
+    if (count > 0) {
+      await complianceSelect.scrollIntoViewIfNeeded();
+      await complianceSelect.selectOption({ label: data.complianceStatus });
+      await complianceSelect.dispatchEvent('change');
+      await page.waitForTimeout(300);
+    } else {
+      if (onLog) onLog('Warning: Could not find compliance status dropdown');
+    }
+  }
+
+  if (data.thicknessOfPlastic?.trim()) {
+    if (onLog) onLog(`Filling 3e) Thickness of Plastic: ${data.thicknessOfPlastic}`);
+    
+    // Bulletproof: Find the label then the input next to it
+    let label3e = page.getByText(/3e\).*Thickness of Plastic|Thickness of Plastic Packaging/i).first();
+    let thicknessInput = page.locator('input[type="text"], input[inputmode="numeric"], input[inputmode="decimal"]').filter({ rightOf: label3e }).first();
+    
+    if ((await thicknessInput.count().catch(() => 0)) === 0) {
+      thicknessInput = page.locator('input[type="text"], input[inputmode="numeric"], input[inputmode="decimal"]').filter({ below: label3e }).first();
+    }
+    if ((await thicknessInput.count().catch(() => 0)) === 0) {
+      thicknessInput = page.locator('xpath=//*[contains(., "Thickness of Plastic") or contains(., "3e)")]/following::input[1]').first();
+    }
+
+    await thicknessInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+    const count = await thicknessInput.count().catch(() => 0);
+    if (count > 0) {
+      await thicknessInput.scrollIntoViewIfNeeded();
+      await thicknessInput.click();
+      await thicknessInput.fill('');
+      await thicknessInput.pressSequentially(data.thicknessOfPlastic, { delay: 10 });
+      await thicknessInput.dispatchEvent('input');
+      await thicknessInput.dispatchEvent('change');
+      await thicknessInput.blur();
+      await page.waitForTimeout(300);
+    } else {
+      if (onLog) onLog('Warning: Could not find thickness input field');
+    }
+  }
+
+  const portalErr = await checkPortalError(page);
   if (portalErr) throw new Error(portalErr);
 
   if (onLog) onLog('General Information filled on portal');
@@ -1010,8 +1113,8 @@ export async function startRegistrationFlow(data, onLog) {
     if (onLog) onLog('Starting registration flow...');
     
     // Launch browser
-    regBrowser = await chromium.launch({ headless: false }); // Visible to user for transparency if needed
-    regContext = await regBrowser.newContext();
+    regBrowser = await chromium.launch({ headless: false, args: ['--start-maximized'] }); // Visible to user for transparency if needed
+    regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
     
     if (onLog) onLog('Navigating to CPCB portal...');

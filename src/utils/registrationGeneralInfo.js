@@ -96,6 +96,9 @@ export const GENERAL_INFO_EMPTY = {
   typeOfCompany: '',
   registeredAddressLine1: '',
   registeredAddressLine2: '',
+  isSameAsRegisteredAddress: true,
+  plantAddress: '',
+  unitGst: '',
   cin: '',
   stateUt: 'MADHYA PRADESH',
   operatingStates: [],
@@ -103,4 +106,27 @@ export const GENERAL_INFO_EMPTY = {
   authDesignation: '',
   password: '',
   confirmPassword: '',
+  hasProductionFacility: 'Not Applicable',
+  capitalInvested: '',
+  yearOfCommencement: '',
+  plasticConsumed: {
+    '2024-25': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' },
+    '2025-26': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }
+  },
+  complianceStatus: '',
+  thicknessOfPlastic: '',
+  
+  // Part B
+  partBSection4: [],
+  partBTransactions: {
+    sec5a: [],
+    sec5b: [],
+    sec5c: [],
+    sec5d: []
+  },
+
+  // Part C (document paths)
+  partCCoveringLetter: '',
+  partCSignature: '',
+  partCAuditedStatement: ''
 };

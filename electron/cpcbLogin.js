@@ -1,3 +1,5 @@
+import os from 'os';
+import path from 'path';
 import { chromium } from 'playwright';
 import { getRegSession, uploadDocumentByLabel } from './cpcbRegistration.js';
 import { resolveRegistrationLoginCredentials } from './registrationDummyData.js';
@@ -8,6 +10,12 @@ import {
   fillCaptchaField,
   refreshCaptcha,
 } from './captchaPortal.js';
+import {
+  fillRemainingPartA,
+  fillPartBSection4,
+  fillPartBSection5,
+  fillPartC
+} from './fillRegistrationForms.js';
 
 const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
 const DASHBOARD_URL = 'https://epr.cpcb.gov.in/dashboard';
@@ -24,7 +32,7 @@ export function getLoginSession() {
   if (reg.page) {
     return { browser: reg.browser, page: reg.page, reusedRegistrationBrowser: true };
   }
-  if (loginPage) {
+  if (loginPage && !loginPage.isClosed()) {
     return { browser: loginBrowser, page: loginPage, reusedRegistrationBrowser: false };
   }
   return { browser: null, page: null, reusedRegistrationBrowser: false };
@@ -34,10 +42,19 @@ async function ensureLoginPage(onLog) {
   const existing = getLoginSession();
   if (existing.page) return existing;
 
-  if (onLog) onLog('Opening CPCB browser for login...');
-  loginBrowser = await chromium.launch({ headless: false });
-  const context = await loginBrowser.newContext();
-  loginPage = await context.newPage();
+  if (onLog) onLog('Opening CPCB browser for login (Persistent Session)...');
+  const userDataDir = path.join(os.tmpdir(), 'playwright_cpcb_login_session');
+  
+  // Launch persistent context which keeps session cookies across restarts
+  loginBrowser = await chromium.launchPersistentContext(userDataDir, { headless: false, args: ['--start-maximized'] });
+  
+  const pages = loginBrowser.pages();
+  if (pages.length > 0) {
+    loginPage = pages[0];
+  } else {
+    loginPage = await loginBrowser.newPage();
+  }
+  
   return { browser: loginBrowser, page: loginPage, reusedRegistrationBrowser: false };
 }
 
@@ -164,11 +181,13 @@ async function clickGetOtp(page, onLog) {
 }
 
 async function isLoginOtpModalVisible(page, timeoutMs = 3000) {
-  return page
-    .locator('app-otp-modal')
-    .first()
-    .isVisible({ timeout: timeoutMs })
-    .catch(() => false);
+  try {
+    const loc = page.locator('app-otp-modal, [role="dialog"], .cdk-overlay-pane, .mat-dialog-container, .modal-content').filter({ hasText: /OTP Sent Successfully|Enter the 6-digit OTP/i }).first();
+    await loc.waitFor({ state: 'visible', timeout: timeoutMs });
+    return true;
+  } catch (e) {
+    return false;
+  }
 }
 
 async function findLoginOtpModalRoot(page) {
@@ -196,6 +215,9 @@ async function locateLoginOtpInputs(page) {
     'app-otp-modal input.otp-input[type="tel"]',
     'ng-otp-input input.otp-input',
     'app-otp-modal input.otp-input',
+    '[role="dialog"] input.otp-input',
+    '.mat-dialog-container input.otp-input',
+    'input.otp-input',
   ];
 
   for (const selector of selectors) {
@@ -308,13 +330,16 @@ async function clickVerifyLoginOtp(page, onLog) {
     }
   }
 
-  await page.locator('app-otp-modal form').first().evaluate((form) => {
-    if (typeof form.requestSubmit === 'function') {
-      form.requestSubmit();
-    } else {
-      form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
-    }
-  });
+  const formLoc = page.locator('app-otp-modal form, [role="dialog"] form, .mat-dialog-container form, .modal-content form').first();
+  if (await formLoc.isVisible().catch(() => false)) {
+    await formLoc.evaluate((form) => {
+      if (typeof form.requestSubmit === 'function') {
+        form.requestSubmit();
+      } else {
+        form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }));
+      }
+    });
+  }
   await page.waitForTimeout(2500);
 }
 
@@ -325,8 +350,9 @@ async function fillLoginOtp(page, otp, onLog) {
   }
 
   if (onLog) onLog('Entering login OTP on portal...');
-
-  await page.locator('app-otp-modal').first().waitFor({ state: 'visible', timeout: 20000 });
+  
+  const rootLoc = page.locator('app-otp-modal, [role="dialog"], .cdk-overlay-pane, .mat-dialog-container, .modal-content').filter({ hasText: /OTP Sent Successfully|Enter the 6-digit OTP/i }).first();
+  await rootLoc.waitFor({ state: 'visible', timeout: 20000 }).catch(() => {});
   await page.waitForTimeout(600);
 
   let combined = '';
@@ -351,7 +377,7 @@ async function fillLoginOtp(page, otp, onLog) {
 
   if (combined !== digits) {
     if (onLog) onLog('Trying OTP wrapper keyboard type...');
-    const wrapper = page.locator('app-otp-modal .ng-otp-input-wrapper, app-otp-modal .otp-container').first();
+    const wrapper = page.locator('.ng-otp-input-wrapper, .otp-container, [role="dialog"] .ng-otp-input-wrapper').first();
     if (await wrapper.isVisible({ timeout: 2000 }).catch(() => false)) {
       await wrapper.click();
       await page.waitForTimeout(200);
@@ -653,37 +679,36 @@ async function startApplicationOnboarding(page, onLog) {
         await uploadDocumentByLabel(page, 'Supporting document for company category', udyamDoc.file_path, onLog);
       }
 
-      let operatingStates = [];
-      let hasProductionFacility = '';
-      let capitalInvested = '';
-      let yearOfCommencement = '';
-      let detailsOfProducts = '';
-      let representativePicture = '';
+      let mergedGeneralInfo = {};
+      let mergedAutoData = {};
       try {
         const regDetails = await db.get('SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1');
-        if (regDetails) {
-           detailsOfProducts = regDetails.details_of_products_produced_marketed || '';
-           representativePicture = regDetails.representative_picture_of_plastic_packaging || '';
-        }
         
         if (regDetails && regDetails.form_data_json) {
           const parsed = JSON.parse(regDetails.form_data_json);
-          if (parsed.generalInfo) {
-            if (Array.isArray(parsed.generalInfo.operatingStates)) {
-              operatingStates = parsed.generalInfo.operatingStates;
-            }
-            hasProductionFacility = parsed.generalInfo.hasProductionFacility || '';
-            capitalInvested = parsed.generalInfo.capitalInvested || '';
-            yearOfCommencement = parsed.generalInfo.yearOfCommencement || '';
+          
+          // The UI saves generalInfo and autoData merged into the root of the JSON object
+          // So 'parsed' contains all our fields directly.
+          mergedGeneralInfo = parsed || {};
+          mergedAutoData = parsed || {};
+          
+          if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
+             mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
           }
-          if (parsed.autoData) {
-            if (!detailsOfProducts && parsed.autoData.detailsOfProductsPath) detailsOfProducts = parsed.autoData.detailsOfProductsPath;
-            if (!representativePicture && parsed.autoData.representativePicturePath) representativePicture = parsed.autoData.representativePicturePath;
+          if (!mergedAutoData.representativePicturePath && regDetails.representative_picture_of_plastic_packaging) {
+             mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
           }
         }
       } catch (err) {
         if (onLog) onLog('Failed to fetch fields from DB: ' + err.message);
       }
+
+      const operatingStates = Array.isArray(mergedGeneralInfo.operatingStates) ? mergedGeneralInfo.operatingStates : [];
+      const hasProductionFacility = mergedGeneralInfo.hasProductionFacility || '';
+      const capitalInvested = mergedGeneralInfo.capitalInvested || '';
+      const yearOfCommencement = mergedGeneralInfo.yearOfCommencement || '';
+      const detailsOfProducts = mergedAutoData.detailsOfProductsPath || mergedGeneralInfo.partCAuditedStatement || ''; // Using fallback or actual path
+      const representativePicture = mergedAutoData.representativePicturePath || mergedGeneralInfo.partCCoveringLetter || ''; // Using fallback or actual path
 
       // Upload newly added files
       if (detailsOfProducts) {
@@ -741,15 +766,25 @@ async function startApplicationOnboarding(page, onLog) {
                if (onLog) onLog('WARNING: Search input not found inside dropdown. Proceeding without search...');
             }
 
-            // Find the deepest container (div or li) that has a checkbox AND contains the state text
-            const optionRow = page.locator('div, li, span').filter({ has: page.locator('input[type="checkbox"]') }).filter({ hasText: new RegExp(escapeRegex(state), 'i') }).last();
+            // Find any visible option in the dropdown that contains the state text
+            let optionRow = page.locator('.ng-option, .dropdown-item, li, mat-option').filter({ hasText: new RegExp(escapeRegex(state), 'i') }).first();
             
-            if (await optionRow.isVisible({ timeout: 2000 }).catch(() => false)) {
+            if ((await optionRow.count().catch(() => 0)) === 0) {
+               optionRow = page.getByText(new RegExp(escapeRegex(state), 'i')).filter({ visible: true }).last();
+            }
+            
+            if (await optionRow.isVisible({ timeout: 3000 }).catch(() => false)) {
               if (onLog) onLog(`Selecting operating state: ${state}`);
-              // Click the exact checkbox input inside that row
-              await optionRow.locator('input[type="checkbox"]').first().click({ force: true, timeout: 2000 }).catch(async () => {
-                await optionRow.click({ force: true, timeout: 2000 }).catch(() => {});
-              });
+              // Click the row directly
+              await optionRow.scrollIntoViewIfNeeded().catch(() => {});
+              
+              // If there IS a real checkbox inside, try clicking that first, otherwise click the row
+              const realCheckbox = optionRow.locator('input[type="checkbox"]').first();
+              if (await realCheckbox.isVisible({ timeout: 500 }).catch(() => false)) {
+                 await realCheckbox.click({ force: true }).catch(() => optionRow.click({ force: true }));
+              } else {
+                 await optionRow.click({ force: true });
+              }
               await page.waitForTimeout(500);
             } else {
               if (onLog) onLog(`ERROR: Could not find checkbox for operating state: ${state}. Saving screenshot to state_checkbox_error_${state}.png`);
@@ -765,22 +800,19 @@ async function startApplicationOnboarding(page, onLog) {
         }
       }
 
-      // Fill new fields if present
       if (hasProductionFacility) {
         if (onLog) onLog(`Setting Production Facility to ${hasProductionFacility}...`);
-        // Find select that contains an option with text 'Not Applicable'
-        const prodFacSelect = page.locator('select.select-field').filter({ has: page.locator('option', { hasText: /Not Applicable/i }) }).first();
+        const prodFacSelect = page.locator('label[title*="Does the Importer have a Production Facility"]').locator('..').locator('..').locator('select');
         if (await prodFacSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-          // Playwright will match the option text with label, or we can use value='no' if text is 'Not Applicable'
-          await prodFacSelect.selectOption({ label: hasProductionFacility }).catch(async () => {
-             // Hardcode value="no" for 'Not Applicable' based on HTML
-             if (hasProductionFacility.toLowerCase().includes('not applicable')) {
-                await prodFacSelect.selectOption({ value: 'no' }).catch(() => {});
-             } else {
-                // If it's yes/no, try exact value
-                await prodFacSelect.selectOption({ value: hasProductionFacility.toLowerCase() }).catch(() => {});
-             }
-          });
+           // For importers, CPCB portal only offers 'Not Applicable' instead of Yes/No. 
+           // If 'Yes', we can't select it, but we can try to select 'no' or 'yes' safely.
+           await prodFacSelect.selectOption({ label: hasProductionFacility }).catch(async () => {
+              if (hasProductionFacility.toLowerCase().includes('not applicable')) {
+                 await prodFacSelect.selectOption({ value: 'no' }).catch(() => {});
+              } else {
+                 await prodFacSelect.selectOption({ value: hasProductionFacility.toLowerCase() }).catch(() => {});
+              }
+           });
         }
       }
 
@@ -799,10 +831,18 @@ async function startApplicationOnboarding(page, onLog) {
            await yearSelect.selectOption({ value: yearOfCommencement }).catch(() => {});
         }
       }
-
+      
+      // Execute the massive Phase 2 automation for new fields
+      await fillRemainingPartA(page, mergedGeneralInfo, mergedAutoData, onLog);
+      await fillPartBSection4(page, mergedGeneralInfo.partBSection4 || mergedGeneralInfo.section4Data, onLog);
+      await fillPartBSection5(page, mergedGeneralInfo.partBTransactions, onLog);
+      await fillPartC(page, mergedGeneralInfo, onLog);
     } catch (err) {
       if (onLog) onLog('Failed to fetch/fill documents: ' + err.message);
     }
+      
+    if (onLog) onLog('Stopped before Submit & Pay.');
+    return { success: true, step: 'APPLICATION_ONBOARDING_COMPLETE' };
   }
 
   const finalUrl = page.url() || '';
@@ -829,6 +869,62 @@ export async function startLoginFlow(payload, onLog) {
     }
 
     const { page } = await ensureLoginPage(onLog);
+    
+    // Check if we are already logged in before navigating to login
+    try {
+      // If we are at about:blank or login, let's just go to DASHBOARD_URL first to test.
+      if (!page.url() || page.url() === 'about:blank' || page.url().includes('/login')) {
+         if (onLog) onLog('Checking active session by navigating to dashboard...');
+         await page.goto(DASHBOARD_URL, { waitUntil: 'domcontentloaded', timeout: 30000 }).catch(() => {});
+         
+         // Wait for either the URL to switch to login or the login form to appear, up to 4s.
+         // If it's authenticated, it should stay on dashboard and not show login elements.
+         try {
+           await Promise.race([
+             page.waitForURL(/\/login/i, { timeout: 4000 }),
+             page.waitForSelector('input[placeholder="Enter CEPR User ID"], app-input[formcontrolname="userId"] input', { timeout: 4000 })
+           ]);
+         } catch (e) {
+           // It didn't redirect or show login in 4s, it might be actually authenticated.
+         }
+      }
+      
+      const isLoginVisible = await page.locator('input[placeholder="Enter CEPR User ID"], app-input[formcontrolname="userId"] input').first().isVisible({ timeout: 1000 }).catch(() => false);
+      
+      if (!isLoginVisible && isAuthenticatedUrl(page.url())) {
+         if (onLog) onLog('Session is already authenticated. Skipping login flow and starting onboarding...');
+         
+         let onboardingResult = null;
+         try {
+           onboardingResult = await startApplicationOnboarding(page, onLog);
+         } catch (onboardErr) {
+           if (onLog) onLog('Application onboarding warning: ' + onboardErr.message);
+           return {
+             success: false,
+             step: 'APPLICATION_ONBOARDING_COMPLETE',
+             url: page.url(),
+             authenticated: true,
+             error: `Session active but application onboarding failed: ${onboardErr.message}`,
+           };
+         }
+         
+         if (onLog) {
+           onLog(`Application onboarding complete — ${onboardingResult.applicantType} / ${onboardingResult.subApplicantType}`);
+         }
+         
+         return {
+           success: true,
+           step: 'APPLICATION_ONBOARDING_COMPLETE',
+           url: onboardingResult?.url || page.url(),
+           authenticated: true,
+           applicantType: onboardingResult.applicantType,
+           subApplicantType: onboardingResult.subApplicantType,
+         };
+      }
+    } catch (checkErr) {
+       // Ignore errors in check and proceed to normal login
+    }
+
     await navigateToLoginPage(page, onLog);
     await fillLoginCredentials(page, ceprId, password, onLog);
 

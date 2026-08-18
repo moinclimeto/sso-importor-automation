@@ -375,7 +375,7 @@ export function registerOcrHandlers() {
   loadEnvFile();
   ipcMain.handle('ocr:select-files', async () => {
     const result = await dialog.showOpenDialog({
-      title: 'Select invoice documents',
+      title: 'Select documents',
       properties: ['openFile', 'multiSelections'],
       filters: [
         { name: 'Documents', extensions: ['pdf', 'png', 'jpg', 'jpeg', 'webp', 'zip'] },
