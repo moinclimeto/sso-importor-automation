@@ -399,7 +399,7 @@ export default function RegistrationForm() {
 
   const handleSubmit = async (e) => {
     e.preventDefault();
-    if (registrationComplete) return;
+    // if (registrationComplete) return;
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
@@ -1669,35 +1669,34 @@ export default function RegistrationForm() {
           <button
             type="button"
             onClick={() => navigate(-1)}
-            disabled={loading && !registrationComplete}
+            disabled={loading}
             className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
           >
-            {registrationComplete ? 'Back' : 'Cancel'}
+            Cancel
           </button>
-          {registrationComplete ? (
-            <button
-              type="button"
-              onClick={handleNewApplication}
-              disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
-            >
-              {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <FilePlus size={16} />
-              )}
-              New Application
-            </button>
-          ) : (
-            <button
-              type="submit"
-              disabled={loading || !docReady}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-              Start Registration
-            </button>
-          )}
+          
+          <button
+            type="submit"
+            disabled={loading || !docReady}
+            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+          >
+            {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
+            Start Registration
+          </button>
+
+          <button
+            type="button"
+            onClick={handleNewApplication}
+            disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+          >
+            {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <FilePlus size={16} />
+            )}
+            New Application
+          </button>
         </div>
       </form>
 

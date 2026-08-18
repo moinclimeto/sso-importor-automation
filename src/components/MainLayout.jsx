@@ -11,7 +11,6 @@ import { RefreshCw } from 'lucide-react';
 import { PageHeaderProvider, usePageHeader } from '../context/PageHeaderContext.jsx';
 
 const navLinks = [
-  /*
   {
     icon: LayoutDashboard,
     label: 'Overview',
@@ -19,7 +18,6 @@ const navLinks = [
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },
-  */
   /*
   {
     icon: Database,
@@ -35,11 +33,11 @@ const navLinks = [
   },
   */
   // { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  { to: '/registration-form', icon: FileScan, label: 'Registration' },
+  // { to: '/registration-form', icon: FileScan, label: 'Registration' },
 ];
 
 const pageHeaders = {
-  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
+  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board' },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
   '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-inventory': { title: 'EPR Inventory Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
@@ -309,7 +307,7 @@ function MainLayoutInner() {
             {showRegistrationBtn && (
               <button
                 type="button"
-                onClick={() => setShowRegistrationModal(true)}
+                onClick={() => navigate('/registration-form')}
                 className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-white hover:bg-green-50 text-green-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
               >
                 Registration

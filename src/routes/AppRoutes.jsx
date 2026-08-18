@@ -33,7 +33,7 @@ export default function AppRoutes() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<Navigate to="/doc-processor" replace />} />
+        <Route path="/" element={<Navigate to="/cpcb-dashboard" replace />} />
         <Route
           path="/"
           element={
