@@ -13,19 +13,29 @@ import {
   buildRegistrationDataFromDocuments,
   REQUIRED_REGISTRATION_DOCS,
 } from '../utils/registrationDataMapper.js';
+import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 
 const REGISTRATION_DOC_TYPES = new Set([
   'gst', 'person_pan', 'company_pan', 'cto', 'cin', 'udyam', 'iec',
+  'unit_gst', 'supporting_category_doc', 'operations_details',
+  'plastic_packaging_picture', 'covering_letter', 'signature', 'self_declaration'
 ]);
 
 const DOC_TYPE_LABELS = {
-  gst: 'GST Certificate',
+  gst: 'Company GST',
+  unit_gst: 'Unit GST',
   person_pan: 'Person PAN',
   company_pan: 'Company PAN',
   cto: 'CTO Certificate',
   cin: 'CIN Certificate',
   udyam: 'Udyam Certificate',
   iec: 'IEC Certificate',
+  supporting_category_doc: 'Supporting Category Doc',
+  operations_details: 'Operations Details (3a)',
+  plastic_packaging_picture: 'Plastic Packaging Pic (3b)',
+  covering_letter: 'Covering Letter',
+  signature: 'Signature',
+  self_declaration: 'Self Declaration (Any Other Info)',
   unknown: 'Unknown Document',
 };
 
@@ -50,13 +60,14 @@ function buildDocumentPayload(data, filePath) {
     date_of_commencement: data.date_of_commencement || '',
     industry_category: data.industry_category || '',
     allowed_capacity: data.allowed_capacity || '',
-    validity_date: data.validity_date || '',
+    validity_date: data.validity_date || data.valid_upto || '',
     billing_month: data.billing_month || '',
-    amount: data.amount || 0,
-    units_consumed: data.units_consumed || 0,
+    amount: Number(data.amount) || 0,
+    units_consumed: Number(data.units_consumed) || 0,
     due_date: data.due_date || '',
-    provider: data.provider || '',
+    provider: data.provider || data.vendor_name || '',
     file_path: filePath || '',
+    fileHash: data.fileHash || '',
     raw_json: JSON.stringify(data),
   };
 }
@@ -188,6 +199,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const [resolving, setResolving] = useState(false);
   const [progress, setProgress] = useState(null);
   const [removingId, setRemovingId] = useState(null);
+  const [showGuidelines, setShowGuidelines] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -500,12 +512,26 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const uploadedCount = REQUIRED_REGISTRATION_DOCS.filter((t) => uploadedTypes.has(t)).length;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+      <ReadinessGuidelinesModal 
+        isOpen={showGuidelines} 
+        onClose={() => setShowGuidelines(false)} 
+      />
+
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-md font-medium text-slate-800">Registration Documents</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-md font-medium text-slate-800">Registration Documents</h3>
+            <button 
+              onClick={() => setShowGuidelines(true)}
+              className="p-1 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              title="View Readiness Guidelines"
+            >
+              <AlertCircle size={16} />
+            </button>
+          </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            Upload GST, Person PAN, Company PAN &amp; CTO together — type is detected automatically
+            Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
@@ -550,17 +576,17 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             Browse files
           </button>
         </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            addBrowserFiles(e.target.files);
-            e.target.value = '';
-          }}
-        />
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addBrowserFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
       </div>
 
       {(processing || resolving) && (

@@ -4,11 +4,13 @@ import { initDatabase, getDb, dbJsonPath } from '../db/database.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
+import { compressPdf } from '../utils/pdfCompressor.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
+import sharp from 'sharp';
 import {
   prepareDummyProcurementBulk,
   runProcurementBulkFill,
@@ -246,16 +248,69 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('documents:add', async (_, data) => {
+    let finalPath = data.file_path || '';
+    if (finalPath && fs.existsSync(finalPath)) {
+      try {
+        const destDir = path.join(app.getPath('userData'), 'processed_registration_docs');
+        if (!fs.existsSync(destDir)) {
+          fs.mkdirSync(destDir, { recursive: true });
+        }
+        
+        const shortId = Math.random().toString(36).substring(2, 8);
+        const docType = data.doc_type || 'document';
+        const ext = path.extname(finalPath).toLowerCase();
+        const newFileName = `${docType}_${shortId}${ext}`;
+        const newPath = path.join(destDir, newFileName);
+
+        if (ext === '.pdf') {
+          console.log(`Compressing PDF: ${finalPath} -> ${newPath}`);
+          const success = await compressPdf(finalPath, newPath);
+          if (success && fs.existsSync(newPath)) {
+            finalPath = newPath;
+          } else {
+            fs.copyFileSync(finalPath, newPath);
+            finalPath = newPath;
+          }
+        } else if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
+          console.log(`Compressing Image: ${finalPath} -> ${newPath}`);
+          try {
+            await sharp(finalPath)
+              .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
+              .jpeg({ quality: 80 }) // Compress to JPEG with 80% quality
+              .toFile(newPath);
+            finalPath = newPath;
+          } catch (sharpErr) {
+            console.error('Sharp image compression failed:', sharpErr);
+            fs.copyFileSync(finalPath, newPath);
+            finalPath = newPath;
+          }
+        } else {
+          fs.copyFileSync(finalPath, newPath);
+          finalPath = newPath;
+        }
+      } catch (err) {
+        console.error('Failed to process registration document:', err);
+      }
+    }
+
     const db = getDb();
+    if (data.fileHash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    }
+
     const result = await db.run(
-      'INSERT INTO company_documents (doc_type, document_number, entity_name, issue_date, file_path, raw_json, constitution_of_business, address, date_of_liability, enterprise_type, social_category, date_of_incorporation, date_of_commencement, industry_category, allowed_capacity, validity_date, billing_month, amount, units_consumed, due_date, provider) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
-      data.doc_type || '', data.document_number || '', data.entity_name || '', data.issue_date || '', data.file_path || '', data.raw_json || '', data.constitution_of_business || '', data.address || '', data.date_of_liability || '', data.enterprise_type || '', data.social_category || '', data.date_of_incorporation || '', data.date_of_commencement || '', data.industry_category || '', data.allowed_capacity || '', data.validity_date || '', data.billing_month || '', data.amount || 0, data.units_consumed || 0, data.due_date || '', data.provider || ''
+      'INSERT INTO company_documents (doc_type, document_number, entity_name, issue_date, file_path, raw_json, constitution_of_business, address, date_of_liability, enterprise_type, social_category, date_of_incorporation, date_of_commencement, industry_category, allowed_capacity, validity_date, billing_month, amount, units_consumed, due_date, provider, file_hash) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      data.doc_type || '', data.document_number || '', data.entity_name || '', data.issue_date || '', finalPath, data.raw_json || '', data.constitution_of_business || '', data.address || '', data.date_of_liability || '', data.enterprise_type || '', data.social_category || '', data.date_of_incorporation || '', data.date_of_commencement || '', data.industry_category || '', data.allowed_capacity || '', data.validity_date || '', data.billing_month || '', data.amount || 0, data.units_consumed || 0, data.due_date || '', data.provider || '', data.fileHash || ''
     );
-    return { id: result.lastID, ...data };
+    return { id: result.lastID, ...data, file_path: finalPath };
   });
 
   ipcMain.handle('documents:delete', async (_, id) => {
     const db = getDb();
+    const doc = await db.get('SELECT file_hash FROM company_documents WHERE id = ?', id);
+    if (doc && doc.file_hash) {
+      await db.run('DELETE FROM file_hashes WHERE hash = ?', doc.file_hash);
+    }
     await db.run('DELETE FROM company_documents WHERE id = ?', id);
     return { success: true };
   });

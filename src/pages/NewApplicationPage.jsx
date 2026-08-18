@@ -2,7 +2,6 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
-import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import {
@@ -11,8 +10,6 @@ import {
 import {
   resolveRegistrationData,
   isRegistrationReadyWithFallback,
-  REGISTRATION_DUMMY_DATA,
-  REGISTRATION_LOGIN_DUMMY,
   resolveRegistrationLoginCredentials,
 } from '../utils/registrationDummyData.js';
 import {
@@ -49,31 +46,17 @@ const EMPTY_AUTO = {
 function AutoFilledPreview({ data, isDummy }) {
   const filled = AUTO_FILLED_FIELDS.filter((f) => String(data[f.key] || '').trim());
   if (!filled.length) {
-    return (
-      <div className="rounded-xl border border-dashed border-slate-200 bg-slate-50/50 px-4 py-6 text-center">
-        <Sparkles size={20} className="mx-auto text-slate-300 mb-2" />
-        <p className="text-sm text-slate-500">Upload documents above — or test dummy data will be used</p>
-      </div>
-    );
+    return null;
   }
 
   return (
     <div className={`rounded-xl border p-4 space-y-3 ${isDummy ? 'border-amber-200 bg-amber-50/40' : 'border-green-100 bg-green-50/30'}`}>
       <div className="flex items-center gap-2 flex-wrap">
-        {isDummy ? (
-          <FlaskConical size={16} className="text-amber-600" />
-        ) : (
-          <Sparkles size={16} className="text-green-600" />
-        )}
+        <Sparkles size={16} className="text-green-600" />
         <h3 className="text-sm font-semibold text-slate-800">
-          {isDummy ? 'Test dummy data (automation)' : 'Auto-filled from documents'}
+          Auto-filled from documents
         </h3>
-        {isDummy && (
-          <span className="text-[10px] font-semibold uppercase tracking-wide text-amber-800 bg-amber-100 px-2 py-0.5 rounded-full">
-            Dummy fallback
-          </span>
-        )}
-        <span className={`text-[10px] font-medium uppercase tracking-wide px-2 py-0.5 rounded-full ${isDummy ? 'text-amber-700 bg-amber-100' : 'text-green-700 bg-green-100'}`}>
+        <span className={`text-[10px] font-medium uppercase tracking-wide px-2 py-0.5 rounded-full text-green-700 bg-green-100`}>
           {filled.length} fields
         </span>
       </div>
@@ -90,13 +73,12 @@ function AutoFilledPreview({ data, isDummy }) {
   );
 }
 
-export default function RegistrationForm() {
+export default function NewApplicationPage() {
   const { setPageHeader } = usePageHeader();
   const navigate = useNavigate();
   const { toast, showToast, hideToast } = useToast();
 
-  const [autoData, setAutoData] = useState(REGISTRATION_DUMMY_DATA);
-  const [usingDummy, setUsingDummy] = useState(true);
+  const [autoData, setAutoData] = useState(EMPTY_AUTO);
   const [email, setEmail] = useState('');
   const [mobile, setMobile] = useState('');
   const [generalInfo, setGeneralInfo] = useState({ ...GENERAL_INFO_EMPTY });
@@ -162,7 +144,6 @@ export default function RegistrationForm() {
 
     setRegistrationComplete(true);
     setSavedCeprId(saved.cepr_id);
-    setUsingDummy(false);
 
     if (form.autoData) {
       setAutoData({ ...EMPTY_AUTO, ...form.autoData });
@@ -175,26 +156,7 @@ export default function RegistrationForm() {
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
       }));
-    } else {
-      const { data: dummyData } = resolveRegistrationData(REGISTRATION_DUMMY_DATA);
-      const fromDocs = buildGeneralInfoFromDocData(dummyData);
-      setGeneralInfo((prev) => ({
-        ...prev,
-        ...fromDocs,
-        typeOfBusiness: fromDocs.typeOfBusiness || dummyData.typeOfBusiness || prev.typeOfBusiness,
-        typeOfCompany: fromDocs.typeOfCompany || dummyData.typeOfCompany || prev.typeOfCompany,
-        registeredAddressLine1: fromDocs.registeredAddressLine1 || dummyData.registeredAddressLine1 || prev.registeredAddressLine1,
-        district: fromDocs.district || dummyData.district || prev.district,
-        cin: fromDocs.cin || dummyData.cin || prev.cin,
-        stateUt: fromDocs.stateUt || dummyData.stateUt || prev.stateUt,
-        authDesignation: dummyData.authDesignation || prev.authDesignation,
-        password: loginCreds.password,
-        confirmPassword: loginCreds.password,
-      }));
-      if (!form.autoData) {
-        setAutoData({ ...EMPTY_AUTO, ...dummyData });
-      }
-    }
+    } 
 
     setEmail(loginCreds.email);
     setMobile(loginCreds.mobile);
@@ -206,8 +168,6 @@ export default function RegistrationForm() {
       !saved.form_data_json;
 
     if (needsPersist && window.pwp?.registration?.save) {
-      const { data: dummyData } = resolveRegistrationData(REGISTRATION_DUMMY_DATA);
-      const fromDocs = buildGeneralInfoFromDocData(dummyData);
       await window.pwp.registration.save({
         applicant_type: saved.applicant_type || 'PIBO',
         sub_applicant_type: saved.sub_applicant_type || 'Importer',
@@ -221,20 +181,8 @@ export default function RegistrationForm() {
           JSON.stringify({
             email: loginCreds.email,
             mobile: loginCreds.mobile,
-            autoData: form.autoData || dummyData,
+            autoData: form.autoData,
             generalInfo: form.generalInfo || {
-              ...fromDocs,
-              typeOfBusiness: dummyData.typeOfBusiness,
-              typeOfCompany: dummyData.typeOfCompany,
-              registeredAddressLine1: dummyData.registeredAddressLine1,
-              district: dummyData.district,
-              stateUt: dummyData.stateUt,
-              operatingStates: dummyData.operatingStates,
-              hasProductionFacility: dummyData.hasProductionFacility,
-              capitalInvested: dummyData.capitalInvested,
-              yearOfCommencement: dummyData.yearOfCommencement,
-              cin: dummyData.cin,
-              authDesignation: dummyData.authDesignation,
               password: loginCreds.password,
               confirmPassword: loginCreds.password,
             },
@@ -286,9 +234,8 @@ export default function RegistrationForm() {
   }, []);
 
   const applyRegistrationData = useCallback(async (docData = {}) => {
-    const { data, isDummy } = resolveRegistrationData(docData);
+    const { data } = resolveRegistrationData(docData);
     setAutoData({ ...EMPTY_AUTO, ...data });
-    setUsingDummy(isDummy);
 
     const fromDocs = buildGeneralInfoFromDocData(data);
     setGeneralInfo((prev) => ({
@@ -312,7 +259,6 @@ export default function RegistrationForm() {
     const { ready, isDummy: readyDummy, missing } = isRegistrationReadyWithFallback(docs, docData);
     setDocReady(ready);
     setMissingDocs(missing);
-    setUsingDummy(isDummy || readyDummy);
   }, []);
 
   const [savedRegistration, setSavedRegistration] = useState(null);
@@ -326,13 +272,13 @@ export default function RegistrationForm() {
           if (res.success && res.data?.cepr_id) {
             setSavedRegistration(res.data);
             if (!res.data.formData) {
-              await applyRegistrationData(REGISTRATION_DUMMY_DATA);
+              await applyRegistrationData({});
             }
             await applySavedRegistration(res.data);
             return;
           }
         }
-        await applyRegistrationData(REGISTRATION_DUMMY_DATA);
+        await applyRegistrationData({});
       } finally {
         setLoadingSavedRegistration(false);
       }
@@ -358,11 +304,7 @@ export default function RegistrationForm() {
     return () => clearTimeout(timer);
   }, [email, mobile, generalInfo.password, generalInfo.confirmPassword, registrationComplete, loadingSavedRegistration]);
 
-  useEffect(() => {
-    if (usingDummy && generalInfo.typeOfBusiness && generalInfo.typeOfCompany) {
-      setSaved(true);
-    }
-  }, [generalInfo, usingDummy]);
+  // Dummy data and setSaved removed
 
   // Debounced auto-save for all form state
   useEffect(() => {
@@ -1034,22 +976,12 @@ export default function RegistrationForm() {
         </div>
       )}
 
-      {usingDummy && !registrationComplete && (
-        <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900 flex items-start gap-2">
-          <FlaskConical size={16} className="mt-0.5 flex-shrink-0 text-amber-600" />
-          <span>
-            <strong>Test mode:</strong> Using dummy registration data (GST {REGISTRATION_DUMMY_DATA.gstin}).
-            Upload documents anytime to replace with real extracted data.
-          </span>
-        </div>
-      )}
 
-      <div className="mb-6 pb-6 border-b border-slate-100">
-        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
-      </div>
+
+
 
       <div className="mb-6">
-        <AutoFilledPreview data={autoData} isDummy={usingDummy} />
+        <AutoFilledPreview data={autoData} isDummy={false} />
       </div>
 
       <form onSubmit={handleSubmit} className="space-y-8">
@@ -1061,7 +993,7 @@ export default function RegistrationForm() {
           </h3>
 
           <p className="text-xs text-slate-500 mb-4">
-            Company Details — blank fields from CPCB portal. Auto-filled where possible from documents.
+            Company Details — blank fields from CPCB portal. Fill manually if documents are not uploaded.
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -1659,7 +1591,7 @@ export default function RegistrationForm() {
           </div>
         </div>
 
-        {!docReady && missingDocs.length > 0 && !usingDummy && !registrationComplete && (
+        {!docReady && missingDocs.length > 0 && !registrationComplete && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             Missing documents: {missingDocs.map((d) => d.replace('_', ' ')).join(', ')}
           </div>
@@ -1675,14 +1607,7 @@ export default function RegistrationForm() {
             Cancel
           </button>
           
-          <button
-            type="submit"
-            disabled={loading || !docReady}
-            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-            Start Registration
-          </button>
+          
 
           <button
             type="button"

@@ -9,6 +9,7 @@ import { getApi } from '../utils/pwpApi.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import { RefreshCw } from 'lucide-react';
 import { PageHeaderProvider, usePageHeader } from '../context/PageHeaderContext.jsx';
+import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 
 const navLinks = [
   {
@@ -46,7 +47,8 @@ const pageHeaders = {
   '/epr-procurement': { title: 'EPR Procurement Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-conversion-factor': { title: 'Conversion Factor', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-new-application': { title: 'New Application Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
-  '/registration-form': { title: 'Registration', subtitle: 'SSO Importer Registration' },
+  '/cpcb-registration': { title: 'CPCB Registration', subtitle: 'Step 1: CPCB Portal Registration' },
+  '/new-application': { title: 'New Application', subtitle: 'Step 2: Submit EPR Application' },
   '/doc-processor': {
     title: 'Doc Processor',
     subtitle: 'Upload and track documents by category',
@@ -145,6 +147,8 @@ function MainLayoutInner() {
   const navigate = useNavigate();
   const location = useLocation();
   const { pageHeader } = usePageHeader();
+  const [showMobileMenu, setShowMobileMenu] = useState(false);
+  const [showCpcbGuidelines, setShowCpcbGuidelines] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [syncingEpr, setSyncingEpr] = useState(false);
   const [myCompany, setMyCompany] = useState(null);
@@ -161,7 +165,7 @@ function MainLayoutInner() {
         if (res.inserted) {
           showToast('Registration details saved successfully!', 'success');
         }
-        navigate('/registration-form');
+        navigate('/cpcb-registration');
       } else {
         showToast('Failed to save registration: ' + res.error, 'error');
       }
@@ -222,7 +226,7 @@ function MainLayoutInner() {
     navigate('/login');
   };
 
-  const showRegistrationBtn = !isDocSection && location.pathname !== '/registration-form';
+  const showRegistrationBtn = !isDocSection && location.pathname !== '/cpcb-registration' && location.pathname !== '/new-application';
 
   return (
     <div className="flex h-screen bg-[#f7f8fa] overflow-hidden">
@@ -305,13 +309,22 @@ function MainLayoutInner() {
             {pageHeader?.actions}
 
             {showRegistrationBtn && (
-              <button
-                type="button"
-                onClick={() => navigate('/registration-form')}
-                className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-white hover:bg-green-50 text-green-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
-              >
-                Registration
-              </button>
+              <>
+                <button
+                  type="button"
+                  onClick={() => setShowCpcbGuidelines(true)}
+                  className="inline-flex items-center gap-2 rounded-lg border border-green-200 bg-white hover:bg-green-50 text-green-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
+                >
+                  CPCB Registration
+                </button>
+                <button
+                  type="button"
+                  onClick={() => navigate('/new-application')}
+                  className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-blue-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
+                >
+                  New Application
+                </button>
+              </>
             )}
 
             {baseHeader.showUpload && (
@@ -350,9 +363,18 @@ function MainLayoutInner() {
           </div>
         </header>
 
-        <div className="flex-1 overflow-y-auto px-6 pb-6 pt-4 relative">
-          <Toast toast={toast} onClose={hideToast} />
-          <Outlet />
+        <div className="flex-1 overflow-auto bg-slate-50/50 p-6 relative">
+          <ReadinessGuidelinesModal 
+            isOpen={showCpcbGuidelines} 
+            onClose={() => {
+              setShowCpcbGuidelines(false);
+              navigate('/cpcb-registration');
+            }} 
+          />
+          <div className="max-w-7xl mx-auto space-y-6">
+            <Toast toast={toast} onClose={hideToast} />
+            <Outlet />
+          </div>
         </div>
 
         {showRegistrationModal && (

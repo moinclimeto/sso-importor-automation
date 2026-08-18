@@ -78,6 +78,7 @@ export function buildRegistrationDataFromDocuments(docs = []) {
   const cto = byType.cto;
   const cin = byType.cin;
   const udyam = byType.udyam;
+  const iecDoc = byType.iec;
 
   const gstin = firstNonEmpty(gst?.document_number, gstRaw.document_number).toUpperCase();
   const companyPan = firstNonEmpty(
@@ -116,10 +117,6 @@ export function buildRegistrationDataFromDocuments(docs = []) {
   const registeredAddress = firstNonEmpty(gst?.address, gstRaw.address, cto?.address);
   const cinNumber = firstNonEmpty(cin?.document_number).toUpperCase();
 
-  const isCompanyType =
-    /private\s*limited|public\s*limited|pvt|ltd/i.test(constitutionOfBusiness) ||
-    /private\s*limited|public\s*limited|pvt|ltd/i.test(legalName);
-
   return {
     gstin,
     companyPan,
@@ -133,12 +130,13 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     registeredAddress,
     registeredAddressLine2: '',
     district: extractDistrictFromAddress(registeredAddress),
-    cin: isCompanyType ? cinNumber : '',
+    cin: cinNumber,
     ctoNumber: firstNonEmpty(cto?.document_number),
     ctoValidity: normalizeDate(firstNonEmpty(cto?.validity_date)),
     dateOfCommencement: normalizeDate(
       firstNonEmpty(cto?.issue_date, udyam?.date_of_commencement, cto?.date_of_commencement)
     ),
+    iec: firstNonEmpty(iecDoc?.document_number).toUpperCase(),
     industryCategory: firstNonEmpty(cto?.industry_category),
     allowedCapacity: firstNonEmpty(cto?.allowed_capacity),
     enterpriseType: firstNonEmpty(udyam?.enterprise_type),
@@ -147,6 +145,7 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     panDocumentPath: firstNonEmpty(companyPanDoc?.file_path, personPanDoc?.file_path),
     gstDocumentPath: firstNonEmpty(gst?.file_path),
     cinDocumentPath: firstNonEmpty(cin?.file_path),
+    iecDocumentPath: firstNonEmpty(iecDoc?.file_path),
   };
 }
 
@@ -160,9 +159,20 @@ function extractDistrictFromAddress(address) {
   return '';
 }
 
-export const REQUIRED_REGISTRATION_DOCS = ['gst', 'person_pan', 'company_pan', 'cto'];
+export const REQUIRED_REGISTRATION_DOCS = [
+  'company_pan',
+  'unit_gst',
+  'gst',
+  'iec',
+  'supporting_category_doc',
+  'person_pan',
+  'operations_details',
+  'plastic_packaging_picture',
+  'covering_letter',
+  'signature'
+];
 
-export const OPTIONAL_REGISTRATION_DOCS = ['cin', 'udyam', 'iec'];
+export const OPTIONAL_REGISTRATION_DOCS = ['cin', 'self_declaration', 'udyam', 'cto'];
 
 export function getRegistrationReadiness(docs = []) {
   const types = new Set((docs || []).map((d) => d.doc_type));
@@ -171,9 +181,15 @@ export function getRegistrationReadiness(docs = []) {
 
   const missing = [];
   if (!types.has('gst')) missing.push('gst');
+  if (!types.has('unit_gst')) missing.push('unit_gst');
   if (!hasDerivedPan) missing.push('company_pan');
   if (!types.has('person_pan')) missing.push('person_pan');
-  if (!types.has('cto')) missing.push('cto');
+  if (!types.has('iec')) missing.push('iec');
+  if (!types.has('supporting_category_doc')) missing.push('supporting_category_doc');
+  if (!types.has('operations_details')) missing.push('operations_details');
+  if (!types.has('plastic_packaging_picture')) missing.push('plastic_packaging_picture');
+  if (!types.has('covering_letter')) missing.push('covering_letter');
+  if (!types.has('signature')) missing.push('signature');
 
   return {
     ready: missing.length === 0,

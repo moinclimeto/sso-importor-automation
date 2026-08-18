@@ -48,31 +48,29 @@ export async function filterPageJobs(jobs, log, { type = '' } = {}) {
       continue;
     }
 
-    if (type !== 'company_document') {
-      if (existingFileHashes.has(fileHash)) {
-        skipped.push({
-          ...job,
-          reason: 'already_extracted',
-          fileHash,
-        });
-        log.warn('Skip already extracted page (by hash)', {
-          invoiceFileName: job.invoiceFileName,
-          fileHash,
-        });
-        continue;
-      }
-      if (seenBatch.has(fileHash)) {
-        skipped.push({
-          ...job,
-          reason: 'duplicate_in_batch',
-          fileHash,
-        });
-        log.warn('Skip duplicate page in batch (by hash)', {
-          invoiceFileName: job.invoiceFileName,
-          fileHash,
-        });
-        continue;
-      }
+    if (existingFileHashes.has(fileHash)) {
+      skipped.push({
+        ...job,
+        reason: 'already_extracted',
+        fileHash,
+      });
+      log.warn('Skip already extracted page (by hash)', {
+        invoiceFileName: job.invoiceFileName,
+        fileHash,
+      });
+      continue;
+    }
+    if (seenBatch.has(fileHash)) {
+      skipped.push({
+        ...job,
+        reason: 'duplicate_in_batch',
+        fileHash,
+      });
+      log.warn('Skip duplicate page in batch (by hash)', {
+        invoiceFileName: job.invoiceFileName,
+        fileHash,
+      });
+      continue;
     }
     seenBatch.add(fileHash);
     accepted.push({ ...job, fileHash }); // Add fileHash to the job

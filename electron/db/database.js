@@ -14,7 +14,7 @@ export let dbJsonPath = '';
 
 // Path to the database file
 function getDbFilePath() {
-  return path.join(__dirname, '..', 'sso_importer.db');
+  return path.join(__dirname, '..', '..', 'sso_importer.db');
 }
 
 // Initialize main application database connection
