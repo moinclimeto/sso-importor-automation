@@ -143,4 +143,18 @@ contextBridge.exposeInMainWorld('pwp', {
     update: (data) => ipcRenderer.invoke('creditCalculations:update', data),
     delete: (id) => ipcRenderer.invoke('creditCalculations:delete', id),
   },
+  // Supplier Master
+  supplierMaster: {
+    getAll: (filters) => ipcRenderer.invoke('supplierMaster:getAll', filters),
+    add: (data) => ipcRenderer.invoke('supplierMaster:add', data),
+    update: (data) => ipcRenderer.invoke('supplierMaster:update', data),
+    delete: (id) => ipcRenderer.invoke('supplierMaster:delete', id),
+  },
+  // Packaging Master
+  packagingMaster: {
+    getAll: (filters) => ipcRenderer.invoke('packagingMaster:getAll', filters),
+    add: (data) => ipcRenderer.invoke('packagingMaster:add', data),
+    update: (data) => ipcRenderer.invoke('packagingMaster:update', data),
+    delete: (id) => ipcRenderer.invoke('packagingMaster:delete', id),
+  },
 });

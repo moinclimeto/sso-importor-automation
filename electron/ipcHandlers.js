@@ -430,11 +430,95 @@ export function registerIpcHandlers() {
     });
   });
 
+async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, supplierGst, supplierName) {
+  if (!companyId || !lineItems || !lineItems.length) return;
+  const now = new Date().toISOString();
+  for (const item of lineItems) {
+    if (!item.productDescription && !item.item_name) continue;
+    
+    // Normalize matching fields
+    const productDesc = item.productDescription || item.item_name || '';
+    const desc = String(productDesc).trim().toLowerCase();
+    const hsn = String(item.hsn || item.hsn_code || '').trim().replace(/\D/g, '');
+    const productMatchKey = `${desc}::${hsn}`;
+    
+    // Check if it exists
+    const existing = await db.get(
+      'SELECT id FROM packaging_master WHERE company_id = ? AND list_type = ? AND product_match_key = ?',
+      [companyId, listType, productMatchKey]
+    );
+    
+    if (!existing) {
+      await db.run(`
+        INSERT INTO packaging_master (
+          company_id, list_type, product_description, product_match_key, hsn, uom,
+          supplier_gst, supplier_name, plastic_category, plastic_material,
+          is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
+      `, [
+        companyId, listType, productDesc, productMatchKey, item.hsn || item.hsn_code || '', item.uom || item.unit || '',
+        supplierGst || '', supplierName || '', item.plasticCategory || '', item.plasticMaterial || '',
+        now, now
+      ]);
+    }
+  }
+}
+
+async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, address, mobile, entityType) {
+  if (!companyId || !gstNumber) return;
+  const now = new Date().toISOString();
+  
+  const existing = await db.get(
+    'SELECT id FROM supplier_master WHERE company_id = ? AND gst_number = ?',
+    [companyId, gstNumber]
+  );
+  
+  if (!existing) {
+    await db.run(`
+      INSERT INTO supplier_master (
+        company_id, gst_number, trade_name, address, mobile, entity_type,
+        is_active, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
+    `, [companyId, gstNumber, tradeName || '', address || '', mobile || '', entityType || '', now, now]);
+  }
+}
+
+
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+
+    await autoPopulatePackagingMaster(
+      db,
+      processedData.company_id,
+      'gpl',
+      processedData.lineItems,
+      processedData.supplier_gst_number || processedData.vendor_gstin,
+      processedData.supplier_name || processedData.vendor_name
+    );
+
+    await autoPopulateSupplierMaster(
+      db,
+      processedData.company_id,
+      processedData.supplier_gst_number || processedData.vendor_gstin,
+      processedData.supplier_name || processedData.vendor_name,
+      processedData.address_line_1,
+      processedData.supplier_mobile_number,
+      processedData.entity_type
+    );
+
+    await autoPopulateSupplierMaster(
+      db,
+      processedData.company_id,
+      processedData.supplier_gst_number || processedData.vendor_gstin,
+      processedData.supplier_name || processedData.vendor_name,
+      processedData.address_line_1,
+      processedData.supplier_mobile_number,
+      processedData.entity_type
+    );
+
     const stmt = await db.prepare(`
       INSERT INTO purchases (
         company_id, record_type, category_of_plastic, supplier_name, address_line_1,
@@ -657,6 +741,26 @@ export function registerIpcHandlers() {
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+
+    await autoPopulatePackagingMaster(
+      db,
+      processedData.company_id,
+      'gpl',
+      processedData.lineItems,
+      processedData.customer_gstin || processedData.buyer_gst,
+      processedData.customer_name || processedData.entity_name
+    );
+
+    await autoPopulateSupplierMaster(
+      db,
+      processedData.company_id,
+      processedData.customer_gstin || processedData.buyer_gst,
+      processedData.customer_name || processedData.entity_name,
+      processedData.address,
+      processedData.mobile_number,
+      processedData.entity_type
+    );
+
     const stmt = await db.prepare(`
       INSERT INTO sales (
         company_id, record_type, s_no, category_of_plastic, process_code,
@@ -2220,6 +2324,281 @@ export function registerIpcHandlers() {
     } catch (err) {
       console.error('Error opening document:', err);
       return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('supplierMaster:getAll', async (_, filters) => {
+    const db = getDb();
+    return await db.all('SELECT * FROM supplier_master ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('supplierMaster:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    try {
+      const result = await db.run(
+        `INSERT INTO supplier_master (company_id, gst_number, trade_name, address, mobile, entity_type, registration_type, source, is_active, created_at, updated_at)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [data.company_id, data.gst_number, data.trade_name, data.address, data.mobile, data.entity_type, data.registration_type, data.source || 'manual', 1, created_at, created_at]
+      );
+      return { success: true, id: result.lastID };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('supplierMaster:update', async (_, { id, ...data }) => {
+    const db = getDb();
+    const updated_at = new Date().toISOString();
+    try {
+      const oldRecord = await db.get('SELECT * FROM supplier_master WHERE id = ?', [id]);
+      const oldGstNumber = oldRecord ? oldRecord.gst_number : null;
+
+      await db.run(
+        `UPDATE supplier_master SET
+           company_id = COALESCE(?, company_id),
+           gst_number = COALESCE(?, gst_number),
+           trade_name = COALESCE(?, trade_name),
+           address = COALESCE(?, address),
+           mobile = COALESCE(?, mobile),
+           entity_type = COALESCE(?, entity_type),
+           registration_type = COALESCE(?, registration_type),
+           is_active = COALESCE(?, is_active),
+           updated_at = ?
+         WHERE id = ?`,
+        [data.company_id, data.gst_number, data.trade_name, data.address, data.mobile, data.entity_type, data.registration_type, data.is_active, updated_at, id]
+      );
+
+      const updatedRecord = await db.get('SELECT * FROM supplier_master WHERE id = ?', [id]);
+      if (updatedRecord && oldGstNumber) {
+        await cascadeSupplierMasterUpdates(db, updatedRecord.company_id, oldGstNumber, updatedRecord);
+      }
+
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+async function cascadeSupplierMasterUpdates(db, companyId, oldGstNumber, updatedRecord) {
+  if (!oldGstNumber) return; // Cannot cascade if we don't know the old GST
+
+  // Update purchases
+  await db.run(
+    `UPDATE purchases SET
+      supplier_name = ?,
+      vendor_name = ?,
+      address_line_1 = ?,
+      supplier_mobile_number = ?,
+      entity_type = ?,
+      registration_type = ?,
+      supplier_gst_number = ?,
+      vendor_gstin = ?
+    WHERE company_id = ? AND (supplier_gst_number = ? OR vendor_gstin = ?)`,
+    [
+      updatedRecord.trade_name, updatedRecord.trade_name, updatedRecord.address, updatedRecord.mobile, updatedRecord.entity_type, updatedRecord.registration_type, updatedRecord.gst_number, updatedRecord.gst_number,
+      companyId, oldGstNumber, oldGstNumber
+    ]
+  );
+
+  // Update sales
+  await db.run(
+    `UPDATE sales SET
+      customer_name = ?,
+      entity_name = ?,
+      address = ?,
+      mobile_number = ?,
+      entity_type = ?,
+      registration_type = ?,
+      customer_gstin = ?
+    WHERE company_id = ? AND customer_gstin = ?`,
+    [
+      updatedRecord.trade_name, updatedRecord.trade_name, updatedRecord.address, updatedRecord.mobile, updatedRecord.entity_type, updatedRecord.registration_type, updatedRecord.gst_number,
+      companyId, oldGstNumber
+    ]
+  );
+}
+
+async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
+  const matchKey = updatedRecord.product_match_key;
+  if (!matchKey) return;
+
+  const updateLineItems = (lineItemsJson) => {
+    if (!lineItemsJson) return lineItemsJson;
+    try {
+      const items = JSON.parse(lineItemsJson);
+      let changed = false;
+      for (const item of items) {
+        const productDesc = item.productDescription || item.item_name || '';
+        const desc = String(productDesc).trim().toLowerCase();
+        const hsn = String(item.hsn || item.hsn_code || '').trim().replace(/\D/g, '');
+        const itemKey = `${desc}::${hsn}`;
+        
+        if (itemKey === matchKey) {
+          item.plasticCategory = updatedRecord.plastic_category;
+          item.plasticMaterial = updatedRecord.plastic_material;
+          if (updatedRecord.hsn) {
+            item.hsn = updatedRecord.hsn;
+            item.hsn_code = updatedRecord.hsn;
+          }
+          if (updatedRecord.uom) {
+            item.uom = updatedRecord.uom;
+            item.unit = updatedRecord.uom;
+          }
+          changed = true;
+        }
+      }
+      return changed ? JSON.stringify(items) : lineItemsJson;
+    } catch (e) {
+      return lineItemsJson;
+    }
+  };
+
+  // Update Purchases
+  const purchases = await db.all('SELECT id, line_items FROM purchases WHERE company_id = ?', [companyId]);
+  for (const p of purchases) {
+    const updatedItems = updateLineItems(p.line_items);
+    if (updatedItems !== p.line_items) {
+      await db.run(`
+        UPDATE purchases SET 
+          line_items = ?,
+          category_of_plastic = COALESCE(?, category_of_plastic)
+        WHERE id = ?`, 
+        [updatedItems, updatedRecord.plastic_category, p.id]
+      );
+    }
+  }
+
+  // Update Sales
+  const sales = await db.all('SELECT id, line_items FROM sales WHERE company_id = ?', [companyId]);
+  for (const s of sales) {
+    const updatedItems = updateLineItems(s.line_items);
+    if (updatedItems !== s.line_items) {
+      await db.run(`
+        UPDATE sales SET 
+          line_items = ?,
+          category_of_plastic = COALESCE(?, category_of_plastic),
+          plastic_type = COALESCE(?, plastic_type),
+          conversion_factor = COALESCE(?, conversion_factor),
+          recycled_plastic_percent = COALESCE(?, recycled_plastic_percent)
+        WHERE id = ?`, 
+        [
+          updatedItems, 
+          updatedRecord.plastic_category, 
+          updatedRecord.plastic_material, 
+          updatedRecord.conversion_factor, 
+          updatedRecord.recycled_percent, 
+          s.id
+        ]
+      );
+    }
+  }
+}
+
+  ipcMain.handle('supplierMaster:delete', async (_, id) => {
+    const db = getDb();
+    try {
+      await db.run('DELETE FROM supplier_master WHERE id=?', [id]);
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:getAll', async (_, filters) => {
+    const db = getDb();
+    return await db.all('SELECT * FROM packaging_master ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('packagingMaster:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    try {
+      const result = await db.run(
+        `INSERT INTO packaging_master (
+          company_id, list_type, product_description, product_match_key, hsn, uom,
+          supplier_gst, supplier_name, plastic_category, plastic_material, other_plastic_material,
+          cat1, recycled_percent, conversion_factor_id, cf_base_source, conversion_factor,
+          cf_date_from, cf_date_to, total_quantity, value_in_mt, match_type, source, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
+          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
+          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
+          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type || 'exact',
+          data.source || 'manual', 1, created_at, created_at
+        ]
+      );
+      return { success: true, id: result.lastID };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:update', async (_, { id, ...data }) => {
+    const db = getDb();
+    const updated_at = new Date().toISOString();
+    try {
+      await db.run(
+        `UPDATE packaging_master SET
+          company_id = COALESCE(?, company_id),
+          list_type = COALESCE(?, list_type),
+          product_description = COALESCE(?, product_description),
+          product_match_key = COALESCE(?, product_match_key),
+          hsn = COALESCE(?, hsn),
+          uom = COALESCE(?, uom),
+          supplier_gst = COALESCE(?, supplier_gst),
+          supplier_name = COALESCE(?, supplier_name),
+          plastic_category = COALESCE(?, plastic_category),
+          plastic_material = COALESCE(?, plastic_material),
+          other_plastic_material = COALESCE(?, other_plastic_material),
+          cat1 = COALESCE(?, cat1),
+          recycled_percent = COALESCE(?, recycled_percent),
+          conversion_factor_id = COALESCE(?, conversion_factor_id),
+          cf_base_source = COALESCE(?, cf_base_source),
+          conversion_factor = COALESCE(?, conversion_factor),
+          cf_date_from = COALESCE(?, cf_date_from),
+          cf_date_to = COALESCE(?, cf_date_to),
+          total_quantity = COALESCE(?, total_quantity),
+          value_in_mt = COALESCE(?, value_in_mt),
+          match_type = COALESCE(?, match_type),
+          is_active = COALESCE(?, is_active),
+          updated_at = ?
+        WHERE id = ?`,
+        [
+          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
+          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
+          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
+          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type, data.is_active,
+          updated_at, id
+        ]
+      );
+
+      // Cascade to invoices
+      const updated = await db.get('SELECT * FROM packaging_master WHERE id = ?', [id]);
+      if (updated) {
+        await cascadePackagingMasterUpdates(db, updated.company_id, updated);
+      }
+
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:delete', async (_, id) => {
+    const db = getDb();
+    try {
+      await db.run('DELETE FROM packaging_master WHERE id=?', [id]);
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
     }
   });
 

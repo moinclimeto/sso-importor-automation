@@ -89,7 +89,7 @@ export async function expandFilesToPageJobs(filePaths = [], { type = '' } = {}) 
     totalPages += pageCount;
     files.push({ filePath, name, pageCount });
 
-    if (type === 'company_document') {
+    if (true) {
       jobs.push({
         filePath,
         sourceFileName: name,
@@ -100,19 +100,6 @@ export async function expandFilesToPageJobs(filePaths = [], { type = '' } = {}) 
         jobKey: name.toLowerCase(),
         isWholeFile: true,
       });
-    } else {
-      for (let page = 1; page <= pageCount; page += 1) {
-        const invoiceFileName = pageInvoiceFileName(name, page, pageCount);
-        jobs.push({
-          filePath,
-          sourceFileName: name,
-          pageNumber: page,
-          pageCount,
-          invoiceFileName,
-          displayName: pageDisplayName(name, page, pageCount),
-          jobKey: `${name.toLowerCase()}::p${page}`,
-        });
-      }
     }
     
     // Yield to event loop so UI does not hang while counting pages

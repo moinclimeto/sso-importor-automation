@@ -125,7 +125,7 @@ async function extractOneInvoice({
   try {
     const invoiceType = type === 'sale' ? 'sale' : type === 'company_document' ? 'company_document' : 'purchase';
 
-    if (isPdf && invoiceType === 'company_document') {
+    if (isPdf) {
       log.info('Passing whole PDF to Gemini', {
         sourceName,
         pageCount: resolvedPageCount,
@@ -133,17 +133,6 @@ async function extractOneInvoice({
       base64 = fs.readFileSync(filePath).toString('base64');
       mimeType = 'application/pdf';
       qrTargetPath = filePath;
-    } else if (isPdf) {
-      log.info('Rendering PDF page for extract', {
-        sourceName,
-        pageNo,
-        pageCount: resolvedPageCount,
-      });
-      const pngBuf = await renderPdfPageToPng(filePath, pageNo, 2.2);
-      base64 = pngBuf.toString('base64');
-      mimeType = 'image/png';
-      tempPng = writeTempPng(pngBuf, `p${pageNo}`);
-      qrTargetPath = tempPng;
     } else {
       if (mimeType === 'application/octet-stream') {
         return { success: false, message: 'Unsupported file type.', trackId: log.trackId };

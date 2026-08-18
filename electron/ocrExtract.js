@@ -153,8 +153,8 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
     return `OCR PURCHASE. JSON only minified.
 Counterparty=SELLER (supplier).Also extract buyer GST+name for company match.
 ${fy}
-{"inv":"","dt":"YYYY-MM-DD","cpy":"original","sellerName":"","sellerGst":"","buyerName":"","buyerGst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","ent":"","reg":"","fy":"","tot":0,"products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
-RULES:sellerName/sellerGst/a*/city/st/pin/mob=seller(supplier).buyerName/buyerGst=buyer.dt=issue date.tot=grand total.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).GSTIN 15ch O->0 I->1.cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
+{"inv":"","dt":"YYYY-MM-DD","cpy":"original","sellerName":"","sellerGst":"","buyerName":"","buyerGst":"","a1":"","a2":"","city":"","st":"","pin":"","mob":"","country":"","ent":"","reg":"","fy":"","tot":0,"category_of_plastic":"","plastic_type":"","recycled_plastic_percent":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+RULES:sellerName/sellerGst/a*/city/st/pin/mob/country=seller(supplier).buyerName/buyerGst=buyer.dt=issue date.tot=grand total.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).category_of_plastic=Category I/II/III/IV.plastic_type=PET/HDPE/etc.recycled_plastic_percent=number.GSTIN 15ch O->0 I->1.cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
   }
 
   return `OCR SALE. JSON only minified.
@@ -238,33 +238,41 @@ export function expandRawExtraction(raw = {}) {
     sellerName,
     buyerName,
 
-    addressLine1: nf(raw.a1 ?? raw.addressLine1 ?? raw.addr ?? raw.address ?? raw.partyAddress),
+    addressLine1: nf(raw.a1 ?? raw.addressLine1 ?? raw.addr ?? raw.address ?? raw.partyAddress) || null,
 
-    addressLine2: nf(raw.a2 ?? raw.addressLine2),
+    addressLine2: nf(raw.a2 ?? raw.addressLine2) || null,
 
-    city: nf(raw.city),
+    city: nf(raw.city) || null,
 
-    state: nf(raw.st ?? raw.state),
+    state: nf(raw.st ?? raw.state) || null,
 
-    district: nf(raw.dist ?? raw.district),
+    district: nf(raw.dist ?? raw.district) || null,
 
-    pinCode: nf(raw.pin ?? raw.pinCode ?? raw.pin_code),
+    pinCode: nf(raw.pin ?? raw.pinCode ?? raw.pin_code) || null,
 
-    mobile: nf(raw.mob ?? raw.mobile ?? raw.contactNumber),
-
-    accountNumber: nf(raw.ac ?? raw.accountNumber ?? raw.bankAccount),
-
-    ifscCode: nf(raw.ifsc ?? raw.ifscCode),
-
-    totalInvoiceAmount: num(raw.tot ?? raw.gstOtherCharges ?? raw.totalInvoiceAmount ?? raw.total_amount),
-
-    registrationType: nf(raw.reg ?? raw.registrationType),
+    mobile: nf(raw.mob ?? raw.mobile ?? raw.contactNumber) || null,
     
-    entityType: nf(raw.ent ?? raw.entityType ?? raw.entity_type),
-    
-    financialYear: nf(raw.fy ?? raw.financialYear ?? raw.financial_year),
+    country: nf(raw.country) || null,
 
-    processCode: nf(raw.pc ?? raw.processCode),
+    accountNumber: nf(raw.ac ?? raw.accountNumber ?? raw.bankAccount) || null,
+
+    ifscCode: nf(raw.ifsc ?? raw.ifscCode) || null,
+
+    totalInvoiceAmount: num(raw.tot ?? raw.gstOtherCharges ?? raw.totalInvoiceAmount ?? raw.total_amount) || null,
+
+    registrationType: nf(raw.reg ?? raw.registrationType) || null,
+    
+    entityType: nf(raw.ent ?? raw.entityType ?? raw.entity_type) || null,
+    
+    financialYear: nf(raw.fy ?? raw.financialYear ?? raw.financial_year) || null,
+
+    processCode: nf(raw.pc ?? raw.processCode) || null,
+    
+    category_of_plastic: nf(raw.category_of_plastic) || null,
+    
+    plastic_type: nf(raw.plastic_type) || null,
+    
+    recycled_plastic_percent: num(raw.recycled_plastic_percent) || null,
 
     copyType: nf(raw.cpy ?? raw.copyType ?? 'original').toLowerCase(),
 

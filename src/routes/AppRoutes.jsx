@@ -22,6 +22,8 @@ import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 import RegistrationForm from '../pages/RegistrationForm.jsx';
+import SupplierMasterPage from '../pages/SupplierMasterPage.jsx';
+import PackagingMasterPage from '../pages/PackagingMasterPage.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -61,6 +63,8 @@ export default function AppRoutes() {
           <Route path="production-entry" element={<ProductionEntryPage />} />
           <Route path="credit-calculations" element={<CreditCalculations />} />
           <Route path="registration-form" element={<RegistrationForm />} />
+          <Route path="supplier-master" element={<SupplierMasterPage />} />
+          <Route path="packaging-master" element={<PackagingMasterPage />} />
         </Route>
       </Routes>
     </BrowserRouter>

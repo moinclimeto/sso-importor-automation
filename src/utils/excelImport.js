@@ -16,82 +16,54 @@ export function normalizePlasticCategory(value) {
 
 /** Exact Excel column labels for Procurement (Purchases) */
 export const PURCHASE_EXCEL_HEADERS = [
-  'Categories of Plastic',
-  'Name of Supplier',
-  'Address Line 1',
-  'Address Line 2',
-  'State',
-  'City',
-  'PIN Code',
-  'Buyer GST',
-  'Supplier GST',
-  'HSN Code',
-  'Invoice No./GST E-Invoice Number',
-  'Invoice Date',
-  'Qty. of Waste Plastic (MT)',
-  'Qty. of Waste Plastic (Kg)',
-  'Date of Entry',
-  'Procurement date',
+  'Registration Type',
+  'Entity Type',
+  'GST Number',
+  'Name Of The Entity',
+  'Country',
+  'Address',
+  'Mobile Number',
+  'Plastic Material Type',
+  'Category Of Plastic',
+  'Financial Year',
+  'Date',
+  'Total Plastic Quantity (Ton)',
+  'Recycled Plastic %',
   'Invoice Filename',
 ];
 
 export const PURCHASE_TABLE_COLUMNS = [
-  { key: 'category_of_plastic', label: 'Categories of Plastic' },
-  { key: 'supplier_name', label: 'Name of Supplier' },
-  { key: 'address_line_1', label: 'Address Line 1' },
-  { key: 'address_line_2', label: 'Address Line 2' },
-  { key: 'state', label: 'State' },
-  { key: 'city', label: 'City' },
-  { key: 'pin_code', label: 'PIN Code' },
-  { key: 'buyer_gst', label: 'Buyer GST' },
-  { key: 'supplier_gst_number', label: 'Supplier GST' },
-  { key: 'hsn_code', label: 'HSN Code' },
-  { key: 'invoice_number', label: 'Invoice No./GST E-Invoice Number' },
-  { key: 'invoice_date', label: 'Invoice Date' },
-  { key: 'quantity_mt', label: 'Qty. of Waste Plastic (MT)' },
-  { key: 'quantity_kg', label: 'Qty. of Waste Plastic (Kg)' },
-  { key: 'date_of_entry', label: 'Date of Entry' },
-  { key: 'procurement_date', label: 'Procurement date' },
+  { key: 'registration_type', label: 'Registration Type' },
+  { key: 'entity_type', label: 'Entity Type' },
+  { key: 'supplier_gst', label: 'GST Number' },
+  { key: 'supplier_name', label: 'Name Of The Entity' },
+  { key: 'country', label: 'Country' },
+  { key: 'address_line_1', label: 'Address' },
+  { key: 'supplier_mobile_number', label: 'Mobile Number' },
+  { key: 'plastic_type', label: 'Plastic Material Type' },
+  { key: 'category_of_plastic', label: 'Category Of Plastic' },
+  { key: 'financial_year', label: 'Financial Year' },
+  { key: 'procurement_date', label: 'Date' },
+  { key: 'quantity_mt', label: 'Total Plastic Quantity (Ton)' },
+  { key: 'recycled_plastic_percent', label: 'Recycled Plastic %' },
   { key: 'invoice_filename', label: 'Invoice Filename' },
 ];
 
 const PURCHASE_HEADER_TO_KEY = {
-  categories_of_plastic: 'category_of_plastic',
+  registration_type: 'registration_type',
+  entity_type: 'entity_type',
+  gst_number: 'supplier_gst',
+  name_of_the_entity: 'supplier_name',
+  country: 'country',
+  address: 'address_line_1',
+  mobile_number: 'supplier_mobile_number',
+  plastic_material_type: 'plastic_type',
   category_of_plastic: 'category_of_plastic',
-  name_of_supplier: 'supplier_name',
-  supplier_name: 'supplier_name',
-  address_line_1: 'address_line_1',
-  address_line_2: 'address_line_2',
-  state: 'state',
-  city: 'city',
-  pin_code: 'pin_code',
-  pincode: 'pin_code',
-  buyer_gst: 'buyer_gst',
-  is_supplier_gst_available: 'is_supplier_gst_available',
-  is_supplier_gst_available_yesno: 'is_supplier_gst_available',
-  is_supplier_gst_available_yes_no: 'is_supplier_gst_available',
-  supplier_gst_number: 'supplier_gst_number',
-  supplier_gstin: 'supplier_gst_number',
-  supplier_gst: 'supplier_gst_number',
-  hsn_code: 'hsn_code',
-  hsn: 'hsn_code',
-  invoice_nogst_einvoice_number: 'invoice_number',
-  invoice_number: 'invoice_number',
-  invoice_no: 'invoice_number',
-  invoice_date: 'invoice_date',
-  irn_no: 'irn_no',
-  qty_of_waste_plastic_mt: 'quantity_mt',
-  quantity_mt: 'quantity_mt',
-  qty_of_waste_plastic_kg: 'quantity_kg',
-  quantity_kg: 'quantity_kg',
-  // legacy / collided header before unit was preserved
-  qty_of_waste_plastic: 'quantity_mt',
-  date_of_entry: 'date_of_entry',
-  date_of_entry_yyyymmdd: 'date_of_entry',
-  procurement_date: 'procurement_date',
-  procurement_date_yyyymmdd: 'procurement_date',
+  financial_year: 'financial_year',
+  date: 'procurement_date',
+  total_plastic_quantity_ton: 'quantity_mt',
+  recycled_plastic_percent: 'recycled_plastic_percent',
   invoice_filename: 'invoice_filename',
-  invoice_file_name: 'invoice_filename',
 };
 
 /** Exact Excel column labels for Post Consumer (Sales) */
@@ -158,22 +130,19 @@ const SALE_HEADER_TO_KEY = {
 };
 
 const PURCHASE_SAMPLE = {
-  'Categories of Plastic': 'Cat-I',
-  'Name of Supplier': 'Green Plastics India',
-  'Address Line 1': 'Plot 12, MIDC',
-  'Address Line 2': 'Near Truck Terminal',
-  'State': 'Haryana',
-  'City': 'Gurugram',
-  'PIN Code': '122001',
-  'Buyer GST': '06AABCC1234D1Z5',
-  'Supplier GST': '06AABCG1111H1Z8',
-  'HSN Code': '3915',
-  'Invoice No./GST E-Invoice Number': 'PO-2025-001',
-  'Invoice Date': '2025-07-28',
-  'Qty. of Waste Plastic (MT)': 12,
-  'Qty. of Waste Plastic (Kg)': 12000,
-  'Date of Entry': '2025-07-30',
-  'Procurement date': '2025-07-28',
+  'Registration Type': 'Producer',
+  'Entity Type': 'Brand',
+  'GST Number': '06AABCG1111H1Z8',
+  'Name Of The Entity': 'Green Plastics India',
+  'Country': 'India',
+  'Address': 'Plot 12, MIDC, Gurugram, Haryana',
+  'Mobile Number': '9876543210',
+  'Plastic Material Type': 'HDPE',
+  'Category Of Plastic': 'Cat-I',
+  'Financial Year': '2024-25',
+  'Date': '2025-07-28',
+  'Total Plastic Quantity (Ton)': 12,
+  'Recycled Plastic %': 50,
   'Invoice Filename': 'invoice_PO_2025_001.pdf',
 };
 
@@ -322,28 +291,20 @@ function mapPurchaseRow(mapped, rowNum, errors) {
   }
 
   const supplier_name = str(flat.supplier_name);
-  const invoice_number = str(flat.invoice_number);
   const procurement_date = excelDateToIso(flat.procurement_date);
   const invoice_filename = str(flat.invoice_filename);
   let quantity_mt = num(flat.quantity_mt);
-  let quantity_kg = num(flat.quantity_kg);
-  if (!quantity_kg && quantity_mt) quantity_kg = Number((quantity_mt * 1000).toFixed(3));
-  if (!quantity_mt && quantity_kg) quantity_mt = Number((quantity_kg / 1000).toFixed(6));
 
-  if (!supplier_name && !invoice_number && !invoice_filename && !quantity_mt) {
+  if (!supplier_name && !invoice_filename && !quantity_mt) {
     return null;
   }
 
   if (!supplier_name) {
-    errors.push(`Row ${rowNum}: Name of Supplier is required`);
-    return null;
-  }
-  if (!invoice_number) {
-    errors.push(`Row ${rowNum}: Invoice Number is required`);
+    errors.push(`Row ${rowNum}: Name Of The Entity is required`);
     return null;
   }
   if (!procurement_date) {
-    errors.push(`Row ${rowNum}: Procurement Date is required (YYYY-MM-DD)`);
+    errors.push(`Row ${rowNum}: Date is required (YYYY-MM-DD)`);
     return null;
   }
   if (!invoice_filename) {
@@ -351,8 +312,6 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     return null;
   }
 
-  let is_gst = str(flat.is_supplier_gst_available).toLowerCase();
-  if (is_gst === 'y' || is_gst === 'true' || is_gst === '1') is_gst = 'Yes';
   if (is_gst === 'n' || is_gst === 'false' || is_gst === '0') is_gst = 'No';
   if (is_gst !== 'Yes' && is_gst !== 'No') {
     is_gst = str(flat.supplier_gst_number) ? 'Yes' : 'No';
