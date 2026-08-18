@@ -9,7 +9,7 @@ import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
   refreshCaptcha,
-} from './captchaPortal.js';
+} from '../ocr_captcha/captchaPortal.js';
 import {
   fillRemainingPartA,
   fillPartBSection4,
