@@ -1,9 +1,9 @@
 import { app, ipcMain, dialog } from 'electron';
-import { registerOcrHandlers } from './ocrHandlers.js';
-import { initDatabase, getDb, dbJsonPath } from './database.js';
-import { warmupQrScanner } from './qrScan.js';
+import { registerOcrHandlers } from '../ocr_captcha/ocrHandlers.js';
+import { initDatabase, getDb, dbJsonPath } from '../db/database.js';
+import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
-import { migrateFromJsonToSqlite } from './dataMigration.js';
+import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -15,12 +15,12 @@ import {
   CPCB_ONBOARDING_URL,
   createZipStore,
   MINIMAL_PDF,
-} from './cpcbProcurementBulk.js';
+} from '../automation/cpcbProcurementBulk.js';
 import * as XLSX from 'xlsx';
 import { PDFDocument } from 'pdf-lib';
 import {
   runSalesBulkFill,
-} from './cpcbSalesBulk.js';
+} from '../automation/cpcbSalesBulk.js';
 import {
   startRegistrationFlow,
   submitEmailOtp,
@@ -30,29 +30,29 @@ import {
   submitRegistrationCaptcha,
   refreshRegistrationCaptcha,
   closeRegistrationSession
-} from './cpcbRegistration.js';
+} from '../automation/cpcbRegistration.js';
 import {
   startLoginFlow,
   submitLoginCaptcha,
   refreshLoginCaptcha,
   submitLoginOtp,
   resendLoginOtp,
-} from './cpcbLogin.js';
+} from '../automation/cpcbLogin.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 
-const { extractEprDashboard } = require("../src/extractors/epr/dashboard.extractor.cjs");
-const { extractEprProfile } = require("../src/extractors/epr/profile.extractor.cjs");
-const { extractEprApplication } = require("../src/extractors/epr/application.extractor.cjs");
-const { extractEprMaterial } = require("../src/extractors/epr/material.extractor.cjs");
-const { extractEprProduction } = require("../src/extractors/epr/production.extractor.cjs");
-const { extractEprSales } = require("../src/extractors/epr/sales.extractor.cjs");
-const { extractEprWallet } = require("../src/extractors/epr/wallet.extractor.cjs");
-const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.extractor.cjs");
-const { extractEprPaymentHistory } = require("../src/extractors/epr/payment.extractor.cjs");
-const { extractEprNewApplication } = require("../src/extractors/epr/new_application.extractor.cjs");
+const { extractEprDashboard } = require("../../src/extractors/epr/dashboard.extractor.cjs");
+const { extractEprProfile } = require("../../src/extractors/epr/profile.extractor.cjs");
+const { extractEprApplication } = require("../../src/extractors/epr/application.extractor.cjs");
+const { extractEprMaterial } = require("../../src/extractors/epr/material.extractor.cjs");
+const { extractEprProduction } = require("../../src/extractors/epr/production.extractor.cjs");
+const { extractEprSales } = require("../../src/extractors/epr/sales.extractor.cjs");
+const { extractEprWallet } = require("../../src/extractors/epr/wallet.extractor.cjs");
+const { extractEprAnnualFiling } = require("../../src/extractors/epr/annual_filing.extractor.cjs");
+const { extractEprPaymentHistory } = require("../../src/extractors/epr/payment.extractor.cjs");
+const { extractEprNewApplication } = require("../../src/extractors/epr/new_application.extractor.cjs");
 
 export function registerIpcHandlers() {
   initDatabase(async (dbInstance) => {
@@ -1482,7 +1482,7 @@ export function registerIpcHandlers() {
       const outDir = path.join(os.tmpdir(), `pwp-cpcb-${type}-bulk-${Date.now()}`);
       fs.mkdirSync(outDir, { recursive: true });
 
-      const { createZipStore, MINIMAL_PDF } = require('./cpcbProcurementBulk.js');
+      const { createZipStore, MINIMAL_PDF } = require('../automation/cpcbProcurementBulk.js');
       
       const BATCH_LIMIT = 22 * 1024 * 1024; // 22 MB limit buffer
       const batches = [];
@@ -1518,7 +1518,7 @@ export function registerIpcHandlers() {
         if (localPdfPath && fs.existsSync(localPdfPath)) {
           try {
             const tempCompressedPath = path.join(outDir, `compressed_${uniquePdfName}`);
-            const { compressPdf } = require('./pdfCompressor.js');
+            const { compressPdf } = require('../utils/pdfCompressor.js');
             const compressed = await compressPdf(localPdfPath, tempCompressedPath);
             
             if (compressed && fs.existsSync(tempCompressedPath)) {

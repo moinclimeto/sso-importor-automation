@@ -2,9 +2,9 @@ import { chromium } from 'playwright';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from './registrationDummyData.js';
-import { saveRegistrationDetails } from './registrationDb.js';
-import { compressPdf } from './pdfCompressor.js';
+import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from '../db/registrationDummyData.js';
+import { saveRegistrationDetails } from '../db/registrationDb.js';
+import { compressPdf } from '../utils/pdfCompressor.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,

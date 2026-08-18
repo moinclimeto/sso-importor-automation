@@ -3,10 +3,10 @@
  */
 import path from 'path';
 import pLimit from 'p-limit'; // From dev
-import { createLogger, createTrackId } from './logger.js';
-import { getDb } from './database.js';
-import { expandFilesToPageJobs } from './pdfPages.js';
-import { getFileSha256 } from './hashUtils.js'; // From HEAD
+import { createLogger, createTrackId } from '../utils/logger.js';
+import { getDb } from '../db/database.js';
+import { expandFilesToPageJobs } from '../utils/pdfPages.js';
+import { getFileSha256 } from '../utils/hashUtils.js'; // From HEAD
 
 function normName(name) {
   return String(name || '')

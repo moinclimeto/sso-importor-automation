@@ -2,9 +2,9 @@ import os from 'os';
 import path from 'path';
 import { chromium } from 'playwright';
 import { getRegSession, uploadDocumentByLabel } from './cpcbRegistration.js';
-import { resolveRegistrationLoginCredentials } from './registrationDummyData.js';
-import { getRegistrationDetails } from './registrationDb.js';
-import { getDb } from './database.js';
+import { resolveRegistrationLoginCredentials } from '../db/registrationDummyData.js';
+import { getRegistrationDetails } from '../db/registrationDb.js';
+import { getDb } from '../db/database.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,

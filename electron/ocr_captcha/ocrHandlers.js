@@ -4,8 +4,8 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { scanQrFromDocument } from './qrScan.js';
-import { getFileSha256 } from './hashUtils.js';
-import { getDb, saveDb } from './database.js';
+import { getFileSha256 } from '../utils/hashUtils.js';
+import { getDb, saveDb } from '../db/database.js';
 import {
   buildExtractionPrompt,
   mapPurchaseFromOcr,
@@ -13,7 +13,7 @@ import {
   applyQrPriority,
   fileBaseName,
 } from './ocrExtract.js';
-import { createLogger, createTrackId } from './logger.js';
+import { createLogger, createTrackId } from '../utils/logger.js';
 import { runExtractQueue } from './extractQueue.js';
 import {
   getPdfPageCount,
@@ -22,8 +22,8 @@ import {
   writeTempPng,
   safeUnlink,
   pageInvoiceFileName,
-} from './pdfPages.js';
-import { resolveUploadPaths } from './zipExpand.js';
+} from '../utils/pdfPages.js';
+import { resolveUploadPaths } from '../utils/zipExpand.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);

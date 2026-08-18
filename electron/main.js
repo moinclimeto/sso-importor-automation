@@ -1,8 +1,8 @@
 import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { initDatabase } from './database.js';
-import { registerIpcHandlers } from './ipcHandlers.js';
+import { initDatabase } from './db/database.js';
+import { registerIpcHandlers } from './ipc/ipcHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
