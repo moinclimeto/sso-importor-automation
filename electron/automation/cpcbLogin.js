@@ -11,10 +11,7 @@ import {
   refreshCaptcha,
 } from '../ocr_captcha/captchaPortal.js';
 import {
-  fillRemainingPartA,
-  fillPartBSection4,
-  fillPartBSection5,
-  fillPartC
+  fillNewApplicationFlow,
 } from './fillRegistrationForms.js';
 
 const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
@@ -439,6 +436,33 @@ function isAuthenticatedUrl(url = '') {
   return /\/(onboarding|dashboard|home)\b/i.test(url);
 }
 
+async function waitForCpcbLoaderGone(page, timeoutMs = 30000) {
+  const loader = page.locator('app-loader, .loader-wrapper, .loader-overlay').first();
+  try {
+    await loader.waitFor({ state: 'hidden', timeout: timeoutMs });
+  } catch {
+    /* loader may never appear */
+  }
+  await page.waitForTimeout(400);
+}
+
+async function clickWhenReady(locator, page, { timeout = 20000, onLog, label } = {}) {
+  await waitForCpcbLoaderGone(page);
+  await locator.waitFor({ state: 'visible', timeout });
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await locator.click({ timeout: 8000 });
+  } catch (err) {
+    if (/intercepts pointer events|Timeout/i.test(err.message || '')) {
+      if (onLog) onLog(`${label || 'Button'} blocked by loader — retrying...`);
+      await waitForCpcbLoaderGone(page, 20000);
+      await locator.click({ force: true, timeout: 8000 });
+    } else {
+      throw err;
+    }
+  }
+}
+
 async function waitForDashboard(page, onLog) {
   if (onLog) onLog('Waiting for CPCB dashboard/home...');
 
@@ -556,7 +580,14 @@ async function startApplicationOnboarding(page, onLog) {
   }
 
   await waitForDashboard(page, onLog);
-  await clickPlasticWasteRegister(page, onLog);
+  await waitForCpcbLoaderGone(page);
+
+  const alreadyOnOnboarding = /\/onboarding/i.test(page.url() || '');
+  const newAppOnDashboard = page.getByRole('button', { name: /New Application/i }).first();
+  if (alreadyOnOnboarding && await newAppOnDashboard.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (onLog) onLog('Already on onboarding dashboard — skipping Register / Applicant Type.');
+  } else {
+    await clickPlasticWasteRegister(page, onLog);
 
   const modal = getApplicantTypeModal(page);
   await modal.waitFor({ state: 'visible', timeout: 15000 });
@@ -588,23 +619,30 @@ async function startApplicationOnboarding(page, onLog) {
     await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
   }
   await clickOnboardingButton(modal, page, onLog);
+  }
 
-  // POST-ONBOARDING FLOW: 'All Applications' -> 'New Application' -> 'x'
-  if (onLog) onLog('Waiting for post-onboarding dashboard...');
-  await page.waitForTimeout(3000);
+  if (onLog) onLog('Waiting for onboarding dashboard (loader to finish)...');
+  await waitForCpcbLoaderGone(page, 40000);
+  await page.waitForTimeout(1000);
 
+  const newAppBtn = page.getByRole('button', { name: /New Application/i }).first();
   const allAppsBtn = page.locator('button.applicant-btn').filter({ hasText: /All Applications/i }).first();
-  await allAppsBtn.waitFor({ state: 'visible', timeout: 15000 }).catch(() => {});
 
-  if (await allAppsBtn.isVisible().catch(() => false)) {
-    if (onLog) onLog('Found "All Applications" button. Clicking it...');
-    await allAppsBtn.click({ timeout: 10000 });
+  if (await newAppBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+    if (onLog) onLog('Clicking New Application...');
+    await clickWhenReady(newAppBtn, page, { onLog, label: 'New Application' });
     await page.waitForTimeout(1500);
+  } else if (await allAppsBtn.isVisible({ timeout: 8000 }).catch(() => false)) {
+    if (onLog) onLog('Clicking All Applications...');
+    await clickWhenReady(allAppsBtn, page, { onLog, label: 'All Applications' });
+    await page.waitForTimeout(1500);
+    await waitForCpcbLoaderGone(page);
+    const nestedNewApp = page.getByRole('button', { name: /New Application/i }).first();
+    await clickWhenReady(nestedNewApp, page, { onLog, label: 'New Application' });
+    await page.waitForTimeout(1500);
+  }
 
-    const newAppBtn = page.locator('button.action-btn.btn-design').filter({ hasText: /New Application/i }).first();
-    await newAppBtn.waitFor({ state: 'visible', timeout: 10000 });
-    await newAppBtn.click({ timeout: 10000 });
-    await page.waitForTimeout(1500);
+  await waitForCpcbLoaderGone(page);
 
     const closeBtn = page.locator('button.close-btn').first();
     if (await closeBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
@@ -707,8 +745,14 @@ async function startApplicationOnboarding(page, onLog) {
       const hasProductionFacility = mergedGeneralInfo.hasProductionFacility || '';
       const capitalInvested = mergedGeneralInfo.capitalInvested || '';
       const yearOfCommencement = mergedGeneralInfo.yearOfCommencement || '';
-      const detailsOfProducts = mergedAutoData.detailsOfProductsPath || mergedGeneralInfo.partCAuditedStatement || ''; // Using fallback or actual path
-      const representativePicture = mergedAutoData.representativePicturePath || mergedGeneralInfo.partCCoveringLetter || ''; // Using fallback or actual path
+      const detailsOfProducts = mergedAutoData.detailsOfProductsPath
+        || mergedAutoData.detailsOfProductsPath
+        || mergedAutoData.autoData?.detailsOfProductsPath
+        || '';
+      const representativePicture = mergedAutoData.representativePicturePath
+        || mergedAutoData.representativePicturePath
+        || mergedAutoData.autoData?.representativePicturePath
+        || '';
 
       // Upload newly added files
       if (detailsOfProducts) {
@@ -721,7 +765,12 @@ async function startApplicationOnboarding(page, onLog) {
         await uploadDocumentByLabel(page, 'Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories', representativePicture, onLog);
       }
 
-      if (operatingStates.length > 0) {
+      if (mergedAutoData.typeOfCompanyDoc) {
+        if (onLog) onLog('Uploading company-category supporting document...');
+        await uploadDocumentByLabel(page, 'Supporting document for company category', mergedAutoData.typeOfCompanyDoc, onLog);
+      }
+
+      if (false && operatingStates.length > 0) {
         if (onLog) onLog('Attempting to select Operating States...');
         let foundDropdown = false;
         
@@ -827,50 +876,35 @@ async function startApplicationOnboarding(page, onLog) {
         }
       }
 
-      if (yearOfCommencement) {
-        if (onLog) onLog(`Setting Year of Commencement to ${yearOfCommencement}...`);
-        const yearSelect = page.locator('select.select-field').filter({ has: page.locator('option[value="2020"]') }).first();
-        if (await yearSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-           await yearSelect.selectOption({ value: yearOfCommencement }).catch(() => {});
-        }
+      if (onLog) onLog('Setting Year of Commencement to 2026...');
+      const yearSelect = page.getByText(/2\s*d\).*Year of Commencement/i).first()
+        .locator('xpath=following::select[1]');
+      if (await yearSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await yearSelect.selectOption({ value: '2026' }).catch(() => yearSelect.selectOption({ label: '2026' })).catch(() => {});
       }
       
-      // Execute the massive Phase 2 automation for new fields
-      await fillRemainingPartA(page, mergedGeneralInfo, mergedAutoData, onLog);
-      
-      if (onLog) onLog('Clicking Save & Next for Part A...');
-      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
-      await page.waitForTimeout(2000);
-
-      await fillPartBSection4(page, mergedGeneralInfo.partBSection4 || mergedGeneralInfo.section4Data, onLog);
-      
-      if (onLog) onLog('Clicking Save & Next for Part B Section 4...');
-      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
-      await page.waitForTimeout(2000);
-
-      await fillPartBSection5(page, mergedGeneralInfo.partBTransactions, onLog);
-      
-      if (onLog) onLog('Clicking Save & Next for Part B...');
-      await page.getByRole('button', { name: /Save & Next/i }).first().click().catch(() => {});
-      await page.waitForTimeout(2000);
-
-      await fillPartC(page, mergedGeneralInfo, onLog);
+      if (onLog) onLog('Filling New Application Part A / B / C...');
+      await fillNewApplicationFlow(page, { ...mergedGeneralInfo, ...mergedAutoData }, onLog);
     } catch (err) {
-      if (onLog) onLog('Failed to fetch/fill documents: ' + err.message);
+      if (onLog) onLog('Form fill stopped: ' + err.message);
+      return {
+        success: false,
+        step: 'APPLICATION_FILL_FAILED',
+        applicantType,
+        subApplicantType,
+        url: page.url() || '',
+        error: err.message,
+      };
     }
-      
-    if (onLog) onLog('Stopped before Submit & Pay.');
-    return { success: true, step: 'APPLICATION_ONBOARDING_COMPLETE' };
-  }
 
-  const finalUrl = page.url() || '';
-  if (onLog) onLog(`Onboarding submitted — browser at ${finalUrl}`);
-
-  return {
-    applicantType,
-    subApplicantType,
-    url: finalUrl,
-  };
+    if (onLog) onLog('Application form flow finished (Part A → B → C).');
+    return {
+      success: true,
+      step: 'APPLICATION_ONBOARDING_COMPLETE',
+      applicantType,
+      subApplicantType,
+      url: page.url() || '',
+    };
 }
 
 export async function startLoginFlow(payload, onLog) {
@@ -1067,6 +1101,7 @@ export async function submitLoginOtp(otp, onLog) {
     }
 
     await clickContinueAfterLoginVerify(page, onLog);
+    await waitForCpcbLoaderGone(page, 40000);
 
     let onboardingResult = null;
     try {

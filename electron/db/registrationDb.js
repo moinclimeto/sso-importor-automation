@@ -1,4 +1,7 @@
-import { getDb } from './database.js';
+import { getDb, getDbFilePath } from './database.js';
+import { createLogger } from '../utils/logger.js';
+
+const log = createLogger('registration', 'registration.log');
 
 const OPTIONAL_COLUMNS = [
   'sub_applicant_type',
@@ -16,8 +19,105 @@ const OPTIONAL_COLUMNS = [
   'representative_picture_of_plastic_packaging',
   'plastic_consumed_json',
   'compliance_status',
-  'thickness_of_plastic'
+  'thickness_of_plastic',
 ];
+
+function emptyToNull(value) {
+  if (value === undefined || value === null) return null;
+  const text = String(value).trim();
+  return text === '' ? null : text;
+}
+
+function buildFormDataJson(data = {}) {
+  if (data.form_data_json) {
+    try {
+      const parsed = JSON.parse(data.form_data_json);
+      if (parsed && typeof parsed === 'object') {
+        if (!parsed.generalInfo || !parsed.autoData) {
+          return JSON.stringify({
+            email: parsed.email || data.email || '',
+            mobile: parsed.mobile || data.mobile || '',
+            generalInfo: parsed.generalInfo || parsed,
+            autoData: parsed.autoData || parsed,
+          });
+        }
+        return data.form_data_json;
+      }
+    } catch {
+      /* keep going */
+    }
+  }
+  if (data.formData && typeof data.formData === 'object') {
+    return JSON.stringify(data.formData);
+  }
+  return JSON.stringify({
+    email: data.email || '',
+    mobile: data.mobile || '',
+    generalInfo: data.generalInfo || {},
+    autoData: data.autoData || {},
+  });
+}
+
+function extractColumnsFromForm(formDataJson, data = {}) {
+  let hasProductionFacility = emptyToNull(data.has_production_facility);
+  let capitalInvested = emptyToNull(data.capital_invested);
+  let yearOfCommencement = emptyToNull(data.year_of_commencement);
+  let detailsOfProducts = emptyToNull(data.details_of_products_produced_marketed);
+  let representativePicture = emptyToNull(data.representative_picture_of_plastic_packaging);
+  let plasticConsumedJson = emptyToNull(data.plastic_consumed_json);
+  let complianceStatus = emptyToNull(data.compliance_status);
+  let thicknessOfPlastic = emptyToNull(data.thickness_of_plastic);
+
+  if (!formDataJson) {
+    return {
+      hasProductionFacility,
+      capitalInvested,
+      yearOfCommencement,
+      detailsOfProducts,
+      representativePicture,
+      plasticConsumedJson,
+      complianceStatus,
+      thicknessOfPlastic,
+    };
+  }
+
+  try {
+    const parsed = JSON.parse(formDataJson);
+    const general = parsed.generalInfo || parsed;
+    const auto = parsed.autoData || parsed;
+    if (general.hasProductionFacility !== undefined) hasProductionFacility = emptyToNull(general.hasProductionFacility);
+    if (general.capitalInvested !== undefined) capitalInvested = emptyToNull(general.capitalInvested);
+    if (general.yearOfCommencement !== undefined || general.yearOfCommencement !== undefined) {
+      yearOfCommencement = emptyToNull(general.yearOfCommencement || general.yearOfCommencement);
+    }
+    if (general.plasticConsumed !== undefined) plasticConsumedJson = JSON.stringify(general.plasticConsumed);
+    if (general.complianceStatus !== undefined || general.complianceStatus !== undefined) {
+      complianceStatus = emptyToNull(general.complianceStatus || general.complianceStatus);
+    }
+    if (general.thicknessOfPlastic !== undefined || general.thicknessOfPlastic !== undefined) {
+      thicknessOfPlastic = emptyToNull(general.thicknessOfPlastic || general.thicknessOfPlastic);
+    }
+    if (auto.detailsOfProductsPath || auto.detailsOfProductsPath) {
+      detailsOfProducts = emptyToNull(auto.detailsOfProductsPath || auto.detailsOfProductsPath);
+    }
+    if (auto.representativePicturePath || auto.representativePicturePath) {
+      representativePicture = emptyToNull(auto.representativePicturePath || auto.representativePicturePath);
+    }
+  } catch (err) {
+    log.warn('form_data_json parse failed', { error: err.message });
+  }
+
+  return {
+    hasProductionFacility,
+    capitalInvested,
+    yearOfCommencement,
+    detailsOfProducts,
+    representativePicture,
+    plasticConsumedJson,
+    complianceStatus,
+    thicknessOfPlastic,
+  };
+}
 
 async function ensureRegistrationColumns(db) {
   for (const col of OPTIONAL_COLUMNS) {
@@ -29,45 +129,48 @@ async function ensureRegistrationColumns(db) {
   }
 }
 
+function normalizeRegistrationRow(row) {
+  if (!row) return null;
+  const ceprId = emptyToNull(row.cepr_id || row.epr_id || row.ceprId);
+  return { ...row, cepr_id: ceprId };
+}
+
+async function findRegistrationRow(db) {
+  const withCepr = await db.get(
+    `SELECT * FROM registration_details
+     WHERE cepr_id IS NOT NULL AND TRIM(cepr_id) != ''
+     ORDER BY _internal_id DESC
+     LIMIT 1`
+  ).catch(() => null);
+  if (withCepr) return normalizeRegistrationRow(withCepr);
+
+  const anyRow = await db.get(
+    'SELECT * FROM registration_details ORDER BY _internal_id DESC LIMIT 1'
+  ).catch(() => null);
+  return normalizeRegistrationRow(anyRow);
+}
+
 export async function saveRegistrationDetails(data = {}) {
+  const dbPath = getDbFilePath();
+  log.info('saveRegistrationDetails start', {
+    dbPath,
+    ceprId: data.cepr_id || null,
+    email: data.email || null,
+    hasFormJson: Boolean(data.form_data_json || data.formData),
+  });
+
   const db = getDb();
   await ensureRegistrationColumns(db);
 
-  const formDataJson =
-    data.form_data_json ??
-    (data.formData ? JSON.stringify(data.formData) : null);
+  const formDataJson = buildFormDataJson(data);
+  const cols = extractColumnsFromForm(formDataJson, data);
+  const ceprId = emptyToNull(data.cepr_id);
+  const email = emptyToNull(data.email);
+  const mobile = emptyToNull(data.mobile);
+  const password = emptyToNull(data.password);
+  const confirmPassword = emptyToNull(data.confirm_password);
 
-  // Extract the specific fields from formDataJson if present to populate the physical columns
-  let hasProductionFacility = data.has_production_facility ?? null;
-  let capitalInvested = data.capital_invested ?? null;
-  let yearOfCommencement = data.year_of_commencement ?? null;
-  let detailsOfProducts = data.details_of_products_produced_marketed ?? null;
-  let representativePicture = data.representative_picture_of_plastic_packaging ?? null;
-  let plasticConsumedJson = data.plastic_consumed_json ?? null;
-  let complianceStatus = data.compliance_status ?? null;
-  let thicknessOfPlastic = data.thickness_of_plastic ?? null;
-  
-  if (formDataJson) {
-    try {
-      const parsed = JSON.parse(formDataJson);
-      if (parsed.generalInfo) {
-        if (parsed.generalInfo.hasProductionFacility !== undefined) hasProductionFacility = parsed.generalInfo.hasProductionFacility;
-        if (parsed.generalInfo.capitalInvested !== undefined) capitalInvested = parsed.generalInfo.capitalInvested;
-        if (parsed.generalInfo.yearOfCommencement !== undefined) yearOfCommencement = parsed.generalInfo.yearOfCommencement;
-        if (parsed.generalInfo.plasticConsumed !== undefined) plasticConsumedJson = JSON.stringify(parsed.generalInfo.plasticConsumed);
-        if (parsed.generalInfo.complianceStatus !== undefined) complianceStatus = parsed.generalInfo.complianceStatus;
-        if (parsed.generalInfo.thicknessOfPlastic !== undefined) thicknessOfPlastic = parsed.generalInfo.thicknessOfPlastic;
-      }
-      if (parsed.autoData) {
-        if (parsed.autoData.detailsOfProductsPath !== undefined) detailsOfProducts = parsed.autoData.detailsOfProductsPath;
-        if (parsed.autoData.representativePicturePath !== undefined) representativePicture = parsed.autoData.representativePicturePath;
-      }
-    } catch (e) {
-      // ignore parse error
-    }
-  }
-
-  const existing = await db.get('SELECT _internal_id FROM registration_details LIMIT 1');
+  const existing = await findRegistrationRow(db);
 
   if (existing) {
     await db.run(
@@ -81,72 +184,85 @@ export async function saveRegistrationDetails(data = {}) {
         password = COALESCE(?, password),
         confirm_password = COALESCE(?, confirm_password),
         form_data_json = COALESCE(?, form_data_json),
-        has_production_facility = ?,
-        capital_invested = ?,
-        year_of_commencement = ?,
-        details_of_products_produced_marketed = ?,
-        representative_picture_of_plastic_packaging = ?,
-        plastic_consumed_json = ?,
-        compliance_status = ?,
-        thickness_of_plastic = ?
+        has_production_facility = COALESCE(?, has_production_facility),
+        capital_invested = COALESCE(?, capital_invested),
+        year_of_commencement = COALESCE(?, year_of_commencement),
+        details_of_products_produced_marketed = COALESCE(?, details_of_products_produced_marketed),
+        representative_picture_of_plastic_packaging = COALESCE(?, representative_picture_of_plastic_packaging),
+        plastic_consumed_json = COALESCE(?, plastic_consumed_json),
+        compliance_status = COALESCE(?, compliance_status),
+        thickness_of_plastic = COALESCE(?, thickness_of_plastic)
       WHERE _internal_id = ?`,
-      data.applicant_type ?? null,
-      data.sub_applicant_type ?? null,
-      data.cepr_id ?? null,
-      data.success_screenshot_path ?? null,
-      data.email ?? null,
-      data.mobile ?? null,
-      data.password ?? null,
-      data.confirm_password ?? null,
+      emptyToNull(data.applicant_type),
+      emptyToNull(data.sub_applicant_type),
+      ceprId,
+      emptyToNull(data.success_screenshot_path),
+      email,
+      mobile,
+      password,
+      confirmPassword,
       formDataJson,
-      hasProductionFacility,
-      capitalInvested,
-      yearOfCommencement,
-      detailsOfProducts,
-      representativePicture,
-      plasticConsumedJson,
-      complianceStatus,
-      thicknessOfPlastic,
+      cols.hasProductionFacility,
+      cols.capitalInvested,
+      cols.yearOfCommencement,
+      cols.detailsOfProducts,
+      cols.representativePicture,
+      cols.plasticConsumedJson,
+      cols.complianceStatus,
+      cols.thicknessOfPlastic,
       existing._internal_id
     );
-    return { success: true, id: existing._internal_id, inserted: false };
+
+    const verify = await db.get(
+      'SELECT _internal_id, cepr_id, email, mobile, length(form_data_json) as form_len FROM registration_details WHERE _internal_id = ?',
+      existing._internal_id
+    );
+    log.success('registration row updated', { dbPath, ...verify });
+    return { success: true, id: existing._internal_id, inserted: false, data: verify };
   }
 
   const result = await db.run(
     `INSERT INTO registration_details
       (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging, plastic_consumed_json, compliance_status, thickness_of_plastic)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    data.applicant_type ?? null,
-    data.sub_applicant_type ?? null,
-    data.cepr_id ?? null,
-    data.success_screenshot_path ?? null,
-    data.email ?? null,
-    data.mobile ?? null,
-    data.password ?? null,
-    data.confirm_password ?? null,
+    emptyToNull(data.applicant_type) || 'PIBO',
+    emptyToNull(data.sub_applicant_type) || 'Importer',
+    ceprId,
+    emptyToNull(data.success_screenshot_path),
+    email,
+    mobile,
+    password,
+    confirmPassword,
     formDataJson,
-    hasProductionFacility,
-    capitalInvested,
-    yearOfCommencement,
-    detailsOfProducts,
-    representativePicture,
-    plasticConsumedJson,
-    complianceStatus,
-    thicknessOfPlastic
+    cols.hasProductionFacility,
+    cols.capitalInvested,
+    cols.yearOfCommencement,
+    cols.detailsOfProducts,
+    cols.representativePicture,
+    cols.plasticConsumedJson,
+    cols.complianceStatus,
+    cols.thicknessOfPlastic
   );
 
-  return { success: true, id: result.lastID, inserted: true };
+  const verify = await db.get(
+    'SELECT _internal_id, cepr_id, email, mobile, length(form_data_json) as form_len FROM registration_details WHERE _internal_id = ?',
+    result.lastID
+  );
+  log.success('registration row inserted', { dbPath, ...verify });
+  return { success: true, id: result.lastID, inserted: true, data: verify };
 }
 
 export async function getRegistrationDetails() {
+  const dbPath = getDbFilePath();
+  log.info('getRegistrationDetails start', { dbPath });
+
   const db = getDb();
   await ensureRegistrationColumns(db);
 
-  const row = await db.get(
-    'SELECT * FROM registration_details ORDER BY _internal_id DESC LIMIT 1'
-  );
+  const row = await findRegistrationRow(db);
 
   if (!row) {
+    log.warn('no registration row found', { dbPath });
     return { success: true, data: null };
   }
 
@@ -154,10 +270,27 @@ export async function getRegistrationDetails() {
   if (row.form_data_json) {
     try {
       formData = JSON.parse(row.form_data_json);
-    } catch {
+      if (formData && !formData.generalInfo) {
+        formData = {
+          email: formData.email || row.email,
+          mobile: formData.mobile || row.mobile,
+          generalInfo: formData,
+          autoData: formData,
+        };
+      }
+    } catch (err) {
+      log.warn('stored form_data_json is invalid JSON', { error: err.message });
       formData = null;
     }
   }
+
+  log.success('registration row loaded', {
+    dbPath,
+    id: row._internal_id,
+    ceprId: row.cepr_id || null,
+    email: row.email || null,
+    hasFormData: Boolean(formData),
+  });
 
   return {
     success: true,

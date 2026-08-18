@@ -136,27 +136,29 @@ export default function NewApplicationPage() {
     if (!saved?.cepr_id) return;
 
     const form = saved.formData || {};
+    const general = form.generalInfo && typeof form.generalInfo === 'object' ? form.generalInfo : form;
+    const auto = form.autoData && typeof form.autoData === 'object' ? form.autoData : null;
     const loginCreds = resolveRegistrationLoginCredentials({
-      email: saved.email || form.email,
-      mobile: saved.mobile || form.mobile,
-      password: saved.password || form.generalInfo?.password,
+      email: saved.email || form.email || general.email,
+      mobile: saved.mobile || form.mobile || general.mobile,
+      password: saved.password || general.password,
     });
 
     setRegistrationComplete(true);
     setSavedCeprId(saved.cepr_id);
 
-    if (form.autoData) {
-      setAutoData({ ...EMPTY_AUTO, ...form.autoData });
+    if (auto) {
+      setAutoData({ ...EMPTY_AUTO, ...auto });
     }
 
-    if (form.generalInfo) {
+    if (general && (general.typeOfBusiness || general.typeOfCompany || general.registeredAddressLine1)) {
       setGeneralInfo((prev) => ({
         ...prev,
-        ...form.generalInfo,
+        ...general,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
       }));
-    } 
+    }
 
     setEmail(loginCreds.email);
     setMobile(loginCreds.mobile);
@@ -181,8 +183,8 @@ export default function NewApplicationPage() {
           JSON.stringify({
             email: loginCreds.email,
             mobile: loginCreds.mobile,
-            autoData: form.autoData,
-            generalInfo: form.generalInfo || {
+            autoData: form.autoData || auto,
+            generalInfo: form.generalInfo || general || {
               password: loginCreds.password,
               confirmPassword: loginCreds.password,
             },
@@ -226,10 +228,7 @@ export default function NewApplicationPage() {
 
   useEffect(() => {
     if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog((msg) => {
-        setLoadingMsg(msg);
-        setAutomationLogs((prev) => [...prev, { type: 'info', message: msg }]);
-      });
+      return window.pwp.scraper.onLog(() => {});
     }
   }, []);
 
@@ -269,15 +268,26 @@ export default function NewApplicationPage() {
       try {
         if (window.pwp?.registration?.get) {
           const res = await window.pwp.registration.get();
-          if (res.success && res.data?.cepr_id) {
-            setSavedRegistration(res.data);
-            if (!res.data.formData) {
+          console.log('[registration:get]', res);
+          const row = res?.data;
+          const ceprId = row?.cepr_id || row?.epr_id || row?.ceprId;
+          if (res?.success && row && ceprId) {
+            const saved = { ...row, cepr_id: ceprId };
+            setSavedRegistration(saved);
+            if (!saved.formData) {
               await applyRegistrationData({});
             }
-            await applySavedRegistration(res.data);
+            await applySavedRegistration(saved);
             return;
           }
+          if (res && res.success === false) {
+            showToast('Could not load registration from SQLite: ' + (res.error || 'unknown error'), 'error');
+          }
         }
+        await applyRegistrationData({});
+      } catch (err) {
+        console.error('[registration:get] failed', err);
+        showToast('Could not load saved registration: ' + err.message, 'error');
         await applyRegistrationData({});
       } finally {
         setLoadingSavedRegistration(false);
@@ -304,31 +314,31 @@ export default function NewApplicationPage() {
     return () => clearTimeout(timer);
   }, [email, mobile, generalInfo.password, generalInfo.confirmPassword, registrationComplete, loadingSavedRegistration]);
 
-  // Dummy data and setSaved removed
-
   // Debounced auto-save for all form state
   useEffect(() => {
     const timer = setTimeout(() => {
-      if (window.pwp?.registration?.save && email && mobile && !registrationComplete) {
-        const updatedFormData = {
-          ...(savedRegistration?.formData || {}),
-          email,
-          mobile,
-          autoData,
-          generalInfo
-        };
-        window.pwp.registration.save({
-          ...(savedRegistration || {}),
+      if (window.pwp?.registration?.save && email && mobile) {
+        const payload = {
           applicant_type: savedRegistration?.applicant_type || 'PIBO',
           sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
           email,
           mobile,
-          form_data_json: JSON.stringify(updatedFormData)
+          form_data_json: JSON.stringify({
+            email,
+            mobile,
+            generalInfo,
+            autoData,
+          }),
+        };
+        const ceprId = savedCeprId || savedRegistration?.cepr_id;
+        if (ceprId) payload.cepr_id = ceprId;
+        window.pwp.registration.save(payload).then((res) => {
+          if (!res?.success) console.error('[registration:save] failed', res);
         }).catch(err => console.error('Auto-save failed:', err));
       }
     }, 1500);
     return () => clearTimeout(timer);
-  }, [generalInfo, autoData, email, mobile, savedRegistration, registrationComplete]);
+  }, [generalInfo, autoData, email, mobile, savedRegistration, savedCeprId]);
 
   const handleGeneralChange = (e) => {
     const { name, value } = e.target;
@@ -500,7 +510,9 @@ export default function NewApplicationPage() {
         setIsResendActive(false);
         showToast(`Email verified! Mobile OTP sent to ${mobile}.`, 'success');
       } else {
-        showToast('Email OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        const errText = res.error || 'Unknown error';
+        showToast(errText, 'error', { duration: 10000 });
+        setAutomationLogs((prev) => [...prev, { type: 'error', message: errText }]);
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -608,7 +620,9 @@ export default function NewApplicationPage() {
           );
         }
       } else {
-        showToast('Mobile OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        const errText = res.error || 'Unknown error';
+        showToast(errText, 'error', { duration: 10000 });
+        setAutomationLogs((prev) => [...prev, { type: 'error', message: errText }]);
       }
     } catch (err) {
       showToast('Error: ' + err.message, 'error');
@@ -679,64 +693,61 @@ export default function NewApplicationPage() {
       return;
     }
 
-    // Strict Validation for Automation
-    const requiredGeneral = [
-      { key: 'typeOfBusiness', label: 'Type of Business' },
-      { key: 'typeOfCompany', label: 'Type of Company' },
-      { key: 'registeredAddressLine1', label: 'Registered Address' },
-      { key: 'yearOfCommencement', label: 'Year of Commencement' },
-      { key: 'stateUt', label: 'State/UT' },
-      { key: 'complianceStatus', label: 'Compliance Status (3d)' },
-      { key: 'thicknessOfPlastic', label: 'Thickness of Plastic (3e)' },
-      { key: 'partCCoveringLetter', label: 'Part C: Covering Letter' },
-      { key: 'partCSignature', label: 'Part C: Signature' },
-      { key: 'partCAuditedStatement', label: 'Part C: Audited Statement' },
-    ];
+    const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
+    const operatingStates = (generalInfo.operatingStates || []).length
+      ? generalInfo.operatingStates
+      : (generalInfo.stateUt ? [generalInfo.stateUt] : ['MADHYA PRADESH']);
 
-    const missing = [];
-    for (const req of requiredGeneral) {
-      if (!generalInfo[req.key]) missing.push(req.label);
-    }
-    
-    if (!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) {
-      missing.push('Operating States (minimum 1 required)');
-    } else if (generalInfo.operatingStates.length === 2) {
-      missing.push('Operating States (Cannot select exactly 2 states. Select 1, or 3+ states)');
-    }
-    
-    if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
-      missing.push('Type of Company Document (MSME/Declaration)');
-    }
+    const applicationDefaults = {
+      ...generalInfo,
+      yearOfCommencement: '2026',
+      complianceStatus: generalInfo.complianceStatus || generalInfo.complianceStatus || 'Yes',
+      thicknessOfPlastic: generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '50',
+      hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
+      capitalInvested: generalInfo.capitalInvested || generalInfo.capitalInvested || '0',
+      operatingStates,
+      plasticConsumed: {
+        '2024-25': { ...zeroCats },
+        '2025-26': { ...zeroCats },
+      },
+    };
 
-    if (!generalInfo.isSameAsRegisteredAddress) {
-      if (!generalInfo.plantAddress) missing.push('Plant/Unit Address');
-      if (!generalInfo.unitGst) missing.push('Unit GST');
-      if (!autoData.unitGstDoc) missing.push('Unit GST Document');
-    }
+    setGeneralInfo(applicationDefaults);
+    showToast('Starting New Application — Part A/B quantities will be filled as 0.', 'success');
 
-    if (missing.length > 0) {
-      showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
-      return;
-    }
-
-    // Save all form data to database so the backend automation can read the latest fields
+    const saveLogs = [];
     if (window.pwp?.registration?.save) {
       try {
-        await window.pwp.registration.save({
+        const savePayload = {
           email,
           mobile,
-          applicant_type: generalInfo.applicantType || 'PIBO',
-          sub_applicant_type: generalInfo.subApplicantType || 'Importer',
-          cepr_id: savedCeprId || '',
-          form_data_json: JSON.stringify({ ...generalInfo, ...autoData })
-        });
+          applicant_type: applicationDefaults.applicantType || 'PIBO',
+          sub_applicant_type: applicationDefaults.subApplicantType || 'Importer',
+          form_data_json: JSON.stringify({
+            email,
+            mobile,
+            generalInfo: applicationDefaults,
+            autoData,
+          }),
+        };
+        if (savedCeprId) savePayload.cepr_id = savedCeprId;
+        const saveRes = await window.pwp.registration.save(savePayload);
+        console.log('[registration:save]', saveRes);
+        if (saveRes?.success) {
+          saveLogs.push({ type: 'success', message: `SQLite save OK — id=${saveRes.id}, CEPR=${savedCeprId}` });
+        } else {
+          saveLogs.push({ type: 'error', message: `SQLite save failed: ${saveRes?.error || 'unknown error'}` });
+          showToast('SQLite save failed: ' + (saveRes?.error || 'unknown error'), 'error');
+        }
       } catch (err) {
         console.error('Failed to save data before automation', err);
+        saveLogs.push({ type: 'error', message: 'SQLite save error: ' + err.message });
       }
+    } else {
+      saveLogs.push({ type: 'error', message: 'registration.save API is not available in preload' });
     }
 
-    setAutomationLogs([]);
-    setShowAutomationLogsModal(true);
+    setAutomationLogs(saveLogs);
     setLoading(true);
     await beginLoginFlow(savedCeprId);
     setLoading(false);
@@ -948,11 +959,28 @@ export default function NewApplicationPage() {
       <Toast toast={toast} onClose={hideToast} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
-      <p className="text-sm text-slate-500 mb-6">
+      <p className="text-sm text-slate-500 mb-4">
         {registrationComplete
-          ? 'Registration is complete. Review saved details below and start a new application when ready.'
-          : 'Upload documents for auto-fill, then complete General Information & contact details.'}
+          ? 'CPCB account is registered. Fill Part A, Part B and Part C, then start a new application.'
+          : 'First create the CPCB account. After registration, Part A, Part B and Part C will appear for the new application.'}
       </p>
+
+      <div className="mb-6 grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <div className={`rounded-xl border px-4 py-3 ${registrationComplete ? 'border-green-200 bg-green-50' : 'border-green-300 bg-green-50 ring-1 ring-green-200'}`}>
+          <p className="text-[11px] font-semibold uppercase tracking-wide text-green-700">Step 1</p>
+          <p className="text-sm font-semibold text-slate-800 mt-0.5">CPCB Account Registration</p>
+          <p className="text-xs text-slate-500 mt-1">
+            {registrationComplete ? 'Completed — CEPR ID saved' : 'Upload docs, contact details & password'}
+          </p>
+        </div>
+        <div className={`rounded-xl border px-4 py-3 ${registrationComplete ? 'border-blue-300 bg-blue-50 ring-1 ring-blue-200' : 'border-slate-200 bg-slate-50 opacity-70'}`}>
+          <p className={`text-[11px] font-semibold uppercase tracking-wide ${registrationComplete ? 'text-blue-700' : 'text-slate-400'}`}>Step 2</p>
+          <p className="text-sm font-semibold text-slate-800 mt-0.5">New Application (Part A, B, C)</p>
+          <p className="text-xs text-slate-500 mt-1">
+            {registrationComplete ? 'Fill application details below' : 'Unlocks after account registration'}
+          </p>
+        </div>
+      </div>
 
       {loadingSavedRegistration && (
         <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
@@ -970,7 +998,7 @@ export default function NewApplicationPage() {
               CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
             </p>
             <p className="text-xs text-green-600 mt-1">
-              Email, mobile and password are saved below. Click <strong>New Application</strong> to login with captcha &amp; OTP.
+              Fill <strong>Part A, Part B and Part C</strong> below, then click <strong>New Application</strong> to login with captcha &amp; OTP.
             </p>
           </div>
         </div>
@@ -989,7 +1017,7 @@ export default function NewApplicationPage() {
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
             <Building2 size={16} className="text-green-600" />
             General Information
-            <span className="text-xs font-normal text-slate-400">(Step 2 — CPCB portal fields)</span>
+            <span className="text-xs font-normal text-slate-400">(CPCB account registration)</span>
           </h3>
 
           <p className="text-xs text-slate-500 mb-4">
@@ -1051,6 +1079,11 @@ export default function NewApplicationPage() {
                 {autoData.typeOfCompanyDoc && (
                   <p className="text-xs text-green-600 mt-1 truncate" title={autoData.typeOfCompanyDoc}>
                     Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
+                  </p>
+                )}
+                {String(generalInfo.typeOfCompany || '').toLowerCase() === 'large' && (
+                  <p className="text-xs text-slate-500 mt-2">
+                    Need a draft? Open <button type="button" className="text-emerald-700 font-medium underline underline-offset-2" onClick={() => document.getElementById('part-c-letters')?.scrollIntoView({ behavior: 'smooth' })}>Ready Letters in Part C</button>, download the Word file, seal &amp; sign, then upload the PDF here.
                   </p>
                 )}
               </div>
@@ -1167,8 +1200,28 @@ export default function NewApplicationPage() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
+              <input
+                name="district"
+                value={generalInfo.district || ''}
+                onChange={handleGeneralChange}
+                type="text"
+                placeholder="Enter district"
+                className={lockedInputClass}
+                required
+              />
+            </div>
           </div>
 
+          {registrationComplete && (
+          <>
+          <div className="rounded-xl border border-blue-200 bg-blue-50 p-4 mt-8">
+            <p className="font-semibold text-blue-800">New Application Form</p>
+            <p className="text-sm text-blue-700 mt-1">
+              Fill Part A, Part B and Part C, then click New Application to continue on the CPCB portal.
+            </p>
+          </div>
           <div className="space-y-6 mt-8 border-t pt-8">
             <div>
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
@@ -1299,21 +1352,12 @@ export default function NewApplicationPage() {
                       ))}
                     </select>
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
-                    <input
-                      name="district"
-                      value={generalInfo.district || ''}
-                      onChange={handleGeneralChange}
-                      type="text"
-                      placeholder="Enter district"
-                      className={lockedInputClass}
-                      required
-                    />
-                  </div>
                   
                   <div className="md:col-span-2 mt-4">
                     <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
+                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mb-2">
+                      For now, New Application automation submits this table as <strong>0</strong> on the CPCB portal.
+                    </p>
                     <div className="overflow-x-auto border border-slate-200 rounded-lg">
                       <table className="w-full text-sm text-left">
                         <thead className="bg-[#0b6c7a] text-white">
@@ -1476,7 +1520,17 @@ export default function NewApplicationPage() {
           </div>
         </div>
 
-        <RegistrationPartC generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+        <RegistrationPartC
+          generalInfo={generalInfo}
+          setGeneralInfo={setGeneralInfo}
+          autoData={autoData}
+          setAutoData={setAutoData}
+          email={email}
+          mobile={mobile}
+          showToast={showToast}
+        />
+          </>
+          )}
 
         <div className="mt-8">
           <p className="text-xs text-slate-500 mt-6 mb-4">
@@ -1559,7 +1613,7 @@ export default function NewApplicationPage() {
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
             <Mail size={16} className="text-green-600" />
             Contact Details
-            <span className="text-xs font-normal text-slate-400">(Step 1 — User Verification)</span>
+            <span className="text-xs font-normal text-slate-400">(CPCB account — user verification)</span>
           </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
             <div>
@@ -1626,9 +1680,10 @@ export default function NewApplicationPage() {
       </form>
 
       {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && (
-        <div className="absolute inset-0 bg-white/80 z-10 flex flex-col items-center justify-center rounded-xl">
-          <Loader2 size={32} className="animate-spin text-green-600 mb-4" />
-          <p className="text-slate-700 font-medium">{loadingMsg}</p>
+        <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
+          <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
+          <p className="text-slate-800 font-semibold">Please wait</p>
+          <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
         </div>
       )}
 
@@ -1734,13 +1789,12 @@ export default function NewApplicationPage() {
                   </button>
                 )}
               </div>
-              {otpSubmitting && loadingMsg && (
+              {otpSubmitting && (
                 <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                   <p className="text-xs font-medium text-green-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-green-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1823,13 +1877,12 @@ export default function NewApplicationPage() {
                   <p className="text-xs text-red-600 mt-1.5">{captchaError}</p>
                 )}
               </div>
-              {captchaSubmitting && loadingMsg && (
+              {captchaSubmitting && (
                 <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                   <p className="text-xs font-medium text-green-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-green-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1912,13 +1965,12 @@ export default function NewApplicationPage() {
                   <p className="text-xs text-red-600 mt-1.5">{loginCaptchaError}</p>
                 )}
               </div>
-              {loginCaptchaSubmitting && loadingMsg && (
+              {loginCaptchaSubmitting && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                   <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1988,13 +2040,12 @@ export default function NewApplicationPage() {
                   </button>
                 )}
               </div>
-              {loginOtpSubmitting && loadingMsg && (
+              {loginOtpSubmitting && (
                 <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                   <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -2013,54 +2064,55 @@ export default function NewApplicationPage() {
         </div>
       )}
 
-      {showAutomationLogsModal && (
-        <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
-            <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
-              <h3 className="text-lg font-semibold text-slate-800 flex items-center gap-2">
-                <Terminal size={18} className="text-blue-600" />
-                Automation Form Filling Logs
-              </h3>
-              <button
-                type="button"
-                onClick={() => setShowAutomationLogsModal(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
-                disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-4 bg-slate-900 flex-1 overflow-y-auto font-mono text-sm leading-relaxed text-slate-300">
-              {automationLogs.length === 0 ? (
-                <div className="text-slate-500 italic">Waiting for automation to start...</div>
-              ) : (
-                <div className="space-y-1">
-                  {automationLogs.map((log, i) => (
-                    <div key={i} className={log.type === 'error' ? 'text-red-400 font-medium' : log.type === 'success' ? 'text-green-400 font-medium' : 'text-slate-300'}>
-                      <span className="text-slate-500 opacity-50 select-none mr-2">[{String(i).padStart(3, '0')}]</span>
-                      {log.message}
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-            <div className="px-6 py-4 bg-slate-50 border-t flex justify-between items-center">
-              <div className="text-sm text-slate-500 flex items-center gap-2">
-                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                   <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
-                ) : (
-                   <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
-                )}
+      {false && !showAutomationLogsModal && automationLogs.length > 0 && (
+        <button
+          type="button"
+          onClick={() => setShowAutomationLogsModal(true)}
+          className="fixed bottom-6 right-6 z-40 inline-flex items-center gap-2 px-4 py-2.5 text-sm font-medium text-white bg-slate-800 rounded-lg shadow-lg hover:bg-slate-700"
+        >
+          <Terminal size={16} />
+          Show logs
+          {(loading || loginCaptchaSubmitting || loginOtpSubmitting) && (
+            <Loader2 size={14} className="animate-spin" />
+          )}
+        </button>
+      )}
+
+      {false && showAutomationLogsModal && (
+        <div className="fixed bottom-6 right-6 z-40 w-[min(420px,calc(100vw-2rem))] max-h-[50vh] bg-white rounded-xl shadow-2xl border border-slate-200 flex flex-col overflow-hidden">
+          <div className="px-4 py-3 border-b flex justify-between items-center bg-slate-50">
+            <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
+              <Terminal size={16} className="text-blue-600" />
+              Automation logs
+            </h3>
+            <button
+              type="button"
+              onClick={() => setShowAutomationLogsModal(false)}
+              className="text-slate-400 hover:text-slate-600 p-1"
+            >
+              <X size={18} />
+            </button>
+          </div>
+          <div className="p-3 bg-slate-900 flex-1 overflow-y-auto font-mono text-xs leading-relaxed text-slate-300 min-h-[140px]">
+            {automationLogs.length === 0 ? (
+              <div className="text-slate-500 italic">Waiting for automation to start...</div>
+            ) : (
+              <div className="space-y-1">
+                {automationLogs.map((log, i) => (
+                  <div key={i} className={log.type === 'error' ? 'text-red-400 font-medium' : log.type === 'success' ? 'text-green-400 font-medium' : 'text-slate-300'}>
+                    <span className="text-slate-500 opacity-50 select-none mr-2">[{String(i).padStart(3, '0')}]</span>
+                    {log.message}
+                  </div>
+                ))}
               </div>
-              <button
-                type="button"
-                onClick={() => setShowAutomationLogsModal(false)}
-                disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
-                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-              >
-                Close Logs
-              </button>
-            </div>
+            )}
+          </div>
+          <div className="px-4 py-2 bg-slate-50 border-t text-xs text-slate-500 flex items-center gap-2">
+            {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+              <><Loader2 size={12} className="animate-spin text-blue-600" /> Running in background — form stays usable.</>
+            ) : (
+              <><CheckCircle2 size={12} className="text-green-600" /> Finished or waiting for captcha/OTP.</>
+            )}
           </div>
         </div>
       )}

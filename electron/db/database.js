@@ -13,7 +13,7 @@ let dbFilePath = '';
 export let dbJsonPath = '';
 
 // Path to the database file
-function getDbFilePath() {
+export function getDbFilePath() {
   return path.join(__dirname, '..', '..', 'sso_importer.db');
 }
 
@@ -28,9 +28,11 @@ export async function initDatabase(onDbReadyCallback) {
 
   // Enable foreign keys
   await db.exec('PRAGMA foreign_keys = ON;');
+  await db.exec('PRAGMA journal_mode = WAL;');
 
   // Run migrations for the main app.db
   await runMigrations();
+  await ensureCompanyDocumentColumns();
 
   if (onDbReadyCallback) {
     await onDbReadyCallback(db);
@@ -50,6 +52,16 @@ export async function initDatabase(onDbReadyCallback) {
     CREATE TABLE IF NOT EXISTS new_application (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
     CREATE TABLE IF NOT EXISTS registration_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, applicant_type TEXT, sub_applicant_type TEXT, cepr_id TEXT, success_screenshot_path TEXT);
   `);
+}
+
+async function ensureCompanyDocumentColumns() {
+  if (!db) return;
+  const cols = await db.all('PRAGMA table_info(company_documents)').catch(() => []);
+  if (!cols.length) return;
+  const names = new Set(cols.map((c) => c.name));
+  if (!names.has('file_hash')) {
+    await db.exec('ALTER TABLE company_documents ADD COLUMN file_hash TEXT');
+  }
 }
 
 // Get main application database instance

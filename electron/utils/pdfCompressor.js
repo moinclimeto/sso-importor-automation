@@ -12,23 +12,27 @@ const __dirname = path.dirname(__filename);
  * Looks in electron/bin/gswin64c.exe for Windows.
  */
 function getGhostscriptPath() {
-  const isPackaged = app.isPackaged;
-  
-  let gsPath;
-  if (isPackaged) {
-    // When packaged, bin folder is usually copied to resources
-    gsPath = path.join(process.resourcesPath, 'bin', 'gswin64c.exe');
-  } else {
-    // In dev mode, it's relative to this script
-    gsPath = path.join(__dirname, 'bin', 'gswin64c.exe');
+  const candidates = [];
+  if (app.isPackaged) {
+    candidates.push(path.join(process.resourcesPath, 'bin', 'gswin64c.exe'));
+  }
+  candidates.push(
+    path.join(__dirname, 'bin', 'gswin64c.exe'),
+    path.join(__dirname, '..', 'bin', 'gswin64c.exe'),
+    'C:\\Program Files\\gs\\gs10.04.0\\bin\\gswin64c.exe',
+    'C:\\Program Files\\gs\\gs10.03.1\\bin\\gswin64c.exe',
+    'C:\\Program Files\\gs\\gs10.02.1\\bin\\gswin64c.exe'
+  );
+
+  const programFiles = process.env['ProgramFiles'] || 'C:\\Program Files';
+  const gsRoot = path.join(programFiles, 'gs');
+  if (fs.existsSync(gsRoot)) {
+    for (const dir of fs.readdirSync(gsRoot)) {
+      candidates.push(path.join(gsRoot, dir, 'bin', 'gswin64c.exe'));
+    }
   }
 
-  if (fs.existsSync(gsPath)) {
-    return gsPath;
-  }
-  
-  // Try system PATH as fallback
-  return 'gswin64c';
+  return candidates.find((p) => p && fs.existsSync(p)) || null;
 }
 
 /**
@@ -41,6 +45,11 @@ export async function compressPdf(inputPath, outputPath) {
   return new Promise((resolve) => {
     try {
       const gsPath = getGhostscriptPath();
+      if (!gsPath) {
+        console.warn('[Ghostscript] Not installed — skipping PDF compression and keeping the original file.');
+        resolve(false);
+        return;
+      }
       
       // /ebook setting provides good compression while keeping text readable (~150 dpi)
       // /screen is smaller but can be too blurry for invoices (~72 dpi)

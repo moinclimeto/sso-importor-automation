@@ -25,8 +25,8 @@ function buildRegistrationDbPayload(ceprId, screenshotPath) {
     password: data.password,
   });
   return {
-    applicant_type: 'PWP',
-    sub_applicant_type: 'Cement Co-processing',
+    applicant_type: 'PIBO',
+    sub_applicant_type: 'Importer',
     cepr_id: ceprId,
     success_screenshot_path: screenshotPath,
     email: loginCreds.email,
@@ -72,6 +72,28 @@ function buildRegistrationDbPayload(ceprId, screenshotPath) {
 }
 
 const REGISTRATION_URL = 'https://epr.cpcb.gov.in/registration';
+
+async function gotoCpcb(page, url, onLog, attempts = 3) {
+  let lastError = null;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      if (onLog) onLog(`Opening CPCB portal (try ${i}/${attempts})...`);
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 90000 });
+      await page.waitForTimeout(1500);
+      return;
+    } catch (err) {
+      lastError = err;
+      const timedOut = /TIMEOUT|ERR_CONNECTION|net::/i.test(err.message || '');
+      if (onLog) onLog(`Portal navigation failed: ${err.message}`);
+      if (!timedOut || i === attempts) break;
+      if (onLog) onLog('Retrying CPCB portal in 3s...');
+      await page.waitForTimeout(3000);
+    }
+  }
+  throw new Error(
+    `CPCB portal did not open (${url}). Check internet / VPN and that https://epr.cpcb.gov.in is reachable. Last error: ${lastError?.message || 'timeout'}`
+  );
+}
 
 function escapeRegex(value) {
   return String(value || '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -256,16 +278,15 @@ async function fillInputByLabel(page, labelPattern, value, onLog) {
 
 export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
   if (!filePath) return;
-  
+
   const tempDir = os.tmpdir();
-  const safeFilename = `doc_${Date.now()}_${Math.floor(Math.random()*1000)}.pdf`;
-  const safePath = path.join(tempDir, safeFilename);
+  const originalName = path.basename(String(filePath)).replace(/[<>:"/\\|?*]/g, '_') || 'upload.pdf';
+  const safePath = path.join(tempDir, originalName);
   let finalUploadPath = filePath;
 
   if (!fs.existsSync(filePath)) {
-    if (onLog) onLog(`File not found for ${labelText}: ${filePath}. Generating a dummy PDF for fallback...`);
-    fs.writeFileSync(safePath, '%PDF-1.4\n1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R >>\nendobj\n4 0 obj\n<< /Length 21 >>\nstream\nBT\n/F1 12 Tf\n100 700 Td\n(Dummy PDF) Tj\nET\nendstream\nendobj\nxref\n0 5\n0000000000 65535 f \n0000000009 00000 n \n0000000058 00000 n \n0000000115 00000 n \n0000000214 00000 n \ntrailer\n<< /Size 5 /Root 1 0 R >>\nstartxref\n285\n%%EOF');
-    finalUploadPath = safePath;
+    if (onLog) onLog(`File not found for ${labelText}: ${filePath}. Will not upload a dummy PDF.`);
+    throw new Error(`File not found for ${labelText}: ${filePath}`);
   } else {
     const isPdf = filePath.toLowerCase().endsWith('.pdf');
     const sizeBytes = fs.statSync(filePath).size;
@@ -284,13 +305,12 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
         finalUploadPath = safePath;
       }
     } else {
-      // Even if not compressing, copy to safe name
       fs.copyFileSync(filePath, safePath);
       finalUploadPath = safePath;
     }
   }
 
-  if (onLog) onLog(`Uploading ${labelText} (as ${safeFilename})...`);
+  if (onLog) onLog(`Uploading ${labelText} from ${originalName}...`);
 
   try {
     const labelRegex = new RegExp(labelText, 'i');
@@ -866,26 +886,73 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
 function isSuccessPortalMessage(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  return /success|verified|sent successfully|otp has been|valid otp|otp sent/i.test(t);
+  return /success|verified|submitted|saved|registered|otp has been|otp sent|valid otp|sent successfully|pan details/i.test(t);
+}
+
+function isFailurePortalMessage(text) {
+  const t = String(text || '').trim();
+  if (!t) return false;
+  if (isSuccessPortalMessage(t) && !/invalid|incorrect|failed|something went wrong/i.test(t)) {
+    return false;
+  }
+  return /something went wrong|please try again|try again after|failed|invalid otp|incorrect otp|unable to|not valid|invalid pan|invalid gst/i.test(t);
+}
+
+async function readPortalToastText(page) {
+  const selectors = [
+    '.toast-error',
+    '.toast-message',
+    '#toast-container',
+    '.ngx-toastr',
+    '.toast-container',
+    '.overlay-container',
+    '.cdk-overlay-container',
+    '[role="alert"]',
+    '.alert-danger',
+    '.mat-mdc-snack-bar-label',
+    '.mat-snack-bar-container',
+  ];
+  for (const sel of selectors) {
+    try {
+      const loc = page.locator(sel).first();
+      if (!(await loc.isVisible({ timeout: 250 }).catch(() => false))) continue;
+      const text = (await loc.innerText().catch(() => '')).trim().replace(/\s+/g, ' ');
+      if (text) return text;
+    } catch {
+      /* try next */
+    }
+  }
+  try {
+    const fallback = page.getByText(/Something went wrong|Please try again after sometime/i).first();
+    if (await fallback.isVisible({ timeout: 250 }).catch(() => false)) {
+      return (await fallback.innerText().catch(() => 'Something went wrong. Please try again after sometime.')).trim();
+    }
+  } catch {
+    /* ignore */
+  }
+  return '';
 }
 
 async function checkPortalError(page) {
   try {
-    await page.waitForTimeout(500);
-    const overlay = page.locator('.overlay-container');
-    if (await overlay.isVisible()) {
-      const text = await overlay.innerText();
-      if (text && text.trim().length > 0) {
-        const normalized = text.trim().replace(/\n/g, ' ');
-        if (isSuccessPortalMessage(normalized)) {
-          await page.waitForTimeout(1500);
-          return null;
-        }
-        return normalized;
-      }
-    }
-  } catch (e) {}
-  return null;
+    const text = await readPortalToastText(page);
+    if (!text) return null;
+    if (isSuccessPortalMessage(text)) return null;
+    if (isFailurePortalMessage(text)) return text;
+    return null;
+  } catch {
+    return null;
+  }
+}
+
+async function waitForPortalOutcome(page, { timeoutMs = 8000 } = {}) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const err = await checkPortalError(page);
+    if (err) return { error: err };
+    await page.waitForTimeout(400);
+  }
+  return { error: await checkPortalError(page) };
 }
 
 async function isOtpSectionVerified(page, otpFieldIndex) {
@@ -894,6 +961,15 @@ async function isOtpSectionVerified(page, otpFieldIndex) {
   if (otpFieldIndex >= count) return false;
 
   const otpInput = otpInputs.nth(otpFieldIndex);
+
+  const disabled = await otpInput.isDisabled().catch(() => false);
+  const ariaDisabled = (await otpInput.getAttribute('disabled').catch(() => null)) != null
+    || (await otpInput.getAttribute('aria-disabled').catch(() => '')) === 'true';
+  const cls = (await otpInput.getAttribute('class').catch(() => '')) || '';
+  if (disabled || ariaDisabled || /input-disabled|disabled/i.test(cls)) {
+    return true;
+  }
+
   for (let level = 1; level <= 6; level += 1) {
     let ancestor = otpInput;
     for (let i = 0; i < level; i += 1) {
@@ -965,8 +1041,18 @@ async function fillOtpAndVerify(page, otp, otpFieldIndex = 0, onLog) {
   }
 
   const otpInput = otpInputs.nth(otpFieldIndex);
+  if (await isOtpSectionVerified(page, otpFieldIndex)) {
+    if (onLog) onLog(`${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP field is locked — already verified`);
+    return;
+  }
+
   await otpInput.scrollIntoViewIfNeeded();
-  await otpInput.click();
+  const canType = await otpInput.isEnabled().catch(() => false);
+  if (!canType) {
+    if (onLog) onLog(`${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP input is disabled — treating as verified`);
+    return;
+  }
+  await otpInput.click({ timeout: 8000 });
   await otpInput.fill('');
   await otpInput.pressSequentially(otpStr, { delay: 40 });
   await otpInput.dispatchEvent('input');
@@ -1030,8 +1116,23 @@ async function fillOtpAndVerify(page, otp, otpFieldIndex = 0, onLog) {
     throw new Error('Could not click Verify button — check CPCB portal OTP section');
   }
 
-  await page.waitForTimeout(2500);
-  if (onLog) onLog('OTP submitted to portal');
+  if (onLog) onLog('OTP submitted to portal — waiting for result...');
+  const outcome = await waitForPortalOutcome(page, { timeoutMs: 8000 });
+  if (outcome.error) {
+    throw new Error(outcome.error);
+  }
+
+  const verifiedAt = Date.now();
+  let verified = await isOtpSectionVerified(page, otpFieldIndex);
+  while (!verified && Date.now() - verifiedAt < 12000) {
+    await page.waitForTimeout(500);
+    verified = await isOtpSectionVerified(page, otpFieldIndex);
+  }
+  if (!verified) {
+    const lateErr = await checkPortalError(page);
+    throw new Error(lateErr || 'CPCB portal did not verify OTP. Please try again.');
+  }
+  if (onLog) onLog(`${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP verified on portal`);
 }
 
 /** Fill mobile on CPCB portal and click Get OTP. */
@@ -1096,9 +1197,9 @@ async function requestMobileOtp(page, mobile, onLog) {
     throw new Error('Could not click Get OTP for mobile — enter mobile on portal manually');
   }
 
-  await page.waitForTimeout(2500);
-  const portalErr = await checkPortalError(page);
-  if (portalErr) throw new Error(portalErr);
+  if (onLog) onLog('Get OTP clicked — waiting for portal result...');
+  const outcome = await waitForPortalOutcome(page, { timeoutMs: 8000 });
+  if (outcome.error) throw new Error(outcome.error);
 
   if (onLog) onLog('Mobile OTP sent — check your phone');
 }
@@ -1115,7 +1216,7 @@ export async function startRegistrationFlow(data, onLog) {
     regPage = await regContext.newPage();
     
     if (onLog) onLog('Navigating to CPCB portal...');
-    await regPage.goto(REGISTRATION_URL, { waitUntil: 'networkidle' });
+    await gotoCpcb(regPage, REGISTRATION_URL, onLog);
     
     // Fill GST
     if (onLog) onLog('Entering GST Number...');
@@ -1207,9 +1308,6 @@ export async function submitEmailOtp(otp, mobile, onLog) {
     regPage.setDefaultTimeout(20000);
 
     await fillOtpAndVerify(regPage, otp, 0, onLog);
-
-    const portalErr = await checkPortalError(regPage);
-    if (portalErr) throw new Error(portalErr);
 
     if (mobile) {
       await requestMobileOtp(regPage, mobile, onLog);

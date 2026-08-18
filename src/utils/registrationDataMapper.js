@@ -14,6 +14,88 @@ function parseRaw(doc) {
   }
 }
 
+const GST_ADDRESS_LABELS = [
+  ['building', /Building\s*No\.?\s*\/?\s*Flat\s*No\.?\s*:/i],
+  ['premises', /Name\s*Of\s*Premises\s*\/?\s*Building\s*:/i],
+  ['street', /Road\s*\/?\s*Street\s*:/i],
+  ['locality', /Locality\s*\/?\s*Sub\s*Locality\s*:/i],
+  ['city', /City\s*\/?\s*Town\s*\/?\s*Village\s*:/i],
+  ['district', /District\s*:/i],
+  ['state', /State\s*:/i],
+  ['pin', /PIN\s*Code\s*:/i],
+];
+
+/** Turn GST "Building No./Flat No.: ..." blobs into a clean address + district. */
+export function parseGstLabeledAddress(raw) {
+  const text = String(raw || '').replace(/\s+/g, ' ').trim();
+  if (!text) return { address: '', district: '', state: '', pin: '', city: '' };
+
+  const hits = [];
+  for (const [key, re] of GST_ADDRESS_LABELS) {
+    const match = re.exec(text);
+    if (match) hits.push({ key, index: match.index, end: match.index + match[0].length });
+  }
+
+  if (!hits.length) {
+    return {
+      address: text,
+      district: extractDistrictFromCommaAddress(text),
+      state: '',
+      pin: (text.match(/\b\d{6}\b/) || [''])[0],
+      city: '',
+    };
+  }
+
+  hits.sort((a, b) => a.index - b.index);
+  const values = {};
+  for (let i = 0; i < hits.length; i += 1) {
+    const start = hits[i].end;
+    const end = i + 1 < hits.length ? hits[i + 1].index : text.length;
+    values[hits[i].key] = text.slice(start, end).trim().replace(/[,;]+$/g, '');
+  }
+
+  const parts = [
+    values.building,
+    values.premises,
+    values.street,
+    values.locality,
+    values.city,
+    values.district,
+    values.state,
+    values.pin,
+  ].filter(Boolean);
+
+  return {
+    address: parts.join(', '),
+    district: values.district || '',
+    state: values.state || '',
+    pin: values.pin || '',
+    city: values.city || '',
+  };
+}
+
+function extractDistrictFromCommaAddress(address) {
+  const addr = String(address || '').trim();
+  if (!addr) return '';
+  const labeled = /District\s*:/i.exec(addr);
+  if (labeled) {
+    const after = addr.slice(labeled.index + labeled[0].length);
+    const stop = after.search(/\s+(State|PIN\s*Code|Pincode)\s*:/i);
+    return (stop >= 0 ? after.slice(0, stop) : after).trim().replace(/[,;]+$/g, '');
+  }
+  const parts = addr.split(',').map((p) => p.trim()).filter(Boolean);
+  if (parts.length >= 2) {
+    const maybeDistrict = parts[parts.length - 2].replace(/\d{6}/g, '').trim();
+    if (maybeDistrict && !/pradesh|nagar|delhi|bengal|india/i.test(maybeDistrict)) {
+      return maybeDistrict;
+    }
+    if (parts.length >= 3) {
+      return parts[parts.length - 3].replace(/\d{6}/g, '').trim();
+    }
+  }
+  return '';
+}
+
 function firstNonEmpty(...values) {
   for (const v of values) {
     const s = String(v ?? '').trim();
@@ -114,7 +196,9 @@ export function buildRegistrationDataFromDocuments(docs = []) {
   const authDob = extractPersonDob(personPanDoc);
 
   const constitutionOfBusiness = firstNonEmpty(gst?.constitution_of_business, gstRaw.constitution_of_business);
-  const registeredAddress = firstNonEmpty(gst?.address, gstRaw.address, cto?.address);
+  const rawAddress = firstNonEmpty(gst?.address, gstRaw.address, cto?.address);
+  const parsedAddress = parseGstLabeledAddress(rawAddress);
+  const registeredAddress = parsedAddress.address || rawAddress;
   const cinNumber = firstNonEmpty(cin?.document_number).toUpperCase();
 
   return {
@@ -129,7 +213,7 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     constitutionOfBusiness,
     registeredAddress,
     registeredAddressLine2: '',
-    district: extractDistrictFromAddress(registeredAddress),
+    district: firstNonEmpty(gstRaw.district, parsedAddress.district, extractDistrictFromAddress(registeredAddress)),
     cin: cinNumber,
     ctoNumber: firstNonEmpty(cto?.document_number),
     ctoValidity: normalizeDate(firstNonEmpty(cto?.validity_date)),
@@ -150,13 +234,7 @@ export function buildRegistrationDataFromDocuments(docs = []) {
 }
 
 function extractDistrictFromAddress(address) {
-  const addr = String(address || '').trim();
-  if (!addr) return '';
-  const parts = addr.split(',').map((p) => p.trim()).filter(Boolean);
-  if (parts.length >= 2) {
-    return parts[parts.length - 2].replace(/\d{6}/g, '').trim();
-  }
-  return '';
+  return parseGstLabeledAddress(address).district || extractDistrictFromCommaAddress(address);
 }
 
 export const REQUIRED_REGISTRATION_DOCS = [

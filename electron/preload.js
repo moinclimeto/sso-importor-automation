@@ -9,6 +9,11 @@ contextBridge.exposeInMainWorld('pwp', {
   fs: {
     readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
   },
+  letters: {
+    preview: (payload) => ipcRenderer.invoke('letters:preview', payload),
+    save: (payload) => ipcRenderer.invoke('letters:save', payload),
+    saveAll: (payload) => ipcRenderer.invoke('letters:saveAll', payload),
+  },
   // Companies
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
@@ -92,6 +97,12 @@ contextBridge.exposeInMainWorld('pwp', {
     refreshLoginCaptcha: () => ipcRenderer.invoke('scraper:refreshLoginCaptcha'),
     submitLoginOtp: (payload) => ipcRenderer.invoke('scraper:submitLoginOtp', payload),
     resendLoginOtp: () => ipcRenderer.invoke('scraper:resendLoginOtp'),
+    answerPaymentBypass: (payload) => ipcRenderer.invoke('scraper:answerPaymentBypass', payload),
+    onPaymentBypassPrompt: (callback) => {
+      const handler = () => callback?.();
+      ipcRenderer.on('scraper:payment-bypass-prompt', handler);
+      return () => ipcRenderer.removeListener('scraper:payment-bypass-prompt', handler);
+    },
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),

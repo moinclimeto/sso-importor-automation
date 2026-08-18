@@ -29,6 +29,26 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
 
+  const zoomBy = (delta) => {
+    const wc = win.webContents;
+    const next = Math.min(3, Math.max(0.5, wc.getZoomFactor() + delta));
+    wc.setZoomFactor(Number(next.toFixed(2)));
+  };
+  win.webContents.on('before-input-event', (event, input) => {
+    if (!(input.control || input.meta) || input.type !== 'keyDown') return;
+    const key = String(input.key || '');
+    if (key === '=' || key === '+' || key === 'Add' || key === 'NumpadAdd') {
+      event.preventDefault();
+      zoomBy(0.1);
+    } else if (key === '-' || key === '_' || key === 'Subtract' || key === 'NumpadSubtract') {
+      event.preventDefault();
+      zoomBy(-0.1);
+    } else if (key === '0' || key === 'Numpad0') {
+      event.preventDefault();
+      win.webContents.setZoomFactor(1);
+    }
+  });
+
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5180');
     // win.webContents.openDevTools();

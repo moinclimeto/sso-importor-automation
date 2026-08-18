@@ -1,3 +1,5 @@
+import { parseGstLabeledAddress } from './registrationDataMapper.js';
+
 export const TYPE_OF_BUSINESS_OPTIONS = [
   'Pvt. Ltd.',
   'Public Ltd.',
@@ -79,15 +81,25 @@ export function extractStateFromAddress(address) {
 
 export function buildGeneralInfoFromDocData(docData = {}) {
   const defaultState = extractStateFromAddress(docData.registeredAddress) || 'MADHYA PRADESH';
+  const addressLine = docData.registeredAddress || '';
+  let district = docData.district || '';
+  let cleanAddress = addressLine;
+  try {
+    const parsed = parseGstLabeledAddress(addressLine);
+    if (parsed.address) cleanAddress = parsed.address;
+    if (!district && parsed.district) district = parsed.district;
+  } catch {
+    /* mapper helper missing */
+  }
   return {
     typeOfBusiness: mapConstitutionToTypeOfBusiness(docData.constitutionOfBusiness),
     typeOfCompany: mapEnterpriseToTypeOfCompany(docData.enterpriseType),
-    registeredAddressLine1: docData.registeredAddress || '',
+    registeredAddressLine1: cleanAddress,
     registeredAddressLine2: docData.registeredAddressLine2 || '',
     cin: docData.cin || '',
     stateUt: defaultState,
     operatingStates: [defaultState],
-    district: docData.district || '',
+    district,
   };
 }
 
@@ -128,5 +140,7 @@ export const GENERAL_INFO_EMPTY = {
   // Part C (document paths)
   partCCoveringLetter: '',
   partCSignature: '',
-  partCAuditedStatement: ''
+  partCAuditedStatement: '',
+  partCApplicationNo: '',
+  partCLetterPlace: '',
 };

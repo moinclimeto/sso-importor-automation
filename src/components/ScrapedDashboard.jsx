@@ -127,7 +127,7 @@ export default function ScrapedDashboard({ company, onBack }) {
         >
           Dashboard Overview
         </button>
-        <button
+        {/* <button
           className={`py-3 px-6 font-semibold text-sm transition-colors border-b-2 ${
             activeTab === 'new_application' 
               ? 'border-emerald-600 text-emerald-700 bg-emerald-50/50' 
@@ -136,7 +136,7 @@ export default function ScrapedDashboard({ company, onBack }) {
           onClick={() => setActiveTab('new_application')}
         >
           New Application Data
-        </button>
+        </button> */}
       </div>
 
       {activeTab === 'dashboard' && (

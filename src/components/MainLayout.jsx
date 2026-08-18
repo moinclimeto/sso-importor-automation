@@ -317,13 +317,13 @@ function MainLayoutInner() {
                 >
                   CPCB Registration
                 </button>
-                <button
+                {/* <button
                   type="button"
                   onClick={() => navigate('/new-application')}
                   className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-blue-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
                 >
                   New Application
-                </button>
+                </button> */}
               </>
             )}
 

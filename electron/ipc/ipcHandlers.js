@@ -1,6 +1,8 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from '../ocr_captcha/ocrHandlers.js';
-import { initDatabase, getDb, dbJsonPath } from '../db/database.js';
+import { initDatabase, getDb, dbJsonPath, getDbFilePath } from '../db/database.js';
+import { getRegistrationDetails, saveRegistrationDetails } from '../db/registrationDb.js';
+import { createLogger } from '../utils/logger.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
@@ -20,6 +22,7 @@ import {
 } from '../automation/cpcbProcurementBulk.js';
 import * as XLSX from 'xlsx';
 import { PDFDocument } from 'pdf-lib';
+import { previewPartCLetters, buildFilledDocx, zipPartCLetters } from '../utils/partCLetters.js';
 import {
   runSalesBulkFill,
 } from '../automation/cpcbSalesBulk.js';
@@ -40,6 +43,7 @@ import {
   submitLoginOtp,
   resendLoginOtp,
 } from '../automation/cpcbLogin.js';
+import { setPaymentBypassNotifier, resolvePaymentBypass } from '../automation/paymentBypassBridge.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -55,6 +59,15 @@ const { extractEprWallet } = require("../../src/extractors/epr/wallet.extractor.
 const { extractEprAnnualFiling } = require("../../src/extractors/epr/annual_filing.extractor.cjs");
 const { extractEprPaymentHistory } = require("../../src/extractors/epr/payment.extractor.cjs");
 const { extractEprNewApplication } = require("../../src/extractors/epr/new_application.extractor.cjs");
+
+const registrationLog = createLogger('registration-ipc', 'registration.log');
+
+function sendScraperLog(event, msg) {
+  const text = typeof msg === 'string' ? msg : (msg?.text || msg?.message || String(msg));
+  registrationLog.info(text);
+  console.log('[scraper]', text);
+  event.sender.send('scraper:log', text);
+}
 
 export function registerIpcHandlers() {
   initDatabase(async (dbInstance) => {
@@ -294,6 +307,10 @@ export function registerIpcHandlers() {
     }
 
     const db = getDb();
+    const cols = await db.all('PRAGMA table_info(company_documents)');
+    if (!cols.some((c) => c.name === 'file_hash')) {
+      await db.exec('ALTER TABLE company_documents ADD COLUMN file_hash TEXT');
+    }
     if (data.fileHash) {
       await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
     }
@@ -874,19 +891,32 @@ export function registerIpcHandlers() {
   // ─── REGISTRATION ──────────────────────────────────────────────
   ipcMain.handle('registration:get', async () => {
     try {
-      const { getRegistrationDetails } = await import('./registrationDb.js');
-      return await getRegistrationDetails();
+      const result = await getRegistrationDetails();
+      registrationLog.info('IPC registration:get', {
+        dbPath: getDbFilePath(),
+        hasData: Boolean(result?.data),
+        ceprId: result?.data?.cepr_id || null,
+      });
+      return result;
     } catch (err) {
+      registrationLog.error('IPC registration:get failed', { error: err.message });
       console.error('registration:get error', err);
-      return null;
+      return { success: false, data: null, error: err.message };
     }
   });
 
   ipcMain.handle('registration:save', async (_, data) => {
     try {
-      const { saveRegistrationDetails } = await import('./registrationDb.js');
-      return await saveRegistrationDetails(data);
+      const result = await saveRegistrationDetails(data);
+      registrationLog.success('IPC registration:save', {
+        dbPath: getDbFilePath(),
+        id: result?.id,
+        inserted: result?.inserted,
+        ceprId: result?.data?.cepr_id || data?.cepr_id || null,
+      });
+      return result;
     } catch (err) {
+      registrationLog.error('IPC registration:save failed', { error: err.message, ceprId: data?.cepr_id || null });
       console.error('registration:save error', err);
       return { success: false, error: err.message };
     }
@@ -896,58 +926,62 @@ export function registerIpcHandlers() {
 
   // ─── REGISTRATION SCRAPER ────────────────────────────────────
   ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
-    return await startRegistrationFlow(data, (msg) => {
-      event.sender.send('scraper:log', msg);
-    });
+    return await startRegistrationFlow(data, (msg) => sendScraperLog(event, msg));
   });
   
   ipcMain.handle('scraper:submitEmailOtp', async (event, payload) => {
     const otp = typeof payload === 'string' ? payload : payload?.otp;
     const mobile = typeof payload === 'object' ? payload?.mobile : undefined;
-    return await submitEmailOtp(otp, mobile, (msg) => event.sender.send('scraper:log', msg));
+    return await submitEmailOtp(otp, mobile, (msg) => sendScraperLog(event, msg));
   });
   
   ipcMain.handle('scraper:resendEmailOtp', async (event) => {
-    return await resendEmailOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendEmailOtp((msg) => sendScraperLog(event, msg));
   });
   
   ipcMain.handle('scraper:submitMobileOtp', async (event, payload) => {
-    return await submitMobileOtp(payload, (msg) => event.sender.send('scraper:log', msg));
+    return await submitMobileOtp(payload, (msg) => sendScraperLog(event, msg));
   });
   
   ipcMain.handle('scraper:resendMobileOtp', async (event) => {
-    return await resendMobileOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendMobileOtp((msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:submitRegistrationCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitRegistrationCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+    return await submitRegistrationCaptcha(captchaText, (msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:refreshRegistrationCaptcha', async (event) => {
-    return await refreshRegistrationCaptcha((msg) => event.sender.send('scraper:log', msg));
+    return await refreshRegistrationCaptcha((msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:startLoginFlow', async (event, payload) => {
-    return await startLoginFlow(payload, (msg) => event.sender.send('scraper:log', msg));
+    setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
+    return await startLoginFlow(payload, (msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:submitLoginCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitLoginCaptcha(captchaText, (msg) => event.sender.send('scraper:log', msg));
+    return await submitLoginCaptcha(captchaText, (msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:refreshLoginCaptcha', async (event) => {
-    return await refreshLoginCaptcha((msg) => event.sender.send('scraper:log', msg));
+    return await refreshLoginCaptcha((msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
+    setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const otp = typeof payload === 'string' ? payload : payload?.otp;
-    return await submitLoginOtp(otp, (msg) => event.sender.send('scraper:log', msg));
+    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg));
+  });
+
+  ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {
+    return resolvePaymentBypass(payload || {});
   });
 
   ipcMain.handle('scraper:resendLoginOtp', async (event) => {
-    return await resendLoginOtp((msg) => event.sender.send('scraper:log', msg));
+    return await resendLoginOtp((msg) => sendScraperLog(event, msg));
   });
 
   ipcMain.handle('scraper:closeRegistrationSession', async () => {
@@ -2208,6 +2242,47 @@ export function registerIpcHandlers() {
       return { success: true };
     } catch (err) {
       console.error('Error opening document:', err);
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('letters:preview', async (_event, payload = {}) => {
+    try {
+      const result = await previewPartCLetters(payload);
+      return { success: true, ...result };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('letters:save', async (_event, payload = {}) => {
+    try {
+      const filled = await buildFilledDocx(payload.templateId, payload.values || {});
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Save letter',
+        defaultPath: filled.fileName,
+        filters: [{ name: 'Word Document', extensions: ['docx'] }],
+      });
+      if (canceled || !filePath) return { success: false, canceled: true };
+      fs.writeFileSync(filePath, filled.buffer);
+      return { success: true, filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('letters:saveAll', async (_event, payload = {}) => {
+    try {
+      const zipped = await zipPartCLetters(payload);
+      const { canceled, filePath } = await dialog.showSaveDialog({
+        title: 'Save letters ZIP',
+        defaultPath: zipped.fileName,
+        filters: [{ name: 'ZIP archive', extensions: ['zip'] }],
+      });
+      if (canceled || !filePath) return { success: false, canceled: true };
+      fs.writeFileSync(filePath, zipped.buffer);
+      return { success: true, filePath };
+    } catch (err) {
       return { success: false, error: err.message };
     }
   });

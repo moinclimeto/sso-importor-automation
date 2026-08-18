@@ -295,7 +295,7 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
         <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part B: Pertaining to Liquid Effluent and Gaseous Emissions</h3>
         
         <div className="bg-white border rounded-xl shadow-sm p-5 mb-6">
-          <div className="flex justify-between items-center mb-4">
+          <div className="flex justify-between items-center mb-2">
             <h4 className="font-semibold text-slate-700 text-sm">4. State-wise, Category-wise Quantity of PW generated (TPA)</h4>
             <button type="button" onClick={() => {
               setModalData({

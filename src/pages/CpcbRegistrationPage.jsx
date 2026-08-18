@@ -3,8 +3,11 @@ import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
+import RegistrationPartB from '../components/RegistrationPartB.jsx';
+import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import {
   AUTO_FILLED_FIELDS,
+  parseGstLabeledAddress,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -18,7 +21,8 @@ import {
   GENERAL_INFO_EMPTY,
   buildGeneralInfoFromDocData,
 } from '../utils/registrationGeneralInfo.js';
-import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
+import { getLocalFilePath } from '../utils/partCLetterValues.js';
+import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -125,6 +129,10 @@ export default function CpcbRegistrationPage() {
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
+  const [wizardStep, setWizardStep] = useState('account');
+  const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
+  const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
+  const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -146,14 +154,17 @@ export default function CpcbRegistrationPage() {
     setRegistrationComplete(true);
     setSavedCeprId(saved.cepr_id);
 
-    if (form.autoData) {
-      setAutoData({ ...EMPTY_AUTO, ...form.autoData });
-    }
+    setWizardStep('partA');
 
     if (form.generalInfo) {
+      const parsedAddr = parseGstLabeledAddress(
+        form.generalInfo.registeredAddressLine1 || form.autoData?.registeredAddress || ''
+      );
       setGeneralInfo((prev) => ({
         ...prev,
         ...form.generalInfo,
+        registeredAddressLine1: parsedAddr.address || form.generalInfo.registeredAddressLine1,
+        district: form.generalInfo.district || parsedAddr.district || prev.district,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
       }));
@@ -227,12 +238,19 @@ export default function CpcbRegistrationPage() {
 
   useEffect(() => {
     if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog((msg) => {
-        setLoadingMsg(msg);
-        setAutomationLogs((prev) => [...prev, { type: 'info', message: msg }]);
-      });
+      return window.pwp.scraper.onLog(() => {});
     }
   }, []);
+
+  useEffect(() => {
+    if (!window.pwp?.scraper?.onPaymentBypassPrompt) return undefined;
+    return window.pwp.scraper.onPaymentBypassPrompt(() => {
+      setPaymentBypassTxnId('');
+      setPaymentBypassMode('choose');
+      setShowPaymentBypassModal(true);
+      showToast('Payment Bypass popup — choose Yes or No in the app.', 'success', { duration: 12000 });
+    });
+  }, [showToast]);
 
   const applyRegistrationData = useCallback(async (docData = {}) => {
     const { data } = resolveRegistrationData(docData);
@@ -340,9 +358,55 @@ export default function CpcbRegistrationPage() {
     await applyRegistrationData(data);
   }, [applyRegistrationData]);
 
+  const persistRegistrationForm = async () => {
+    if (!window.pwp?.registration?.save) return;
+    await window.pwp.registration.save({
+      applicant_type: savedRegistration?.applicant_type || 'PIBO',
+      sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
+      cepr_id: savedCeprId || savedRegistration?.cepr_id,
+      email,
+      mobile,
+      form_data_json: JSON.stringify({ email, mobile, autoData, generalInfo }),
+    });
+  };
+
+  const handleSaveAndNext = async () => {
+    if (wizardStep === 'partA') {
+      if (!generalInfo.operatingStates?.length) {
+        showToast('Select at least one operating state.', 'error');
+        return;
+      }
+      if (generalInfo.operatingStates.length === 2) {
+        showToast('Cannot select exactly 2 states. Select 1, or 3 or more.', 'error');
+        return;
+      }
+      if (!generalInfo.yearOfCommencement && !generalInfo.yearOfCommencement) {
+        showToast('Year of Commencement is required.', 'error');
+        return;
+      }
+      if (!generalInfo.complianceStatus && !generalInfo.complianceStatus) {
+        showToast('Compliance Status (3d) is required.', 'error');
+        return;
+      }
+      if (!String(generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '').trim()) {
+        showToast('Thickness of Plastic (3e) is required.', 'error');
+        return;
+      }
+      await persistRegistrationForm();
+      showToast('Part A saved.', 'success');
+      setWizardStep('partB');
+      return;
+    }
+    if (wizardStep === 'partB') {
+      await persistRegistrationForm();
+      showToast('Part B saved.', 'success');
+      setWizardStep('partC');
+    }
+  };
+
   const handleSubmit = async (e) => {
     e.preventDefault();
-    // if (registrationComplete) return;
+    if (registrationComplete) return;
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
@@ -680,6 +744,7 @@ export default function CpcbRegistrationPage() {
     }));
     setRegistrationComplete(true);
     setSavedCeprId(ceprId || '');
+    setWizardStep('partA');
   };
 
   const handleNewApplication = async () => {
@@ -716,6 +781,12 @@ export default function CpcbRegistrationPage() {
     if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
       missing.push('Type of Company Document (MSME/Declaration)');
     }
+    if (!autoData.detailsOfProductsPath) {
+      missing.push('Details (Type & Quantity) of products produced/marketed');
+    }
+    if (!autoData.representativePicturePath) {
+      missing.push('Representative picture of Plastic Packaging');
+    }
 
     if (!generalInfo.isSameAsRegisteredAddress) {
       if (!generalInfo.plantAddress) missing.push('Plant/Unit Address');
@@ -737,7 +808,12 @@ export default function CpcbRegistrationPage() {
           applicant_type: generalInfo.applicantType || 'PIBO',
           sub_applicant_type: generalInfo.subApplicantType || 'Importer',
           cepr_id: savedCeprId || '',
-          form_data_json: JSON.stringify({ ...generalInfo, ...autoData })
+          form_data_json: JSON.stringify({
+            email,
+            mobile,
+            generalInfo,
+            autoData,
+          })
         });
       } catch (err) {
         console.error('Failed to save data before automation', err);
@@ -745,7 +821,6 @@ export default function CpcbRegistrationPage() {
     }
 
     setAutomationLogs([]);
-    setShowAutomationLogsModal(true);
     setLoading(true);
     await beginLoginFlow(savedCeprId);
     setLoading(false);
@@ -959,8 +1034,8 @@ export default function CpcbRegistrationPage() {
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
       <p className="text-sm text-slate-500 mb-6">
         {registrationComplete
-          ? 'Registration is complete. Review saved details below and start a new application when ready.'
-          : 'Upload documents for auto-fill, then complete General Information & contact details.'}
+          ? 'CPCB account is ready. Complete Part A, Part B and Part C, then click Register to fill the CPCB portal.'
+          : 'Only CPCB account registration fields are shown here. After the profile is created, New Application (Part A, B, C) will open.'}
       </p>
 
       {loadingSavedRegistration && (
@@ -979,28 +1054,60 @@ export default function CpcbRegistrationPage() {
               CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
             </p>
             <p className="text-xs text-green-600 mt-1">
-              Email, mobile and password are saved below. Click <strong>New Application</strong> to login with captcha &amp; OTP.
+              Fill Part A, B and C in steps, then click <strong>Register</strong> to send data to the CPCB portal.
             </p>
           </div>
         </div>
       )}
 
-      
+      {registrationComplete && (
+        <div className="mb-6 grid grid-cols-3 gap-2">
+          {[
+            { id: 'partA', label: 'Part A' },
+            { id: 'partB', label: 'Part B' },
+            { id: 'partC', label: 'Part C' },
+          ].map((step, idx) => {
+            const active = wizardStep === step.id;
+            const done = ['partA', 'partB', 'partC'].indexOf(wizardStep) > idx;
+            return (
+              <button
+                key={step.id}
+                type="button"
+                onClick={() => setWizardStep(step.id)}
+                className={`rounded-lg border px-3 py-2 text-sm font-medium ${
+                  active
+                    ? 'border-green-600 bg-green-50 text-green-800'
+                    : done
+                      ? 'border-green-200 bg-white text-green-700'
+                      : 'border-slate-200 bg-slate-50 text-slate-500'
+                }`}
+              >
+                {idx + 1}. {step.label}
+              </button>
+            );
+          })}
+        </div>
+      )}
 
+      {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
         <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
-        {!docReady && missingDocs.length > 0 && !registrationComplete && (
+        {!docReady && missingDocs.length > 0 && (
           <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
             Missing documents: {missingDocs.map((d) => d.replace('_', ' ')).join(', ')}
           </div>
         )}
       </div>
+      )}
 
+      {!registrationComplete && (
       <div className="mb-6">
         <AutoFilledPreview data={autoData} isDummy={false} />
       </div>
+      )}
 
       <form onSubmit={handleSubmit} className="space-y-8">
+        {!registrationComplete && (
         <div>
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
             <Building2 size={16} className="text-green-600" />
@@ -1185,9 +1292,24 @@ export default function CpcbRegistrationPage() {
                 ))}
               </select>
             </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
+              <input
+                name="district"
+                value={generalInfo.district || ''}
+                onChange={handleGeneralChange}
+                type="text"
+                placeholder="Enter district"
+                className={lockedInputClass}
+                required
+              />
+            </div>
           </div>
+        </div>
+        )}
 
-          <div className="space-y-6 mt-8 border-t pt-8">
+        {registrationComplete && wizardStep === 'partA' && (
+          <div className="space-y-6">
             <div>
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
@@ -1421,10 +1543,14 @@ export default function CpcbRegistrationPage() {
         </div>
         </div>
         </div>
+        )}
 
-        
+        {registrationComplete && wizardStep === 'partB' && (
+          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+        )}
 
-        <div className="space-y-6 mt-8 border-t pt-8">
+        {registrationComplete && wizardStep === 'partC' && (
+        <div className="space-y-6">
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
             <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
@@ -1437,7 +1563,11 @@ export default function CpcbRegistrationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = file.path;
+                        const path = getLocalFilePath(file) || file.path;
+                        if (!path) {
+                          showToast('Could not read the file path. Please upload again from the desktop app.', 'error');
+                          return;
+                        }
                         setAutoData((prev) => {
                           const next = { ...prev, detailsOfProductsPath: path };
                           if (window.pwp?.registration?.save) {
@@ -1467,7 +1597,11 @@ export default function CpcbRegistrationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = file.path;
+                        const path = getLocalFilePath(file) || file.path;
+                        if (!path) {
+                          showToast('Could not read the file path. Please upload again from the desktop app.', 'error');
+                          return;
+                        }
                         setAutoData((prev) => {
                           const next = { ...prev, representativePicturePath: path };
                           if (window.pwp?.registration?.save) {
@@ -1489,13 +1623,60 @@ export default function CpcbRegistrationPage() {
                   />
                   {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
                 </div>
+                <div className="md:col-span-2">
+                  <label className="block text-sm font-medium text-slate-700 mb-1">
+                    {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
+                      ? 'Type of Company Document — MSME Certificate (PDF) *'
+                      : 'Type of Company Document — Large Entity Declaration (PDF) *'}
+                  </label>
+                  <input
+                    type="file"
+                    accept=".pdf"
+                    onChange={(e) => {
+                      const file = e.target.files[0];
+                      if (!file) return;
+                      setAutoData((prev) => {
+                        const next = { ...prev, typeOfCompanyDoc: file.path || file.name };
+                        if (window.pwp?.registration?.save) {
+                          const updatedFormData = {
+                            ...(savedRegistration?.formData || {}),
+                            email, mobile, autoData: next, generalInfo
+                          };
+                          window.pwp.registration.save({
+                            ...(savedRegistration || {}),
+                            email, mobile,
+                            form_data_json: JSON.stringify(updatedFormData)
+                          }).catch(console.error);
+                        }
+                        return next;
+                      });
+                    }}
+                    className={inputClass}
+                  />
+                  {autoData.typeOfCompanyDoc && (
+                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.typeOfCompanyDoc}>
+                      Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
+                    </p>
+                  )}
+                </div>
               </div>
             </div>
           </div>
+
+          <RegistrationPartC
+            generalInfo={generalInfo}
+            setGeneralInfo={setGeneralInfo}
+            autoData={autoData}
+            setAutoData={setAutoData}
+            email={email}
+            mobile={mobile}
+            showToast={showToast}
+          />
         </div>
+        )}
 
-        
-
+        {!registrationComplete && (
+        <>
         <div className="mt-8">
           <p className="text-xs text-slate-500 mt-6 mb-4">
             Authorized Person Details &amp; Set Password
@@ -1571,7 +1752,6 @@ export default function CpcbRegistrationPage() {
             </div>
           </div>
         </div>
-        </div>
 
         <div>
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
@@ -1608,34 +1788,69 @@ export default function CpcbRegistrationPage() {
             </div>
           </div>
         </div>
+        </>
+        )}
 
-        <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
-          <button
-            type="button"
-            onClick={() => navigate(-1)}
-            disabled={loading}
-            className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-          >
-            Cancel
-          </button>
-          
-          <button
-            type="submit"
-            disabled={loading || !docReady}
-            className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-          >
-            {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-            Start Registration
-          </button>
+        <div className="pt-4 border-t border-slate-100 flex justify-between gap-3">
+          {registrationComplete && wizardStep !== 'partA' ? (
+            <button
+              type="button"
+              onClick={() => setWizardStep(wizardStep === 'partC' ? 'partB' : 'partA')}
+              disabled={loading}
+              className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              <ChevronLeft size={16} />
+              Back
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              disabled={loading}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          )}
 
-          
+          {!registrationComplete ? (
+            <button
+              type="submit"
+              disabled={loading || !docReady}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
+              Start Registration
+            </button>
+          ) : wizardStep !== 'partC' ? (
+            <button
+              type="button"
+              onClick={handleSaveAndNext}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+            >
+              Save & Next
+              <ChevronRight size={16} />
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={handleNewApplication}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <FilePlus size={16} />}
+              Register
+            </button>
+          )}
         </div>
       </form>
 
-      {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && (
-        <div className="absolute inset-0 bg-white/80 z-10 flex flex-col items-center justify-center rounded-xl">
-          <Loader2 size={32} className="animate-spin text-green-600 mb-4" />
-          <p className="text-slate-700 font-medium">{loadingMsg}</p>
+      {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && (
+        <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
+          <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
+          <p className="text-slate-800 font-semibold">Please wait</p>
+          <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
         </div>
       )}
 
@@ -1741,13 +1956,12 @@ export default function CpcbRegistrationPage() {
                   </button>
                 )}
               </div>
-              {otpSubmitting && loadingMsg && (
+              {otpSubmitting && (
                 <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                   <p className="text-xs font-medium text-green-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-green-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1830,13 +2044,12 @@ export default function CpcbRegistrationPage() {
                   <p className="text-xs text-red-600 mt-1.5">{captchaError}</p>
                 )}
               </div>
-              {captchaSubmitting && loadingMsg && (
+              {captchaSubmitting && (
                 <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
                   <p className="text-xs font-medium text-green-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-green-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1919,13 +2132,12 @@ export default function CpcbRegistrationPage() {
                   <p className="text-xs text-red-600 mt-1.5">{loginCaptchaError}</p>
                 )}
               </div>
-              {loginCaptchaSubmitting && loadingMsg && (
+              {loginCaptchaSubmitting && (
                 <div className="rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                   <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -1995,13 +2207,12 @@ export default function CpcbRegistrationPage() {
                   </button>
                 )}
               </div>
-              {loginOtpSubmitting && loadingMsg && (
+              {loginOtpSubmitting && (
                 <div className="mt-4 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2">
                   <p className="text-xs font-medium text-blue-800 flex items-center gap-2">
                     <Loader2 size={12} className="animate-spin shrink-0" />
-                    Automation in progress
+                    Please wait
                   </p>
-                  <p className="text-xs text-blue-700 mt-1 break-words">{loadingMsg}</p>
                 </div>
               )}
             </div>
@@ -2020,7 +2231,77 @@ export default function CpcbRegistrationPage() {
         </div>
       )}
 
-      {showAutomationLogsModal && (
+      {showPaymentBypassModal && (
+        <div className="fixed inset-0 z-[80] bg-slate-900/50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
+            <div className="px-6 py-4 border-b bg-slate-50">
+              <h3 className="text-lg font-semibold text-slate-800">Payment Bypass</h3>
+              <p className="text-sm text-slate-500 mt-1">
+                Have you already completed the payment for a different unit?
+              </p>
+            </div>
+            <div className="p-6 space-y-4">
+              {paymentBypassMode === 'txn' ? (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Enter Transaction Id *</label>
+                  <input
+                    value={paymentBypassTxnId}
+                    onChange={(e) => setPaymentBypassTxnId(e.target.value)}
+                    placeholder="Enter Transaction Id"
+                    className={inputClass}
+                  />
+                </div>
+              ) : (
+                <p className="text-sm text-slate-600">
+                  <strong>No</strong> — open payment-breakdown, click Click to Pay, and open the PayU link in Chrome.
+                  <br />
+                  <strong>Yes</strong> — enter the previous Transaction ID on CPCB.
+                </p>
+              )}
+            </div>
+            <div className="px-6 py-4 border-t bg-slate-50 flex justify-end gap-2">
+              {paymentBypassMode === 'choose' ? (
+                <>
+                  <button
+                    type="button"
+                    className="px-4 py-2 text-sm font-medium border border-slate-300 rounded-lg hover:bg-slate-50"
+                    onClick={async () => {
+                      setShowPaymentBypassModal(false);
+                      await window.pwp?.scraper?.answerPaymentBypass?.({ bypass: false });
+                    }}
+                  >
+                    No
+                  </button>
+                  <button
+                    type="button"
+                    className="px-4 py-2 text-sm font-medium text-white bg-teal-700 rounded-lg hover:bg-teal-800"
+                    onClick={() => setPaymentBypassMode('txn')}
+                  >
+                    Yes
+                  </button>
+                </>
+              ) : (
+                <button
+                  type="button"
+                  className="px-4 py-2 text-sm font-medium text-white bg-teal-700 rounded-lg hover:bg-teal-800 disabled:opacity-50"
+                  disabled={!paymentBypassTxnId.trim()}
+                  onClick={async () => {
+                    setShowPaymentBypassModal(false);
+                    await window.pwp?.scraper?.answerPaymentBypass?.({
+                      bypass: true,
+                      transactionId: paymentBypassTxnId.trim(),
+                    });
+                  }}
+                >
+                  Submit
+                </button>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {false && showAutomationLogsModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-2xl max-h-[85vh] flex flex-col overflow-hidden">
             <div className="px-6 py-4 border-b flex justify-between items-center bg-slate-50">
