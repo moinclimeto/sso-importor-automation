@@ -29,17 +29,15 @@ function displayAmount(value) {
 
 
 function displayMt(item) {
-
-  if (item?.valueInMt != null && item.valueInMt !== '') {
-
-    const n = Number(item.valueInMt);
-
+  if (item?.weight_mt != null && item.weight_mt !== '') {
+    const n = Number(item.weight_mt);
     if (Number.isFinite(n) && n > 0) return n.toFixed(4);
-
   }
-
+  if (item?.valueInMt != null && item.valueInMt !== '') {
+    const n = Number(item.valueInMt);
+    if (Number.isFinite(n) && n > 0) return n.toFixed(4);
+  }
   return '—';
-
 }
 
 
@@ -265,10 +263,13 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
                       <thead className="bg-slate-50 border-b border-slate-200 sticky top-0">
                         <tr>
                           <th className="th">#</th>
+                          <th className="th">Product</th>
                           <th className="th">Description</th>
                           <th className="th">HSN/SAC</th>
                           <th className="th text-right">MT</th>
                           <th className="th">Quantity</th>
+                          <th className="th">Unit</th>
+                          <th className="th text-right">Rate (₹)</th>
                           <th className="th text-right">Amount (₹)</th>
                           <th className="th text-right">GST (₹)</th>
                           <th className="th text-right">GST %</th>
@@ -281,10 +282,13 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
                             className="border-b border-slate-100 hover:bg-slate-50/60"
                           >
                             <td className="td">{item.lineNo || index + 1}</td>
+                            <td className="td min-w-[8rem]">{displayValue(item.product)}</td>
                             <td className="td min-w-[12rem]">{displayValue(item.productDescription)}</td>
                             <td className="td font-mono text-xs">{displayValue(item.hsn)}</td>
                             <td className="td text-right tabular-nums text-xs">{displayMt(item)}</td>
                             <td className="td">{displayValue(item.quantity)}</td>
+                            <td className="td">{displayValue(item.unit)}</td>
+                            <td className="td text-right tabular-nums">{displayAmount(item.rate)}</td>
                             <td className="td text-right tabular-nums">{displayAmount(item.amount)}</td>
                             <td className="td text-right tabular-nums">{displayAmount(item.gstAmount)}</td>
                             <td className="td text-right tabular-nums">{displayAmount(item.gstRate)}</td>

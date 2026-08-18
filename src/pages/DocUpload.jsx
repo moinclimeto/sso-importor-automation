@@ -16,6 +16,10 @@ import InvoiceDetailsModal, {
 } from '../components/InvoiceDetailsModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import { applyCompanyRoutingToResults } from '../utils/companyInvoiceMatch.js';
+import {
+  calcTotalPlasticQuantityMt,
+  enrichLineItemsWithWeightMt,
+} from '../utils/procurementQuantity.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import ZipPreviewModal from '../components/ZipPreviewModal.jsx';
 function getFyOptions() {
@@ -478,7 +482,8 @@ export default function DocUpload() {
       };
     }
 
-    const lineItems = sourceRow?.data?.lineItems || data.lineItems || [];
+    const lineItemsRaw = sourceRow?.data?.lineItems || data.lineItems || [];
+    const lineItems = enrichLineItemsWithWeightMt(lineItemsRaw);
     const extraction = sourceRow?.data?.extraction || data.extraction || null;
     const companyId =
       sourceRow?.data?.company_id ?? sourceRow?.routing?.companyId ?? null;
@@ -487,46 +492,51 @@ export default function DocUpload() {
     const parties = sourceRow?.data?._parties || data._parties || {};
 
     if (decided === 'purchase') {
-      const gst = String(
-        data.supplier_gst_number || data.vendor_gstin || parties.sellerGst || ''
-      )
-        .trim()
-        .toUpperCase();
-      const isGst =
-        data.is_supplier_gst_available === 'Yes' || data.is_supplier_gst_available === 'No'
-          ? data.is_supplier_gst_available
-          : gst
-            ? 'Yes'
-            : 'No';
       const supplierName =
-        data.supplier_name || data.vendor_name || parties.sellerName || '';
+        data.supplier_name ||
+        data.vendor_name ||
+        data.seller_name ||
+        parties.sellerName ||
+        null;
+      // company_name / company_id = matched target company profile (buyer). supplier_* = extracted seller.
+      const cf = parseFloat(data.conversion_factor) || 0;
+      const qtyMt = calcTotalPlasticQuantityMt(lineItems, cf) ?? data.quantity_mt ?? null;
       return {
-        ...data,
         company_id: companyId,
         company_name: companyName,
+        buyer_name: data.buyer_name || parties.buyerName || companyName || null,
+        buyer_gst: data.buyer_gst || parties.buyerGst || null,
         record_type: 'purchase_epr',
-        is_supplier_gst_available: isGst,
-        supplier_gst_number: gst,
+        registration_type: data.registration_type ?? null,
+        entity_type: data.entity_type ?? null,
         supplier_name: supplierName,
-        buyer_gst: String(data.buyer_gst || parties.buyerGst || '').toUpperCase(),
-        quantity_mt: parseFloat(data.quantity_mt) || 0,
         vendor_name: supplierName,
-        vendor_gstin: gst,
-        invoice_no: data.invoice_number || data.invoice_no,
-        invoice_number: data.invoice_number || data.invoice_no,
-        invoice_date: data.procurement_date || data.invoice_date,
-        procurement_date: data.procurement_date || data.invoice_date,
-        invoice_filename:
-          data.invoice_filename || data.invoice_file_name || sourceRow?.fileName,
-        quantity: parseFloat(data.quantity_mt) || 0,
+        country: data.country ?? null,
+        address_line_1: data.address_line_1 ?? null,
+        supplier_mobile_number: data.supplier_mobile_number ?? data.mobile ?? null,
+        plastic_type: data.plastic_type ?? null,
+        category_of_plastic: data.category_of_plastic ?? null,
+        financial_year: data.financial_year || data.financialYear || financialYear || null,
+        procurement_date: data.procurement_date || data.invoice_date || null,
+        invoice_date: data.procurement_date || data.invoice_date || null,
+        quantity_mt: qtyMt,
+        quantity: qtyMt,
         unit: 'MT',
-        total_amount: sourceRow?.data?.total_amount || 0,
-        entity_type: data.entity_type || data.entityType || '',
-        registration_type: data.registration_type || data.registrationType || '',
-        financial_year: data.financial_year || data.financialYear || financialYear || '',
-        supplier_mobile_number: data.mobile || data.supplier_mobile_number || '',
+        recycled_plastic_percent: data.recycled_plastic_percent ?? null,
+        conversion_factor: cf,
+        invoice_filename:
+          data.invoice_filename || data.invoice_file_name || sourceRow?.fileName || null,
+        is_supplier_gst_available: data.is_supplier_gst_available ?? null,
+        supplier_gst_number: data.supplier_gst_number || data.vendor_gstin || parties.sellerGst || null,
+        vendor_gstin: data.supplier_gst_number || data.vendor_gstin || parties.sellerGst || null,
+        invoice_no: data.invoice_number || data.invoice_no || null,
+        invoice_number: data.invoice_number || data.invoice_no || null,
+        irn_no: data.irn_no ?? null,
+        account_number: data.account_number ?? null,
+        ifsc_code: data.ifsc_code ?? null,
+        item_name: data.item_name ?? lineItems[0]?.product ?? lineItems[0]?.productDescription ?? null,
         lineItems,
-        extraction,
+        extraction: data.extraction || null,
         _routing: sourceRow?.routing || data._routing,
         _page: data._page || (sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined),
       };
@@ -593,11 +603,8 @@ export default function DocUpload() {
       return sourceRow?.routing?.reason || 'Invoice rejected — company not matched.';
     }
     if (decided === 'purchase') {
-      if (!String(data.supplier_name || data.vendor_name || parties.sellerName || '').trim()) {
-        return 'Name of Supplier is required.';
-      }
-      if (!String(data.invoice_number || data.invoice_no || '').trim()) {
-        return 'Invoice Number is required.';
+      if (!String(data.supplier_name || data.vendor_name || data.seller_name || parties.sellerName || '').trim()) {
+        return 'Supplier name is required (Bill From / Seller party — not your company profile).';
       }
       if (!(data.procurement_date || data.invoice_date)) {
         return 'Procurement Date is required.';

@@ -10,6 +10,7 @@ import {
   buildExtractionPrompt,
   mapPurchaseFromOcr,
   mapSaleFromOcr,
+  normalizePurchasePartyFields,
   applyQrPriority,
   fileBaseName,
 } from './ocrExtract.js';
@@ -27,6 +28,24 @@ import { resolveUploadPaths } from './zipExpand.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+async function fetchDefaultConversionFactor(db) {
+  if (!db) return null;
+  try {
+    const tableCheck = await db.get(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='conversion_factor'`
+    );
+    if (!tableCheck) return null;
+    const row = await db.get(
+      'SELECT conversion_factor FROM conversion_factor ORDER BY _internal_id LIMIT 1'
+    );
+    const n = parseFloat(row?.conversion_factor);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 function loadEnvFile() {
   const candidates = [
     path.join(process.cwd(), '.env'),
@@ -240,11 +259,13 @@ async function extractOneInvoice({
     }
 
     const qrResult = await qrPromise;
+    const defaultCf =
+      invoiceType === 'purchase' ? await fetchDefaultConversionFactor(getDb()) : null;
     let row =
       invoiceType === 'company_document'
         ? { ...parsed, fileName: outFileName, decidedType: 'company_document', _source_fields: {} }
         : invoiceType === 'purchase'
-        ? mapPurchaseFromOcr(parsed, outFileName)
+        ? mapPurchaseFromOcr(parsed, outFileName, financialYear, defaultCf)
         : mapSaleFromOcr(parsed, outFileName, sNo);
 
     const cpy = row.extraction?.copyType;
@@ -323,9 +344,13 @@ async function extractOneInvoice({
       row.customer_name ||
       '';
 
+    if (invoiceType === 'purchase') {
+      row = normalizePurchasePartyFields(row);
+    }
+
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;
-      if (!row._source_fields[key] && row[key] !== '' && row[key] !== 0) {
+      if (!row._source_fields[key] && row[key] != null && row[key] !== '') {
         row._source_fields[key] = 'ocr';
       }
     }

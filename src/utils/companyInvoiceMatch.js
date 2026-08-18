@@ -63,12 +63,17 @@ export function extractInvoiceParties(row = {}) {
   const data = row.data || row;
   const qr = data._qr || data.extraction?._qr || data.qr || {};
   const extraction = data.extraction || {};
+  const recordType = String(data.record_type || '').toLowerCase();
+  const isPurchase = recordType.includes('purchase');
 
   let sellerGst = normalizeGst(
     qr.SellerGstin ||
       qr.sellerGstin ||
       data.seller_gst ||
       data.sellerGst ||
+      data.supplier_gst_number ||
+      data.vendor_gstin ||
+      data.supplier_gst ||
       extraction.sellerGst ||
       extraction.SellerGstin
   );
@@ -77,12 +82,15 @@ export function extractInvoiceParties(row = {}) {
       qr.buyerGstin ||
       data.buyer_gst ||
       data.buyerGst ||
+      data.buyer_gstin ||
       extraction.buyerGst ||
       extraction.BuyerGstin
   );
 
   let sellerName = String(
-    data.seller_name ||
+    data.supplier_name ||
+      data.vendor_name ||
+      data.seller_name ||
       data.sellerName ||
       extraction.sellerName ||
       qr.SellerNm ||
@@ -98,18 +106,16 @@ export function extractInvoiceParties(row = {}) {
       ''
   ).trim();
 
-  // Fallback from mapped EPR fields (purchase = seller counterparty, sale = buyer)
-  const recordType = String(data.record_type || '').toLowerCase();
-  if (!sellerGst && (recordType.includes('purchase') || data.supplier_gst_number || data.vendor_gstin)) {
-    sellerGst = normalizeGst(data.supplier_gst_number || data.vendor_gstin);
+  if (!sellerGst && isPurchase) {
+    sellerGst = normalizeGst(data.supplier_gst_number || data.vendor_gstin || data.supplier_gst);
   }
-  if (!buyerGst && (recordType.includes('sale') || data.customer_gstin || data.buyer_gst)) {
+  if (!buyerGst && !isPurchase) {
     buyerGst = normalizeGst(data.customer_gstin || data.buyer_gst);
   }
-  if (!sellerName && (data.supplier_name || data.vendor_name)) {
-    sellerName = String(data.supplier_name || data.vendor_name).trim();
+  if (!sellerName && isPurchase) {
+    sellerName = String(data.supplier_name || data.vendor_name || data.seller_name || '').trim();
   }
-  if (!buyerName && (data.entity_name || data.customer_name)) {
+  if (!buyerName && !isPurchase && (data.entity_name || data.customer_name)) {
     buyerName = String(data.entity_name || data.customer_name).trim();
   }
 
@@ -165,22 +171,43 @@ export function matchInvoiceToCompanies(row, companies = [], docType = null) {
     };
   }
 
-  // If this is a procurement (purchase) invoice upload, only check by company name for the buyer.
+  // Purchase upload: match invoice BUYER to company profile (our company).
+  // Extracted supplier/seller fields are saved separately — never use profile name as supplier.
   if (docType === 'purchase') {
+    if (list.length === 1) {
+      return {
+        decidedType: 'purchase',
+        rejected: false,
+        reason: `Purchase upload → using company profile "${list[0].name}" as buyer`,
+        zone: 'buyer',
+        company: list[0],
+        parties,
+      };
+    }
+
     const buyerNameHit = matchCompanyByName(list, parties.buyerName);
     if (buyerNameHit) {
       return {
         decidedType: 'purchase',
         rejected: false,
-        reason: `Matched company name as buyer ("${buyerNameHit.name}") → Procurement`,
+        reason: `Matched company profile "${buyerNameHit.name}" as invoice buyer → Procurement`,
         zone: 'buyer',
         company: buyerNameHit,
         parties,
       };
     }
-    // Note: User requested ONLY checking by company name for importers, so if it doesn't match by name,
-    // we can still fall back to the existing GST logic below just in case they added a GST in the future,
-    // or we can reject it. Let's fall back to existing logic to be safe, since it won't hurt if buyer GST is empty.
+
+    const buyerGstHit = matchCompanyByGstOrPan(list, parties.buyerGst);
+    if (buyerGstHit) {
+      return {
+        decidedType: 'purchase',
+        rejected: false,
+        reason: `Matched company profile "${buyerGstHit.name}" as invoice buyer (GST) → Procurement`,
+        zone: 'buyer',
+        company: buyerGstHit,
+        parties,
+      };
+    }
   }
 
   const buyerHit = matchCompanyByGstOrPan(list, parties.buyerGst);

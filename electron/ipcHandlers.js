@@ -433,11 +433,12 @@ export function registerIpcHandlers() {
 async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, supplierGst, supplierName) {
   if (!companyId || !lineItems || !lineItems.length) return;
   const now = new Date().toISOString();
+  const partyName = String(supplierName || '').trim();
   for (const item of lineItems) {
-    if (!item.productDescription && !item.item_name) continue;
+    if (!item.productDescription && !item.product && !item.item_name) continue;
     
     // Normalize matching fields
-    const productDesc = item.productDescription || item.item_name || '';
+    const productDesc = item.productDescription || item.product || item.item_name || '';
     const desc = String(productDesc).trim().toLowerCase();
     const hsn = String(item.hsn || item.hsn_code || '').trim().replace(/\D/g, '');
     const productMatchKey = `${desc}::${hsn}`;
@@ -457,9 +458,14 @@ async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, s
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)
       `, [
         companyId, listType, productDesc, productMatchKey, item.hsn || item.hsn_code || '', item.uom || item.unit || '',
-        supplierGst || '', supplierName || '', item.plasticCategory || '', item.plasticMaterial || '',
+        supplierGst || '', partyName, item.plasticCategory || '', item.plasticMaterial || '',
         now, now
       ]);
+    } else if (partyName) {
+      await db.run(
+        `UPDATE packaging_master SET supplier_name = ?, supplier_gst = COALESCE(NULLIF(?, ''), supplier_gst), updated_at = ? WHERE id = ?`,
+        [partyName, supplierGst || '', now, existing.id]
+      );
     }
   }
 }
@@ -526,8 +532,10 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
         supplier_gst_number, supplier_mobile_number, procurement_date, quantity_mt,
         invoice_number, hsn_code, invoice_filename, vendor_name, vendor_gstin, invoice_no,
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
-        _source_fields, _routing, file_hash, created_at, registration_type, entity_type, financial_year
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        _source_fields, _routing, file_hash, created_at, registration_type, entity_type,
+        financial_year, plastic_type, recycled_plastic_percent, country, irn_no, account_number, ifsc_code,
+        conversion_factor
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -565,7 +573,14 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       new Date().toISOString(),
       processedData.registration_type,
       processedData.entity_type,
-      processedData.financial_year
+      processedData.financial_year,
+      processedData.plastic_type,
+      processedData.recycled_plastic_percent,
+      processedData.country,
+      processedData.irn_no || null,
+      processedData.account_number || null,
+      processedData.ifsc_code || null,
+      processedData.conversion_factor ?? null
     );
     await stmt.finalize();
 
@@ -587,7 +602,9 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
         supplier_gst_number = ?, supplier_mobile_number = ?, procurement_date = ?, quantity_mt = ?,
         invoice_number = ?, hsn_code = ?, invoice_filename = ?, vendor_name = ?, vendor_gstin = ?, invoice_no = ?,
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
-        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?, financial_year = ?
+        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?,
+        financial_year = ?, plastic_type = ?, recycled_plastic_percent = ?, country = ?,
+        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?
       WHERE id = ?
     `);
 
@@ -626,6 +643,13 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       data.entity_type,
       data.registration_type,
       data.financial_year,
+      data.plastic_type,
+      data.recycled_plastic_percent,
+      data.country,
+      data.irn_no || null,
+      data.account_number || null,
+      data.ifsc_code || null,
+      data.conversion_factor ?? null,
       data.id
     );
     await stmt.finalize();
