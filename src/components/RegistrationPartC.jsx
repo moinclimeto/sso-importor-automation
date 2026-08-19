@@ -5,11 +5,11 @@ import {
   buildLetterValues,
   fileLabel,
   getApplicableLetters,
-  getLocalFilePath,
   loadLetterSourceRecords,
   missingLetterFields,
   resolveIecNumber,
 } from '../utils/partCLetterValues.js';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 
 function DocumentCard({
   title,
@@ -128,26 +128,22 @@ export default function RegistrationPartC({
     largeEntity: autoData?.typeOfCompanyDoc,
   };
 
-  const validatePdf = (file) => {
+  const validatePdf = async (file) => {
     if (!file) return null;
     if (!/\.pdf$/i.test(file.name)) {
       showToast?.('Please upload a PDF file.', 'error');
       return null;
     }
-    if (file.size > 1024 * 1024) {
-      showToast?.('CPCB accepts PDFs up to 1 MB. Please compress the file.', 'error');
+    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_part_c' });
+    if (!stored.success || !stored.filePath) {
+      showToast?.(stored.message || 'Could not save PDF.', 'error');
       return null;
     }
-    const filePath = getLocalFilePath(file);
-    if (!filePath) {
-      showToast?.('Could not read the file path. Please try again from the desktop app.', 'error');
-      return null;
-    }
-    return filePath;
+    return stored.filePath;
   };
 
-  const handlePdfUpload = (field, store, file) => {
-    const filePath = validatePdf(file);
+  const handlePdfUpload = async (field, store, file) => {
+    const filePath = await validatePdf(file);
     if (!filePath) return;
     if (store === 'autoData') {
       setAutoData((prev) => ({ ...prev, [field]: filePath }));
@@ -197,7 +193,7 @@ export default function RegistrationPartC({
             <p className="font-semibold text-slate-800">Draft → print → seal &amp; sign → re-upload</p>
             <p className="text-sm text-slate-600 mt-1">
               Ready Letters fills company name, address, GSTIN, PAN, IEC, authorised person and date into the official Word drafts.
-              Download the <strong>.docx</strong>, print on letterhead, stamp and sign, then upload a short-named PDF under 1 MB.
+              Download the <strong>.docx</strong>, print on letterhead, stamp and sign, then upload a short-named PDF.
             </p>
           </div>
         </div>
@@ -210,7 +206,7 @@ export default function RegistrationPartC({
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <DocumentCard
           title="Covering Letter"
-          hint="Official covering letter for the EPR application. PDF only, max 1 MB."
+          hint="Official covering letter for the EPR application. PDF only."
           required
           icon={FileText}
           filePath={generalInfo.partCCoveringLetter}
@@ -220,7 +216,7 @@ export default function RegistrationPartC({
         />
         <DocumentCard
           title="Self-declaration"
-          hint="Self-declaration based on audited statements. PDF only, max 1 MB."
+          hint="Self-declaration based on audited statements. PDF only."
           required
           icon={FileText}
           filePath={generalInfo.partCAuditedStatement}
@@ -230,7 +226,7 @@ export default function RegistrationPartC({
         />
         <DocumentCard
           title="Signature"
-          hint="Scan of authorised signatory signature. PDF only, max 1 MB."
+          hint="Scan of authorised signatory signature. PDF only."
           required
           icon={FileSignature}
           filePath={generalInfo.partCSignature}

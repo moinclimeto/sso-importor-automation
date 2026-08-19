@@ -4,12 +4,18 @@ import os from 'os';
 import path from 'path';
 import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from '../db/registrationDummyData.js';
 import { saveRegistrationDetails } from '../db/registrationDb.js';
-import { compressPdf } from '../utils/pdfCompressor.js';
+import { ensurePdfUnderMaxSize } from '../utils/pdfCompressor.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
   refreshCaptcha,
 } from '../ocr_captcha/captchaPortal.js';
+import {
+  evaluateGstDetailsResponse,
+  evaluateCompaniesApiResponse,
+  formatInvalidGstError,
+  isDuplicateAuthPersonMessage,
+} from '../utils/cpcbGstVerify.js';
 
 let regBrowser = null;
 let regContext = null;
@@ -294,8 +300,8 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
 
     if (isPdf && sizeBytes > MAX_SIZE) {
       if (onLog) onLog(`Compressing ${labelText} (${(sizeBytes / 1024 / 1024).toFixed(2)} MB) to under 1MB using Ghostscript...`);
-      const success = await compressPdf(filePath, safePath);
-      if (success && fs.existsSync(safePath)) {
+      const result = await ensurePdfUnderMaxSize(filePath, safePath, MAX_SIZE);
+      if (result.success && fs.existsSync(safePath)) {
         const newSize = fs.statSync(safePath).size;
         if (onLog) onLog(`Compression successful. New size: ${(newSize / 1024 / 1024).toFixed(2)} MB.`);
         finalUploadPath = safePath;
@@ -602,6 +608,19 @@ async function waitForSupportingDocStep(page, onLog) {
   if (onLog) onLog('Supporting Documents tab active');
 }
 
+async function resolveCompaniesSubmitFailure(page, companiesResponse) {
+  if (companiesResponse) {
+    try {
+      const body = await companiesResponse.json();
+      const evaluated = evaluateCompaniesApiResponse(body, companiesResponse.status());
+      if (!evaluated.isRegistrationAllowed) return evaluated.message;
+    } catch {
+      /* fall through to toast check */
+    }
+  }
+  return checkPortalError(page);
+}
+
 async function clickGeneralInfoContinue(page, onLog) {
   if (onLog) onLog('Submitting General Information — clicking Continue...');
   await page.waitForTimeout(800);
@@ -640,8 +659,18 @@ async function clickGeneralInfoContinue(page, onLog) {
 
       if (!(await btn.isEnabled().catch(() => false))) continue;
 
+      const companiesResponsePromise = page.waitForResponse(
+        (res) => res.url().includes('/api/v1/companies') && res.request().method() === 'POST',
+        { timeout: 20000 }
+      ).catch(() => null);
+
       await btn.click({ timeout: 10000 });
-      await page.waitForTimeout(2500);
+
+      const companiesResponse = await companiesResponsePromise;
+      const submitFailure = await resolveCompaniesSubmitFailure(page, companiesResponse);
+      if (submitFailure) throw new Error(submitFailure);
+
+      await page.waitForTimeout(1000);
 
       const moved = await page
         .getByText(/Supporting Doc|Additional Document|Captcha Code|Drag & Drop/i)
@@ -655,7 +684,15 @@ async function clickGeneralInfoContinue(page, onLog) {
       }
 
       await page.locator('form').first().evaluate((form) => form.requestSubmit()).catch(() => {});
-      await page.waitForTimeout(2500);
+
+      const retryCompaniesResponse = await page.waitForResponse(
+        (res) => res.url().includes('/api/v1/companies') && res.request().method() === 'POST',
+        { timeout: 10000 }
+      ).catch(() => null);
+      const retryFailure = await resolveCompaniesSubmitFailure(page, retryCompaniesResponse);
+      if (retryFailure) throw new Error(retryFailure);
+
+      await page.waitForTimeout(1500);
 
       if (
         await page
@@ -854,6 +891,16 @@ function toPortalDate(value) {
   return s;
 }
 
+async function assertDateFieldEnabled(input, context = 'Date field') {
+  const disabled = await input.isDisabled().catch(() => false);
+  const cls = (await input.getAttribute('class').catch(() => '')) || '';
+  if (disabled || /input-disabled|disabled/i.test(cls)) {
+    throw new Error(
+      `${context} is disabled — GST verification did not unlock the form (e.g. Cancelled or inactive GST on CPCB portal).`
+    );
+  }
+}
+
 async function fillDateField(page, value, { index = 0, label = null } = {}) {
   if (!value) return;
   const isoValue = value;
@@ -862,6 +909,7 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
   if (label) {
     const byLabel = page.getByLabel(new RegExp(label, 'i'));
     if (await byLabel.isVisible().catch(() => false)) {
+      await assertDateFieldEnabled(byLabel, label);
       const inputType = await byLabel.getAttribute('type').catch(() => '');
       await byLabel.fill(inputType === 'date' ? isoValue : portalValue);
       await byLabel.blur();
@@ -871,6 +919,7 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
 
   const dateInput = page.locator('input[type="date"]').nth(index);
   if (await dateInput.isVisible().catch(() => false)) {
+    await assertDateFieldEnabled(dateInput, 'Date of Establishment');
     await dateInput.fill(isoValue);
     return;
   }
@@ -892,15 +941,26 @@ function isSuccessPortalMessage(text) {
 function isFailurePortalMessage(text) {
   const t = String(text || '').trim();
   if (!t) return false;
-  if (isSuccessPortalMessage(t) && !/invalid|incorrect|failed|something went wrong/i.test(t)) {
+  if (/gst status is cancelled|gst status is canceled|gst.*cancelled|gst.*canceled|gst.*inactive|gst.*suspended/i.test(t)) {
+    return true;
+  }
+  if (isSuccessPortalMessage(t) && !/invalid|incorrect|failed|something went wrong|cancelled|canceled/i.test(t)) {
     return false;
   }
-  return /something went wrong|please try again|try again after|failed|invalid otp|incorrect otp|unable to|not valid|invalid pan|invalid gst/i.test(t);
+  return /something went wrong|please try again|try again after|failed|invalid otp|incorrect otp|unable to|not valid|invalid pan|invalid gst|cancelled|canceled|inactive|suspended|already exists|conflict/i.test(t);
 }
 
 async function readPortalToastText(page) {
+  const texts = await readAllPortalToastTexts(page);
+  return texts[0] || '';
+}
+
+async function readAllPortalToastTexts(page) {
+  const texts = [];
+  const seen = new Set();
   const selectors = [
     '.toast-error',
+    '.toast-success',
     '.toast-message',
     '#toast-container',
     '.ngx-toastr',
@@ -914,34 +974,97 @@ async function readPortalToastText(page) {
   ];
   for (const sel of selectors) {
     try {
-      const loc = page.locator(sel).first();
-      if (!(await loc.isVisible({ timeout: 250 }).catch(() => false))) continue;
-      const text = (await loc.innerText().catch(() => '')).trim().replace(/\s+/g, ' ');
-      if (text) return text;
+      const loc = page.locator(sel);
+      const count = await loc.count();
+      for (let i = 0; i < count; i++) {
+        const item = loc.nth(i);
+        if (!(await item.isVisible({ timeout: 100 }).catch(() => false))) continue;
+        const text = (await item.innerText().catch(() => '')).trim().replace(/\s+/g, ' ');
+        if (text && !seen.has(text)) {
+          seen.add(text);
+          texts.push(text);
+        }
+      }
     } catch {
       /* try next */
     }
   }
   try {
-    const fallback = page.getByText(/Something went wrong|Please try again after sometime/i).first();
-    if (await fallback.isVisible({ timeout: 250 }).catch(() => false)) {
-      return (await fallback.innerText().catch(() => 'Something went wrong. Please try again after sometime.')).trim();
+    const fallback = page.getByText(/Something went wrong|Please try again after sometime|Gst Status is|already exists|Authorised Person PAN/i);
+    const count = await fallback.count();
+    for (let i = 0; i < count; i++) {
+      const item = fallback.nth(i);
+      if (!(await item.isVisible({ timeout: 100 }).catch(() => false))) continue;
+      const text = (await item.innerText().catch(() => '')).trim().replace(/\s+/g, ' ');
+      if (text && !seen.has(text)) {
+        seen.add(text);
+        texts.push(text);
+      }
     }
   } catch {
     /* ignore */
   }
-  return '';
+  return texts;
 }
 
 async function checkPortalError(page) {
   try {
-    const text = await readPortalToastText(page);
-    if (!text) return null;
-    if (isSuccessPortalMessage(text)) return null;
-    if (isFailurePortalMessage(text)) return text;
+    const texts = await readAllPortalToastTexts(page);
+    for (const text of texts) {
+      if (isFailurePortalMessage(text)) return text;
+    }
     return null;
   } catch {
     return null;
+  }
+}
+
+async function waitForGstVerifyOutcome(page, gstin, onLog) {
+  const responsePromise = page.waitForResponse(
+    (res) => res.url().includes('/gst/details') && res.request().method() === 'POST',
+    { timeout: 20000 }
+  ).catch(() => null);
+
+  await page.getByRole('button', { name: /Verify/i }).first().click();
+
+  const gstResponse = await responsePromise;
+  if (gstResponse) {
+    try {
+      const body = await gstResponse.json();
+      const evaluated = evaluateGstDetailsResponse(body, gstin);
+      if (!evaluated.isRegistrationAllowed) {
+        throw new Error(evaluated.message);
+      }
+      if (onLog && evaluated.portalStatus) {
+        onLog(`GST verified — portal status: ${evaluated.portalStatus}`);
+      }
+    } catch (err) {
+      if (err.message.includes('CPCB portal') || err.message.includes('Registration cannot proceed')) {
+        throw err;
+      }
+    }
+  }
+
+  await page.waitForTimeout(1500);
+  const outcome = await waitForPortalOutcome(page, { timeoutMs: 8000 });
+  if (outcome.error) {
+    if (/cancelled|canceled|inactive|suspended/i.test(outcome.error)) {
+      throw new Error(formatInvalidGstError(gstin, outcome.error.replace(/gst status is\s*/i, '').trim()));
+    }
+    throw new Error(outcome.error);
+  }
+
+  const dateInput = page.locator('input[type="date"]').first();
+  if (await dateInput.isVisible().catch(() => false)) {
+    const disabled = await dateInput.isDisabled().catch(() => false);
+    if (disabled) {
+      const toastErr = await checkPortalError(page);
+      throw new Error(
+        toastErr && isFailurePortalMessage(toastErr)
+          ? formatInvalidGstError(gstin, toastErr.replace(/gst status is\s*/i, '').trim())
+          : `GST verification did not unlock the form for ${gstin}. The GST may be Cancelled or inactive on CPCB portal.`
+      );
+    }
   }
 }
 
@@ -1225,14 +1348,8 @@ export async function startRegistrationFlow(data, onLog) {
     await gstLocator.pressSequentially(data.gstin, { delay: 50 });
     await gstLocator.blur();
     
-    // Click Verify
-    await regPage.getByRole('button', { name: /Verify/i }).first().click();
-    
-    // Wait for verify success
-    await regPage.waitForTimeout(2000);
-    
-    let portalErr = await checkPortalError(regPage);
-    if (portalErr) throw new Error(portalErr);
+    if (onLog) onLog('Verifying GST on CPCB portal...');
+    await waitForGstVerifyOutcome(regPage, data.gstin, onLog);
     
     // Date of Establishment
     if (onLog) onLog('Entering Date of Establishment...');
@@ -1272,7 +1389,7 @@ export async function startRegistrationFlow(data, onLog) {
     
     await regPage.waitForTimeout(2000);
 
-    portalErr = await checkPortalError(regPage);
+    const portalErr = await checkPortalError(regPage);
     if (portalErr) throw new Error(portalErr);
 
     // Email Address
@@ -1468,6 +1585,7 @@ export async function submitMobileOtp(payload, onLog) {
       await fillGeneralInformation(regPage, data, onLog);
       filledGeneral = true;
     } catch (err) {
+      if (isDuplicateAuthPersonMessage(err.message)) throw err;
       generalInfoError = err.message;
       if (onLog) onLog('General Information warning: ' + err.message);
     }
@@ -1489,6 +1607,7 @@ export async function submitMobileOtp(payload, onLog) {
           if (onLog) onLog('Supporting Documents warning: ' + err.message);
         }
       } catch (err) {
+        if (isDuplicateAuthPersonMessage(err.message)) throw err;
         generalInfoError = err.message;
         if (onLog) onLog('General Information submit warning: ' + err.message);
       }
@@ -1514,7 +1633,11 @@ export async function submitMobileOtp(payload, onLog) {
     };
   } catch (err) {
     if (onLog) onLog('Mobile OTP error: ' + err.message);
-    return { success: false, error: err.message };
+    return {
+      success: false,
+      error: err.message,
+      errorCode: isDuplicateAuthPersonMessage(err.message) ? 'DUPLICATE_AUTH_PERSON' : undefined,
+    };
   }
 }
 

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { INDIAN_STATES } from '../utils/registrationGeneralInfo.js';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 
 const inputClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm';
 const selectClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-white';
@@ -169,8 +170,13 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
       {renderInput('Recycled Plastic % (0 for virgin)', 'recycledPercent', 'number')}
       <div className="col-span-2">
         <label className={labelClass}>Upload Invoice/GST E-Invoice *</label>
-        <input type="file" accept=".pdf" className={inputClass} onChange={(e) => {
-          if (e.target.files[0]) setModalData({...modalData, invoiceDoc: e.target.files[0].path});
+        <input type="file" accept=".pdf" className={inputClass} onChange={async (e) => {
+          const file = e.target.files[0];
+          if (!file) return;
+          const stored = await storeCompressedUpload(file, { destSubdir: 'processed_part_b' });
+          if (stored.success && stored.filePath) {
+            setModalData({ ...modalData, invoiceDoc: stored.filePath });
+          }
         }} disabled={modalData._isView} />
         {modalData.invoiceDoc && <p className="text-xs text-green-600 mt-1">{modalData.invoiceDoc.split(/[/\\]/).pop()}</p>}
       </div>

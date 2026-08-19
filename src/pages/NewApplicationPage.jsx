@@ -27,6 +27,8 @@ import {
   GENERAL_INFO_EMPTY,
 } from '../utils/registrationGeneralInfo.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -132,6 +134,7 @@ export default function NewApplicationPage() {
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
+  const [registrationBlocker, setRegistrationBlocker] = useState('');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -470,14 +473,18 @@ export default function NewApplicationPage() {
 
       const res = await window.pwp.scraper.startRegistrationFlow(payload);
       if (res.success && res.step === 'WAITING_EMAIL_OTP') {
+        setRegistrationBlocker('');
         setShowEmailOtp(true);
         setOtpTimer(120);
         setIsResendActive(false);
       } else {
-        showToast(res.error || 'Unexpected step received.', 'error');
+        const errMsg = res.error || 'Unexpected step received.';
+        setRegistrationBlocker(errMsg);
+        showRegistrationAutomationError(showToast, setAutomationLogs, errMsg);
       }
     } catch (err) {
-      showToast('System error: ' + err.message, 'error');
+      setRegistrationBlocker(err.message);
+      showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
     } finally {
       setLoading(false);
     }
@@ -559,6 +566,7 @@ export default function NewApplicationPage() {
       const res = await window.pwp.scraper.submitMobileOtp({ mobile, otp: mobileOtp.trim() });
 
       if (res.success && res.step === 'WAITING_CAPTCHA') {
+        setRegistrationBlocker('');
         setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
@@ -580,6 +588,7 @@ export default function NewApplicationPage() {
           res.step === 'USER_VERIFICATION_DONE' ||
           res.step === 'COMPLETED')
       ) {
+        setRegistrationBlocker('');
         setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
@@ -629,11 +638,12 @@ export default function NewApplicationPage() {
         }
       } else {
         const errText = res.error || 'Unknown error';
-        showToast(errText, 'error', { duration: 10000 });
-        setAutomationLogs((prev) => [...prev, { type: 'error', message: errText }]);
+        setRegistrationBlocker(errText);
+        showRegistrationAutomationError(showToast, setAutomationLogs, errText);
       }
     } catch (err) {
-      showToast('Error: ' + err.message, 'error');
+      setRegistrationBlocker(err.message);
+      showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
     } finally {
       setOtpSubmitting(false);
       setLoadingMsg('');
@@ -1020,6 +1030,13 @@ export default function NewApplicationPage() {
         <AutoFilledPreview data={autoData} isDummy={false} />
       </div>
 
+      {registrationBlocker ? (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <p className="font-semibold">CPCB registration blocked</p>
+          <p className="mt-1">{registrationBlocker}</p>
+        </div>
+      ) : null}
+
       <form onSubmit={handleSubmit} className="space-y-8">
         <div>
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
@@ -1076,10 +1093,15 @@ export default function NewApplicationPage() {
                 <input
                   type="file"
                   accept=".pdf"
-                  onChange={(e) => {
+                  onChange={async (e) => {
                     const file = e.target.files[0];
                     if (file) {
-                      setAutoData(prev => ({ ...prev, typeOfCompanyDoc: file.path || file.name }));
+                      const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                      if (!stored.success || !stored.filePath) {
+                        showToast(stored.message || 'Could not save document.', 'error');
+                        return;
+                      }
+                      setAutoData(prev => ({ ...prev, typeOfCompanyDoc: stored.filePath }));
                     }
                   }}
                   className={inputClass}
@@ -1169,10 +1191,15 @@ export default function NewApplicationPage() {
                     <input
                       type="file"
                       accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={(e) => {
+                      onChange={async (e) => {
                         const file = e.target.files[0];
                         if (file) {
-                          setAutoData(prev => ({ ...prev, unitGstDoc: file.path || file.name }));
+                          const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                          if (!stored.success || !stored.filePath) {
+                            showToast(stored.message || 'Could not save Unit GST document.', 'error');
+                            return;
+                          }
+                          setAutoData(prev => ({ ...prev, unitGstDoc: stored.filePath }));
                         }
                       }}
                       className={inputClass}
@@ -1472,9 +1499,13 @@ export default function NewApplicationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = file.path;
+                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                        if (!stored.success || !stored.filePath) {
+                          showToast(stored.message || 'Could not save document.', 'error');
+                          return;
+                        }
                         setAutoData((prev) => {
-                          const next = { ...prev, detailsOfProductsPath: path };
+                          const next = { ...prev, detailsOfProductsPath: stored.filePath };
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),
@@ -1502,9 +1533,13 @@ export default function NewApplicationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = file.path;
+                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                        if (!stored.success || !stored.filePath) {
+                          showToast(stored.message || 'Could not save document.', 'error');
+                          return;
+                        }
                         setAutoData((prev) => {
-                          const next = { ...prev, representativePicturePath: path };
+                          const next = { ...prev, representativePicturePath: stored.filePath };
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),

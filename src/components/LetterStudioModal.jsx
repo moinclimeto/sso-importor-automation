@@ -10,7 +10,8 @@ import {
   Upload,
   X,
 } from 'lucide-react';
-import { fileLabel, getLocalFilePath } from '../utils/partCLetterValues.js';
+import { fileLabel } from '../utils/partCLetterValues.js';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import LetterPagePreview from './LetterPagePreview.jsx';
 
 export default function LetterStudioModal({
@@ -105,24 +106,20 @@ export default function LetterStudioModal({
     }
   };
 
-  const handleAttach = (event) => {
+  const handleAttach = async (event) => {
     const file = event.target.files?.[0];
     event.target.value = '';
     if (!file || !active) return;
     if (!/\.pdf$/i.test(file.name)) {
-      onNotify?.('Please upload a signed PDF (max 1 MB).', 'error');
+      onNotify?.('Please upload a signed PDF.', 'error');
       return;
     }
-    if (file.size > 1024 * 1024) {
-      onNotify?.('PDF must be 1 MB or smaller for the CPCB portal.', 'error');
+    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_part_c' });
+    if (!stored.success || !stored.filePath) {
+      onNotify?.(stored.message || 'Could not save PDF.', 'error');
       return;
     }
-    const filePath = getLocalFilePath(file);
-    if (!filePath) {
-      onNotify?.('Could not read the file path. Please try again.', 'error');
-      return;
-    }
-    onAttachPdf?.(active, filePath);
+    onAttachPdf?.(active, stored.filePath);
     onNotify?.(`${active.title} signed PDF attached.`, 'success');
   };
 
@@ -139,7 +136,7 @@ export default function LetterStudioModal({
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-emerald-700">Ready Letters</p>
             <h2 className="text-lg font-semibold text-slate-900 mt-0.5">Filled drafts, ready for seal &amp; sign</h2>
             <p className="text-sm text-slate-500 mt-1">
-              Preview the auto-filled Word drafts, download them, print on letterhead, then upload the signed PDF (short name, max 1 MB).
+              Preview the auto-filled Word drafts, download them, print on letterhead, then upload the signed PDF (short name).
             </p>
           </div>
           <button type="button" onClick={onClose} className="p-2 rounded-lg text-slate-400 hover:bg-white hover:text-slate-700">

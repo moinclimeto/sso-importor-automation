@@ -6,14 +6,13 @@ import { createLogger } from '../utils/logger.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
-import { compressPdf } from '../utils/pdfCompressor.js';
+import { storeProcessedUpload } from '../utils/storeUploadFile.js';
 import { registrationDocFileName } from '../utils/registrationDocFileName.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
 import fs from 'fs';
 import os from 'os';
-import sharp from 'sharp';
 import {
   prepareDummyProcurementBulk,
   runProcurementBulkFill,
@@ -265,44 +264,16 @@ export function registerIpcHandlers() {
     let finalPath = data.file_path || '';
     if (finalPath && fs.existsSync(finalPath)) {
       try {
-        const destDir = path.join(app.getPath('userData'), 'processed_registration_docs');
-        if (!fs.existsSync(destDir)) {
-          fs.mkdirSync(destDir, { recursive: true });
-        }
-        
         const docType = data.doc_type || 'document';
         const ext = path.extname(finalPath).toLowerCase() || '.pdf';
         const newFileName = registrationDocFileName(docType, ext);
-        const newPath = path.join(destDir, newFileName);
-        if (fs.existsSync(newPath)) {
-          fs.unlinkSync(newPath);
-        }
-
-        if (ext === '.pdf') {
-          console.log(`Compressing PDF: ${finalPath} -> ${newPath}`);
-          const success = await compressPdf(finalPath, newPath);
-          if (success && fs.existsSync(newPath)) {
-            finalPath = newPath;
-          } else {
-            fs.copyFileSync(finalPath, newPath);
-            finalPath = newPath;
-          }
-        } else if (['.jpg', '.jpeg', '.png', '.webp'].includes(ext)) {
-          console.log(`Compressing Image: ${finalPath} -> ${newPath}`);
-          try {
-            await sharp(finalPath)
-              .resize(1920, 1920, { fit: 'inside', withoutEnlargement: true })
-              .jpeg({ quality: 80 }) // Compress to JPEG with 80% quality
-              .toFile(newPath);
-            finalPath = newPath;
-          } catch (sharpErr) {
-            console.error('Sharp image compression failed:', sharpErr);
-            fs.copyFileSync(finalPath, newPath);
-            finalPath = newPath;
-          }
-        } else {
-          fs.copyFileSync(finalPath, newPath);
-          finalPath = newPath;
+        const stored = await storeProcessedUpload({
+          sourcePath: finalPath,
+          fileName: newFileName,
+          destSubdir: 'processed_registration_docs',
+        });
+        if (stored.success && stored.filePath) {
+          finalPath = stored.filePath;
         }
       } catch (err) {
         console.error('Failed to process registration document:', err);
@@ -339,6 +310,19 @@ export function registerIpcHandlers() {
     const db = getDb();
     const count = await db.get('SELECT COUNT(*) as count FROM company_documents');
     return { count: count.count || 0 };
+  });
+
+  ipcMain.handle('files:store-upload', async (_, payload = {}) => {
+    try {
+      return await storeProcessedUpload({
+        sourcePath: payload.sourcePath || payload.filePath || '',
+        fileName: payload.fileName || '',
+        destSubdir: payload.destSubdir || 'processed_uploads',
+      });
+    } catch (err) {
+      console.error('files:store-upload error', err);
+      return { success: false, message: err?.message || 'Failed to store upload.' };
+    }
   });
 
   async function storeInvoicePdfLocally(data) {

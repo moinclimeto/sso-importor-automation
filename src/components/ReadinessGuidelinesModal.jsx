@@ -5,62 +5,50 @@ const GUIDELINES = [
   {
     title: 'Company PAN *',
     subtitle: 'Scanned copy of Company PAN in PDF Format',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'GST registration certificate of Plant/Unit *',
     subtitle: 'Enter a valid 15-character GSTIN or upload PDF',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'CIN (Number or Upload)',
     subtitle: 'Scanned copy of Company CIN in PDF Format (If any)',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'GST certificate of Company/Business *',
     subtitle: 'Scanned copy of Company GST in PDF Format',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'IEC *',
     subtitle: 'Required IEC number, or upload IEC Certificate',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Supporting document for company category *',
     subtitle: 'MSME Certificate or Declaration for Large Entity',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Authorized person PAN *',
     subtitle: "Scanned copy of Authorized Person's PAN in PDF Format",
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Details (Type & Quantity) of products produced/marketed *',
     subtitle: 'Scanned copy of details in PDF Format',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Representative picture of Plastic Packaging *',
     subtitle: 'Plastic packaging for commodities covering different EPR categories',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Covering Letter *',
     subtitle: 'Please attach Covering Letter (Only PDF)',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Signature *',
     subtitle: 'Authorized person signature',
-    subtext: 'Maximum file size should be 1 MB',
   },
   {
     title: 'Any Other Information & Self declaration',
     subtitle: 'Based upon Audited Statement (Only PDF)',
-    subtext: 'Maximum file size should be 1 MB',
   },
 ];
 
@@ -89,7 +77,6 @@ export default function ReadinessGuidelinesModal({ isOpen, onClose }) {
                   {String(i + 1).padStart(2, '0')}. {item.title}
                 </p>
                 {item.subtitle && <p className="text-[15px] text-slate-700">{item.subtitle}</p>}
-                <p className="text-sm text-slate-400">{item.subtext}</p>
               </div>
             ))}
           </div>

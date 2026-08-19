@@ -28,7 +28,8 @@ import {
   mergeGeneralInfoFromSources,
   pickNonEmpty,
 } from '../utils/registrationFormPersistence.js';
-import { getLocalFilePath } from '../utils/partCLetterValues.js';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -137,6 +138,7 @@ export default function CpcbRegistrationPage() {
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
+  const [registrationBlocker, setRegistrationBlocker] = useState('');
   const [wizardStep, setWizardStep] = useState('account');
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
@@ -540,11 +542,14 @@ export default function CpcbRegistrationPage() {
 
       const res = await window.pwp.scraper.startRegistrationFlow(payload);
       if (res.success && res.step === 'WAITING_EMAIL_OTP') {
+        setRegistrationBlocker('');
         setShowEmailOtp(true);
         setOtpTimer(120);
         setIsResendActive(false);
       } else {
-        showToast(res.error || 'Unexpected step received.', 'error');
+        const errMsg = res.error || 'Unexpected step received.';
+        setRegistrationBlocker(errMsg);
+        showRegistrationAutomationError(showToast, setAutomationLogs, errMsg);
       }
     } catch (err) {
       showToast('System error: ' + err.message, 'error');
@@ -627,6 +632,7 @@ export default function CpcbRegistrationPage() {
       const res = await window.pwp.scraper.submitMobileOtp({ mobile, otp: mobileOtp.trim() });
 
       if (res.success && res.step === 'WAITING_CAPTCHA') {
+        setRegistrationBlocker('');
         setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
@@ -648,6 +654,7 @@ export default function CpcbRegistrationPage() {
           res.step === 'USER_VERIFICATION_DONE' ||
           res.step === 'COMPLETED')
       ) {
+        setRegistrationBlocker('');
         setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
@@ -696,10 +703,13 @@ export default function CpcbRegistrationPage() {
           );
         }
       } else {
-        showToast('Mobile OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        const errText = res.error || 'Unknown error';
+        setRegistrationBlocker(errText);
+        showRegistrationAutomationError(showToast, setAutomationLogs, errText);
       }
     } catch (err) {
-      showToast('Error: ' + err.message, 'error');
+      setRegistrationBlocker(err.message);
+      showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
     } finally {
       setOtpSubmitting(false);
       setLoadingMsg('');
@@ -1116,6 +1126,13 @@ export default function CpcbRegistrationPage() {
       </div>
       )}
 
+      {registrationBlocker ? (
+        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
+          <p className="font-semibold">CPCB registration blocked</p>
+          <p className="mt-1">{registrationBlocker}</p>
+        </div>
+      ) : null}
+
       <form onSubmit={handleSubmit} className="space-y-8">
         {!registrationComplete && (
         <div>
@@ -1275,10 +1292,15 @@ export default function CpcbRegistrationPage() {
                       <input
                         type="file"
                         accept=".pdf,.png,.jpg,.jpeg"
-                        onChange={(e) => {
+                        onChange={async (e) => {
                           const file = e.target.files[0];
                           if (file) {
-                            setAutoData(prev => ({ ...prev, unitGstDoc: file.path || file.name }));
+                            const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                            if (!stored.success || !stored.filePath) {
+                              showToast(stored.message || 'Could not save Unit GST document.', 'error');
+                              return;
+                            }
+                            setAutoData(prev => ({ ...prev, unitGstDoc: stored.filePath }));
                           }
                         }}
                         className={inputClass}
@@ -1590,13 +1612,13 @@ export default function CpcbRegistrationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = getLocalFilePath(file) || file.path;
-                        if (!path) {
-                          showToast('Could not read the file path. Please upload again from the desktop app.', 'error');
+                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                        if (!stored.success || !stored.filePath) {
+                          showToast(stored.message || 'Could not save document.', 'error');
                           return;
                         }
                         setAutoData((prev) => {
-                          const next = { ...prev, detailsOfProductsPath: path };
+                          const next = { ...prev, detailsOfProductsPath: stored.filePath };
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),
@@ -1624,13 +1646,13 @@ export default function CpcbRegistrationPage() {
                     onChange={async (e) => {
                       const file = e.target.files[0];
                       if (file) {
-                        const path = getLocalFilePath(file) || file.path;
-                        if (!path) {
-                          showToast('Could not read the file path. Please upload again from the desktop app.', 'error');
+                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                        if (!stored.success || !stored.filePath) {
+                          showToast(stored.message || 'Could not save document.', 'error');
                           return;
                         }
                         setAutoData((prev) => {
-                          const next = { ...prev, representativePicturePath: path };
+                          const next = { ...prev, representativePicturePath: stored.filePath };
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),
@@ -1659,11 +1681,16 @@ export default function CpcbRegistrationPage() {
                   <input
                     type="file"
                     accept=".pdf"
-                    onChange={(e) => {
+                    onChange={async (e) => {
                       const file = e.target.files[0];
                       if (!file) return;
+                      const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                      if (!stored.success || !stored.filePath) {
+                        showToast(stored.message || 'Could not save document.', 'error');
+                        return;
+                      }
                       setAutoData((prev) => {
-                        const next = { ...prev, typeOfCompanyDoc: file.path || file.name };
+                        const next = { ...prev, typeOfCompanyDoc: stored.filePath };
                         if (window.pwp?.registration?.save) {
                           const updatedFormData = {
                             ...(savedRegistration?.formData || {}),

@@ -9,6 +9,9 @@ contextBridge.exposeInMainWorld('pwp', {
   fs: {
     readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
   },
+  files: {
+    storeUpload: (payload) => ipcRenderer.invoke('files:store-upload', payload),
+  },
   letters: {
     preview: (payload) => ipcRenderer.invoke('letters:preview', payload),
     save: (payload) => ipcRenderer.invoke('letters:save', payload),
@@ -117,6 +120,11 @@ contextBridge.exposeInMainWorld('pwp', {
     startCpcbKeepAlive: () => ipcRenderer.invoke('scraper:startCpcbKeepAlive'),
     stopCpcbKeepAlive: () => ipcRenderer.invoke('scraper:stopCpcbKeepAlive'),
     pingCpcbSession: () => ipcRenderer.invoke('scraper:pingCpcbSession'),
+    onPrepareProgress: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('scraper:prepare-progress', handler);
+      return () => ipcRenderer.removeListener('scraper:prepare-progress', handler);
+    },
     onLog: (callback) => {
       const handler = (_event, payload) => callback?.(payload);
       ipcRenderer.on('scraper:log', handler);
