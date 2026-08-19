@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet, Users, Package
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 import { getApi } from '../utils/pwpApi.js';
@@ -35,17 +35,13 @@ const navLinks = [
   */
   // { to: '/production-entry', icon: FileSpreadsheet, label: 'Packaging Declaration' },
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  { to: '/companies', icon: Building2, label: 'Company Master' },
-  { to: '/supplier-master', icon: Users, label: 'Supplier Master' },
-  { to: '/packaging-master', icon: Package, label: 'Packaging Master' },
+  { to: '/master-data', icon: Database, label: 'Master Data' },
   { to: '/registration-form', icon: FileScan, label: 'Registration' },
 ];
 
 const pageHeaders = {
   '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
-  '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
-  '/supplier-master': { title: 'Supplier Master', subtitle: 'Manage suppliers across companies' },
-  '/packaging-master': { title: 'Packaging Master', subtitle: 'Manage packaging materials and conversion factors' },
+  '/master-data': { title: 'Master Data', subtitle: 'Company, supplier, packaging & MT reports' },
   '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-inventory': { title: 'EPR Inventory Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-production': { title: 'EPR Production Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },

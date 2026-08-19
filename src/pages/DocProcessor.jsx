@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ArrowRight, Folder, CheckCircle, Factory } from 'lucide-react';
+import { Package, ArrowRight, Folder, CheckCircle, BarChart3 } from 'lucide-react';
 
 const categories = [
   {
@@ -210,6 +210,27 @@ export default function DocProcessor() {
             </div>
           );
         })}
+      </div>
+
+      <div className="mt-8">
+        <button
+          type="button"
+          onClick={() => navigate('/master-data?tab=reports')}
+          className="w-full flex items-center justify-between gap-4 bg-white rounded-2xl border border-slate-200 p-5 shadow-sm hover:border-green-300 hover:shadow-md transition-all text-left"
+        >
+          <div className="flex items-center gap-4">
+            <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-green-50 text-green-700">
+              <BarChart3 size={22} />
+            </div>
+            <div>
+              <h3 className="text-base font-bold text-slate-900">Plastic Quantity Reports</h3>
+              <p className="text-sm text-slate-500 mt-0.5">
+                FY-wise and State-wise Cat-I / Cat-II / Cat-III / Cat-IV totals in MT
+              </p>
+            </div>
+          </div>
+          <ArrowRight size={18} className="text-slate-400" />
+        </button>
       </div>
     </div>
   );

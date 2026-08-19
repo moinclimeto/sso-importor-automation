@@ -3,7 +3,7 @@ import { Plus, Pencil, Trash2, Users } from 'lucide-react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useToast } from '../components/Toast.jsx';
 
-export default function SupplierMasterPage() {
+export default function SupplierMasterPage({ embedded = false }) {
   const [records, setRecords] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [modal, setModal] = useState(null);
@@ -12,13 +12,14 @@ export default function SupplierMasterPage() {
   const { showToast } = useToast();
 
   useEffect(() => {
+    if (embedded) return undefined;
     setPageHeader({
       title: 'Supplier Master',
       icon: Users,
       description: 'Manage supplier profiles and registrations'
     });
     return clearPageHeader;
-  }, []);
+  }, [embedded, setPageHeader, clearPageHeader]);
 
   const load = async () => {
     if (!window.pwp?.supplierMaster) { setLoading(false); return; }

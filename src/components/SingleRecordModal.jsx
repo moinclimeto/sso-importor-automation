@@ -1,6 +1,8 @@
 import { useEffect, useState, useRef } from 'react';
 import { X, Loader2, Plus, ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport.js';
+import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
+import { enrichSaleRecord } from '../../shared/reviewEnrichment.js';
 import { getApi } from '../utils/pwpApi.js';
 import {
   calcTotalPlasticQuantityMt,
@@ -119,10 +121,10 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               : '',
         };
       } else {
-        return {
+        return enrichSaleRecord({
           ...emptySale(),
           ...initialData,
-        };
+        });
       }
     }
     return isPurchase ? emptyPurchase() : emptySale();
@@ -211,10 +213,10 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
         });
         setLineItems(enrichLineItemsWithWeightMt(initialData.line_items || initialData.lineItems || []));
       } else {
-        setForm({
+        setForm(enrichSaleRecord({
           ...emptySale(),
           ...initialData,
-        });
+        }));
       }
       setError('');
       setFieldErrors({});
@@ -453,7 +455,19 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
 
     if (isEdit && initialData) {
       payload.lineItems = initialData.line_items || initialData.lineItems;
-      payload.extraction = initialData.extraction;
+      const baseExtraction =
+        initialData.extraction && typeof initialData.extraction === 'object'
+          ? { ...initialData.extraction }
+          : {};
+      const gstNum = parseFloat(form.gst_other_charges);
+      payload.extraction = {
+        ...baseExtraction,
+        district: (form.district || '').trim() || baseExtraction.district,
+        dist: (form.district || '').trim() || baseExtraction.dist,
+        ...(Number.isFinite(gstNum) && gstNum !== 0
+          ? { totalInvoiceAmount: gstNum, tot: gstNum, gst_other_charges: gstNum }
+          : {}),
+      };
       payload._source_fields = initialData._source_fields;
       payload._routing = initialData._routing;
       payload.fileHash = initialData.file_hash || initialData.fileHash;
@@ -695,11 +709,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
                     onChange={(e) => set('financial_year', e.target.value)}
                   >
                     <option value="">Financial Year</option>
-                    <option value="2025-26">2025-26</option>
-                    <option value="2024-25">2024-25</option>
-                    <option value="2023-24">2023-24</option>
-                    <option value="2022-23">2022-23</option>
-                    <option value="2021-22">2021-22</option>
+                    {FINANCIAL_YEAR_OPTIONS.map((fy) => (
+                      <option key={fy} value={fy}>{fy}</option>
+                    ))}
                   </select>
                   {fieldErrors.financial_year && (
                     <p className="text-xs text-red-500 mt-1">{fieldErrors.financial_year}</p>
@@ -906,6 +918,12 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="GST Number">
                 <input className="input uppercase" value={form.customer_gstin || ''} onChange={(e) => set('customer_gstin', e.target.value.toUpperCase())} maxLength={15} />
               </Field>
+              <Field label="District">
+                <input className="input" value={form.district || ''} onChange={(e) => set('district', e.target.value)} />
+              </Field>
+              <Field label="GST & Other Charges">
+                <input type="number" step="any" className="input" value={form.gst_other_charges ?? ''} onChange={(e) => set('gst_other_charges', e.target.value)} />
+              </Field>
 
               <Field label="Entity Type">
                 <select className="input bg-white" value={form.entity_type || ''} onChange={(e) => set('entity_type', e.target.value)}>
@@ -930,11 +948,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="Financial Year">
                 <select className="input bg-white" value={form.financial_year || ''} onChange={(e) => set('financial_year', e.target.value)}>
                   <option value="">Select Financial Year</option>
-                  <option value="2025-26">2025-26</option>
-                  <option value="2024-25">2024-25</option>
-                  <option value="2023-24">2023-24</option>
-                  <option value="2022-23">2022-23</option>
-                  <option value="2021-22">2021-22</option>
+                  {FINANCIAL_YEAR_OPTIONS.map((fy) => (
+                    <option key={fy} value={fy}>{fy}</option>
+                  ))}
                 </select>
               </Field>
 
@@ -944,17 +960,11 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="State">
                 <input className="input" value={form.state} onChange={(e) => set('state', e.target.value)} />
               </Field>
-              <Field label="District">
-                <input className="input" value={form.district} onChange={(e) => set('district', e.target.value)} />
-              </Field>
               <Field label="Account Number">
                 <input className="input" value={form.account_number} onChange={(e) => set('account_number', e.target.value)} />
               </Field>
               <Field label="IFSC Code">
                 <input className="input uppercase" value={form.ifsc_code} onChange={(e) => set('ifsc_code', e.target.value.toUpperCase())} />
-              </Field>
-              <Field label="GST & Other Charges">
-                <input type="number" step="any" className="input" value={form.gst_other_charges} onChange={(e) => set('gst_other_charges', e.target.value)} />
               </Field>
               <Field label="Application Number">
                 <input className="input" value={form.application_number} onChange={(e) => set('application_number', e.target.value)} />

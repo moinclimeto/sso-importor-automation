@@ -259,13 +259,11 @@ async function extractOneInvoice({
     }
 
     const qrResult = await qrPromise;
-    const defaultCf =
-      invoiceType === 'purchase' ? await fetchDefaultConversionFactor(getDb()) : null;
     let row =
       invoiceType === 'company_document'
         ? { ...parsed, fileName: outFileName, decidedType: 'company_document', _source_fields: {} }
         : invoiceType === 'purchase'
-        ? mapPurchaseFromOcr(parsed, outFileName, financialYear, defaultCf)
+        ? mapPurchaseFromOcr(parsed, outFileName, financialYear)
         : mapSaleFromOcr(parsed, outFileName, sNo);
 
     const cpy = row.extraction?.copyType;

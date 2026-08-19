@@ -20,6 +20,7 @@ import {
   calcTotalPlasticQuantityMt,
   enrichLineItemsWithWeightMt,
 } from '../utils/procurementQuantity.js';
+import { resolveFinancialYear } from '../../shared/procurementConversionFactor.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import ZipPreviewModal from '../components/ZipPreviewModal.jsx';
 function getFyOptions() {
@@ -501,6 +502,7 @@ export default function DocUpload() {
       // company_name / company_id = matched target company profile (buyer). supplier_* = extracted seller.
       const cf = parseFloat(data.conversion_factor) || 0;
       const qtyMt = calcTotalPlasticQuantityMt(lineItems, cf) ?? data.quantity_mt ?? null;
+      const invoiceDate = data.procurement_date || data.invoice_date || null;
       return {
         company_id: companyId,
         company_name: companyName,
@@ -516,9 +518,12 @@ export default function DocUpload() {
         supplier_mobile_number: data.supplier_mobile_number ?? data.mobile ?? null,
         plastic_type: data.plastic_type ?? null,
         category_of_plastic: data.category_of_plastic ?? null,
-        financial_year: data.financial_year || data.financialYear || financialYear || null,
-        procurement_date: data.procurement_date || data.invoice_date || null,
-        invoice_date: data.procurement_date || data.invoice_date || null,
+        financial_year: resolveFinancialYear(
+          invoiceDate,
+          data.financial_year || data.financialYear,
+        ) || (financialYear !== 'all' ? financialYear : null),
+        procurement_date: invoiceDate,
+        invoice_date: invoiceDate,
         quantity_mt: qtyMt,
         quantity: qtyMt,
         unit: 'MT',
@@ -576,7 +581,10 @@ export default function DocUpload() {
       total_amount: parseFloat(data.gst_other_charges || data.total_amount) || 0,
       entity_type: data.entity_type || data.entityType || '',
       registration_type: data.registration_type || data.registrationType || '',
-      financial_year: data.financial_year || data.financialYear || financialYear || '',
+      financial_year: resolveFinancialYear(
+        data.invoice_date || data.date_of_entry || data.procurement_date,
+        data.financial_year || data.financialYear,
+      ) || (financialYear !== 'all' ? financialYear : ''),
       mobile_number: data.mobile || data.mobile_number || '',
       lineItems,
       extraction,

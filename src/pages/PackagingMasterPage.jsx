@@ -3,8 +3,13 @@ import { Plus, Pencil, Trash2, Package } from 'lucide-react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useToast } from '../components/Toast.jsx';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport.js';
+import {
+  formatPackagingConversionFactor,
+  resolvePackagingHsn,
+  resolvePackagingUom,
+} from '../../shared/packagingMasterSync.js';
 
-export default function PackagingMasterPage() {
+export default function PackagingMasterPage({ embedded = false }) {
   const [records, setRecords] = useState([]);
   const [companies, setCompanies] = useState([]);
   const [modal, setModal] = useState(null);
@@ -13,13 +18,14 @@ export default function PackagingMasterPage() {
   const { showToast } = useToast();
 
   useEffect(() => {
+    if (embedded) return undefined;
     setPageHeader({
       title: 'Packaging Master',
       icon: Package,
       description: 'Manage packaging rules, conversion factors, and material details'
     });
     return clearPageHeader;
-  }, []);
+  }, [embedded, setPageHeader, clearPageHeader]);
 
   const load = async () => {
     if (!window.pwp?.packagingMaster) { setLoading(false); return; }
@@ -97,15 +103,16 @@ export default function PackagingMasterPage() {
                 <th className="px-4 py-3 font-medium">Match Key</th>
                 <th className="px-4 py-3 font-medium">Material</th>
                 <th className="px-4 py-3 font-medium">Conv. Factor</th>
-                <th className="px-4 py-3 font-medium">HSN / UOM</th>
+                <th className="px-4 py-3 font-medium">HSN</th>
+                <th className="px-4 py-3 font-medium">UOM</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
               {loading ? (
-                <tr><td colSpan="7" className="p-8 text-center text-slate-500">Loading...</td></tr>
+                <tr><td colSpan="8" className="p-8 text-center text-slate-500">Loading...</td></tr>
               ) : records.length === 0 ? (
-                <tr><td colSpan="7" className="p-8 text-center text-slate-500">No packaging records found.</td></tr>
+                <tr><td colSpan="8" className="p-8 text-center text-slate-500">No packaging records found.</td></tr>
               ) : records.map(r => (
                 <tr key={r.id} className="hover:bg-slate-50">
                   <td className="px-4 py-3 font-medium text-slate-900">{r.supplier_name || '-'}</td>
@@ -127,8 +134,9 @@ export default function PackagingMasterPage() {
                     {r.plastic_category}
                     {r.plastic_material ? ` (${r.plastic_material})` : ''}
                   </td>
-                  <td className="px-4 py-3 font-mono text-slate-600">{r.conversion_factor || '-'}</td>
-                  <td className="px-4 py-3 text-slate-600">{r.hsn || '-'} / {r.uom || '-'}</td>
+                  <td className="px-4 py-3 font-mono text-slate-600">{formatPackagingConversionFactor(r)}</td>
+                  <td className="px-4 py-3 font-mono text-slate-600">{resolvePackagingHsn(r) || '—'}</td>
+                  <td className="px-4 py-3 text-slate-600">{resolvePackagingUom(r) || '—'}</td>
                   <td className="px-4 py-3">
                     <div className="flex justify-end gap-2">
                       <button onClick={() => setModal(r)} className="p-1.5 text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 rounded-md transition-colors"><Pencil className="w-4 h-4" /></button>

@@ -4,13 +4,15 @@ import LoginPage from '../pages/Login.jsx';
 import MainLayout from '../components/MainLayout.jsx';
 import Dashboard from '../pages/Dashboard.jsx';
 
-import Companies from '../pages/Companies.jsx';
+
 import Purchases from '../pages/Purchases.jsx';
 import Sales from '../pages/Sales.jsx';
 import Summary from '../pages/Summary.jsx';
 import DocProcessor from '../pages/DocProcessor.jsx';
 import DocUpload from '../pages/DocUpload.jsx';
 import DocTable from '../pages/DocTable.jsx';
+import ProcurementReview from '../pages/ProcurementReview.jsx';
+import SalesReview from '../pages/SalesReview.jsx';
 import EprData from '../pages/EprData.jsx';
 import EprSalesData from '../pages/EprSalesData.jsx';
 import EprProcurementData from '../pages/EprProcurementData.jsx';
@@ -22,8 +24,7 @@ import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 import RegistrationForm from '../pages/RegistrationForm.jsx';
-import SupplierMasterPage from '../pages/SupplierMasterPage.jsx';
-import PackagingMasterPage from '../pages/PackagingMasterPage.jsx';
+import MasterDataPage from '../pages/MasterDataPage.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn } = useAuth();
@@ -45,7 +46,9 @@ export default function AppRoutes() {
           }
         >
           <Route path="dashboard" element={<Dashboard />} />
-          <Route path="companies" element={<Companies />} />
+          <Route path="master-data" element={<MasterDataPage />} />
+          <Route path="plastic-mt-reports" element={<Navigate to="/master-data?tab=reports" replace />} />
+          <Route path="companies" element={<Navigate to="/master-data?tab=company" replace />} />
           <Route path="purchases" element={<Purchases />} />
           <Route path="sales" element={<Sales />} />
           <Route path="summary" element={<Summary />} />
@@ -60,11 +63,13 @@ export default function AppRoutes() {
           <Route path="doc-processor" element={<DocProcessor />} />
           <Route path="doc-upload" element={<DocUpload />} />
           <Route path="doc-table" element={<DocTable />} />
+          <Route path="procurement-review/:id" element={<ProcurementReview />} />
+          <Route path="sales-review/:id" element={<SalesReview />} />
           <Route path="production-entry" element={<ProductionEntryPage />} />
           <Route path="credit-calculations" element={<CreditCalculations />} />
           <Route path="registration-form" element={<RegistrationForm />} />
-          <Route path="supplier-master" element={<SupplierMasterPage />} />
-          <Route path="packaging-master" element={<PackagingMasterPage />} />
+          <Route path="supplier-master" element={<Navigate to="/master-data?tab=supplier" replace />} />
+          <Route path="packaging-master" element={<Navigate to="/master-data?tab=packaging" replace />} />
         </Route>
       </Routes>
     </BrowserRouter>

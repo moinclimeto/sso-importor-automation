@@ -7,6 +7,19 @@
  */
 
 import path from 'path';
+import {
+  deriveProcessedQuantityMT,
+  isWeightUom,
+  itemToLineDraft,
+  lineDraftToPersist,
+  sumLineProcessedMt,
+  CONVERSION_METHOD,
+  normalizeLineUom,
+  resolveFinancialYear,
+  resolveLineRate,
+} from '../shared/procurementConversionFactor.js';
+import { resolveState } from '../shared/gstStateCodes.js';
+import { normalizePlasticCategory } from '../shared/plasticCategories.js';
 
 
 
@@ -51,14 +64,9 @@ function nullNum(v) {
   return Number.isFinite(n) ? n : null;
 }
 
-function normalizePlasticCategory(value) {
-  const raw = String(value || '').trim();
-  if (!raw) return null;
-  const compact = raw.replace(/\s+/g, '').toLowerCase();
-  if (['cat-i', 'cati', 'categoryi', 'category-i', 'cat1', 'i'].includes(compact)) return 'Cat-I';
-  if (['cat-ii', 'catii', 'categoryii', 'category-ii', 'cat2', 'ii'].includes(compact)) return 'Cat-II';
-  if (['cat-iii', 'catiii', 'categoryiii', 'category-iii', 'cat3', 'iii'].includes(compact)) return 'Cat-III';
-  return raw;
+function normalizePlasticCategoryOrNull(value) {
+  const cat = normalizePlasticCategory(value);
+  return cat || null;
 }
 
 function parsePlasticQuantity(raw = {}) {
@@ -180,42 +188,62 @@ function mapProcurementLineItems(raw = {}) {
         : [];
 
   return src.slice(0, 50).map((item, i) => {
-    const quantity = nullVal(item.quantity ?? item.qty ?? item.q);
-    const unit = nullVal(item.unit ?? item.quantity_unit ?? item.u);
-    const rate = nullNum(item.rate ?? item.unit_rate ?? item.price ?? item.r);
+    const uom = normalizeLineUom(item);
+    const quantity = nullVal(uom.quantity || (item.quantity ?? item.qty ?? item.q));
+    const unit = nullVal(uom.unit || (item.unit ?? item.quantity_unit ?? item.u));
     const qtyNum = nullNum(item.quantity ?? item.qty ?? item.q);
     const weightRaw =
       item.weight ?? item.total_weight ?? item.net_weight ?? item.line_weight ?? null;
     const weightUnit = nullVal(item.weight_unit ?? item.weightUnit ?? item.wt_unit) || 'kg';
     const weightMt = weightRaw != null ? weightToMt(weightRaw, weightUnit) : null;
-    const amount =
-      nullNum(item.amount ?? item.a) ??
+    const amount = nullNum(item.amount ?? item.a);
+    const rate = resolveLineRate(item, quantity, amount);
+    const resolvedAmount =
+      amount ??
       (qtyNum != null && rate != null ? Number((qtyNum * rate).toFixed(2)) : null);
+    const gstPaid = nullNum(item.gst ?? item.gst_amount ?? item.gstPaid);
 
-    return {
-      lineNo: i + 1,
-      product: nullVal(item.product ?? item.product_name ?? item.name ?? item.p),
-      productDescription: nullVal(
-        item.product_description ?? item.productDescription ?? item.description ?? item.d
-      ),
-      quantity,
-      unit,
-      weight: weightRaw != null ? String(weightRaw) : null,
-      weight_unit: weightUnit,
-      weight_mt: weightMt,
-      rate,
-      amount,
-      valueInMt:
-        weightMt ??
-        (isWeightQuantityUnit(unit) && quantity ? weightToMt(quantity, unit) : null),
-    };
+    const baseDraft = itemToLineDraft(
+      {
+        product: nullVal(item.product ?? item.product_name ?? item.name ?? item.p),
+        productDescription: nullVal(
+          item.product_description ?? item.productDescription ?? item.description ?? item.d
+        ),
+        quantity,
+        unit,
+        weight: weightRaw != null ? String(weightRaw) : null,
+        weight_unit: weightUnit,
+        weight_mt: weightMt,
+        rate,
+        amount: resolvedAmount,
+        gstPaid,
+        hsn: nullVal(item.hsn ?? item.hsn_code),
+        quantityDerivationType: isWeightUom(unit) || weightMt ? 'default' : 'manual',
+        conversionMethodUsed: CONVERSION_METHOD.DEFAULT,
+        lineStatus: 'incomplete',
+      },
+      i,
+    );
+
+    const mt = deriveProcessedQuantityMT({
+      quantity: baseDraft.quantity,
+      unitInInvoice: baseDraft.unit,
+      quantityDerivationType: baseDraft.quantityDerivationType,
+      weightMt: baseDraft.weight_mt,
+      lineAmount: baseDraft.amount,
+      lineGstAmount: baseDraft.gstPaid,
+    });
+
+    return lineDraftToPersist({
+      ...baseDraft,
+      processedQuantity: mt != null ? String(mt) : baseDraft.processedQuantity,
+    });
   });
 }
 
-function sumMtFromProcurementLines(lineItems = [], conversionFactor = 0) {
-  const fromQty = calcTotalPlasticQuantityMt(lineItems, conversionFactor);
-  if (fromQty != null) return fromQty;
-  return null;
+function sumMtFromProcurementLines(lineItems = []) {
+  const drafts = (lineItems || []).map((li, i) => itemToLineDraft(li, i));
+  return sumLineProcessedMt(drafts);
 }
 
 function resolveSupplierName(raw = {}) {
@@ -316,26 +344,32 @@ export function toIsoDate(v) {
 
 
 
-export function qtyToMt(raw) {
-
+export function qtyToMt(raw, unit) {
   const s = nf(raw);
-
   if (!s) return 0;
 
-  const n = num(s);
+  if (unit) {
+    const qtyOnly = parseFloat(String(s).replace(/,/g, '').replace(/[^0-9.]/g, ''));
+    if (!Number.isFinite(qtyOnly)) return 0;
+    const mt = deriveProcessedQuantityMT({
+      quantity: qtyOnly,
+      unitInInvoice: unit,
+      quantityDerivationType: 'default',
+    });
+    return mt != null && mt > 0 ? mt : 0;
+  }
 
+  const n = num(s);
   if (!n) return 0;
 
   const lower = s.toLowerCase();
-
   if (/\b(kg|kgs|kilogram)/.test(lower)) return Number((n / 1000).toFixed(6));
-
   if (/\b(g|gram|grams)\b/.test(lower)) return Number((n / 1_000_000).toFixed(6));
-
+  if (/\b(qtl|quintal|quintals|q)\b/.test(lower)) return Number((n / 10).toFixed(6));
   if (/\b(mt|ton|tonne|tonnes|t)\b/.test(lower)) return n;
 
-  return n;
-
+  // Bare numbers or PC/NOS/etc. — not MT without explicit weight unit.
+  return 0;
 }
 
 
@@ -407,7 +441,7 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
 
     return `OCR PROCUREMENT / PURCHASE invoice. JSON only minified. Extract SUPPLIER (seller/vendor) details for data entry. Also extract BUYER details only for company matching — never copy buyer into supplier fields.
 ${fyHint}
-{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
+{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
 CRITICAL PARTY RULES:
 - supplier_name / supplier_gst / supplier_address / supplier_mobile = SELLER/VENDOR party ONLY (Bill From, Sold By, Dispatched From, Supplier, Party Name on purchase side).
 - buyer_name / buyer_gst = BUYER party ONLY (Bill To, Buyer, Consignee, Ship To — this is the importer/target company on the invoice).
@@ -422,8 +456,11 @@ OTHER RULES:
 registration_type=Registered or Unregistered (of supplier entity if printed).
 entity_type=PWPs/Producers/Brand Owners/PIBOs/Importers (supplier entity type if printed).
 country=Supplier country.
+supplier_state=Supplier state from address block (State / Place of Supply for supplier side).
+supplier_city=Supplier city if printed.
+supplier_pin_code=Supplier PIN / pincode if printed.
 plastic_material_type=Plastic material (PET/HDPE/LDPE/PP/PS/Multi-layer/etc).
-category_of_plastic=Cat-I/Cat-II/Cat-III or Category I/II/III.
+category_of_plastic=Cat-I/Cat-II/Cat-III/Cat-IV or Category I/II/III/IV.
 financial_year=FY like 2025-26.
 date=Procurement/invoice date as YYYY-MM-DD.
 total_plastic_quantity=numeric grand total plastic/mass if printed (not piece count).
@@ -433,15 +470,16 @@ line_items=ALL product rows (max 50). Skip freight/tax/subtotal/grand-total rows
 Each line_items[]: product, product_description, quantity (count e.g. 24 PC), unit (PC/KG/MT),
 weight=TOTAL weight for entire line row (use Total Weight / Gross Weight column — all pieces combined, NOT net unit weight per piece),
 weight_unit (KG/MT/G — default KG),
-rate.
+rate=unit rate / price per unit (numeric, exclude GST unless only tax-inclusive rate is printed),
+amount=taxable line amount if printed (use to derive rate = amount/quantity when rate column missing).
 conversion_factor=numeric if printed else null.`;
   }
 
   return `OCR SALE. JSON only minified.
 Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Seller bank for bank fields.
 ${fy}
-{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
-RULES:buyerName/buyerGst/addr/st/dist/mob=buyer(customer).sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
+{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","pin":"","city":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+RULES:buyerName/buyerGst/addr/st/dist/pin/city/mob=buyer(customer).sellerName/sellerGst=seller.st=State name from buyer address (not code).dist=District if printed.pin=PIN if printed.sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
 }
 
 /** Normalize raw Gemini JSON (short or long keys) → common shape */
@@ -449,20 +487,23 @@ RULES:buyerName/buyerGst/addr/st/dist/mob=buyer(customer).sellerName/sellerGst=s
 export function expandRawExtraction(raw = {}) {
 
   const productsSrc = Array.isArray(raw.products)
-
     ? raw.products
-
     : Array.isArray(raw.lineItems)
-
       ? raw.lineItems
-
-      : [];
+      : Array.isArray(raw.line_items)
+        ? raw.line_items
+        : [];
 
 
 
   const products = productsSrc.slice(0, 15).map((p, i) => {
-
-    const quantity = nf(p.q ?? p.quantity ?? p.qty);
+    const uom = normalizeLineUom({
+      quantity: p.q ?? p.quantity ?? p.qty,
+      unit: p.u ?? p.unit ?? p.uom ?? p.UOM,
+    });
+    const quantity = nf(uom.quantity || (p.q ?? p.quantity ?? p.qty));
+    const amount = num(p.a ?? p.amount);
+    const rate = resolveLineRate(p, quantity, amount);
 
     return {
 
@@ -480,9 +521,15 @@ export function expandRawExtraction(raw = {}) {
 
       quantity,
 
-      valueInMt: qtyToMt(quantity) || null,
+      unit: nf(uom.unit || (p.u ?? p.unit ?? p.uom)),
 
-      amount: num(p.a ?? p.amount),
+      uom: nf(uom.unit || (p.u ?? p.unit ?? p.uom)),
+
+      rate: rate ?? null,
+
+      valueInMt: null,
+
+      amount,
 
       gstAmount: num(p.ga ?? p.gstAmount ?? p.gst_amount),
 
@@ -524,7 +571,7 @@ export function expandRawExtraction(raw = {}) {
 
     city: nf(raw.city) || null,
 
-    state: nf(raw.st ?? raw.state) || null,
+    state: resolveState(nf(raw.st ?? raw.state ?? raw.supplier_state), buyerGst) || null,
 
     district: nf(raw.dist ?? raw.district) || null,
 
@@ -566,8 +613,9 @@ export function expandRawExtraction(raw = {}) {
 
 export function mapProductsToLineItems(products = []) {
 
-  return (products || []).map((p, i) => ({
-
+  return (products || []).map((p, i) => {
+    const uom = normalizeLineUom(p);
+    return {
     lineNo: p.lineNo || i + 1,
 
     productDescription: nf(p.productDescription),
@@ -580,9 +628,15 @@ export function mapProductsToLineItems(products = []) {
 
     recycledPercent: nf(p.recycledPercent),
 
-    quantity: nf(p.quantity),
+    quantity: nf(uom.quantity || p.quantity),
 
-    valueInMt: p.valueInMt != null ? p.valueInMt : qtyToMt(p.quantity) || null,
+    unit: nf(uom.unit || p.unit || p.uom),
+
+    uom: nf(uom.unit || p.unit || p.uom),
+
+    rate: p.rate ?? resolveLineRate(p, uom.quantity || p.quantity, p.amount),
+
+    valueInMt: p.valueInMt != null ? p.valueInMt : null,
 
     amount: num(p.amount),
 
@@ -590,26 +644,16 @@ export function mapProductsToLineItems(products = []) {
 
     gstRate: num(p.gstRate),
 
-  }));
+  };
+  });
 
 }
 
 
 
 function sumMtFromLines(lineItems) {
-
-  let sum = 0;
-
-  for (const li of lineItems) {
-
-    const mt = num(li.valueInMt) || qtyToMt(li.quantity);
-
-    sum += mt;
-
-  }
-
-  return sum > 0 ? Number(sum.toFixed(6)) : 0;
-
+  const drafts = (lineItems || []).map((li, i) => itemToLineDraft(li, i));
+  return sumLineProcessedMt(drafts) || 0;
 }
 
 
@@ -623,14 +667,17 @@ function firstLine(lineItems) {
 
 
 /** Map → procurement EPR row (registration-style fields + line items). */
-export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all', conversionFactor = null) {
+export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
   const lineItems = mapProcurementLineItems(raw);
   const headerQty = parsePlasticQuantity(raw);
-  const cf = nullNum(raw.conversion_factor ?? raw.conversionFactor) ?? conversionFactor;
-  const qtyFromLines = sumMtFromProcurementLines(lineItems, cf);
+  const qtyFromLines = sumMtFromProcurementLines(lineItems);
   const defaultFy =
     financialYear && String(financialYear).toLowerCase() !== 'all' ? financialYear : null;
-  const firstLine = lineItems[0] || null;
+  const firstLineItem = lineItems[0] || null;
+  const supplierGst = resolveSupplierGst(raw);
+  const extractedState =
+    raw.supplier_state ?? raw.supplierState ?? raw.state ?? raw.st ?? null;
+  const invoiceDate = nullVal(toIsoDate(raw.date ?? raw.procurement_date ?? raw.invoice_date ?? raw.dt));
 
   return {
     company_id: null,
@@ -647,25 +694,33 @@ export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all', convers
     country: nullVal(raw.country ?? raw.supplier_country),
     address_line_1: resolveSupplierAddress(raw) ?? nullVal(raw.address ?? raw.address_line_1),
     address_line_2: null,
-    state: null,
-    city: null,
-    pin_code: null,
+    state: nullVal(resolveState(extractedState, supplierGst)),
+    city: nullVal(raw.supplier_city ?? raw.supplierCity ?? raw.city),
+    pin_code: nullVal(
+      raw.supplier_pin_code ?? raw.supplierPinCode ?? raw.pin_code ?? raw.pin ?? raw.pincode,
+    ),
     supplier_mobile_number: nullVal(
       raw.supplier_mobile ?? raw.supplier_mobile_number ?? raw.mobile_number ?? raw.mobile
     ),
     plastic_type: nullVal(
-      raw.plastic_material_type ?? raw.plastic_type ?? raw.plasticMaterial ?? firstLine?.product
+      raw.plastic_material_type ?? raw.plastic_type ?? raw.plasticMaterial ?? firstLineItem?.product
     ),
-    category_of_plastic: normalizePlasticCategory(
+    category_of_plastic: normalizePlasticCategoryOrNull(
       raw.category_of_plastic ?? raw.plasticCategory ?? raw.category
     ),
-    financial_year: nullVal(raw.financial_year ?? raw.financialYear ?? raw.fy ?? defaultFy),
-    procurement_date: nullVal(toIsoDate(raw.date ?? raw.procurement_date ?? raw.invoice_date ?? raw.dt)),
-    invoice_date: nullVal(toIsoDate(raw.date ?? raw.procurement_date ?? raw.invoice_date ?? raw.dt)),
+    financial_year: nullVal(
+      resolveFinancialYear(
+        invoiceDate,
+        raw.financial_year ?? raw.financialYear ?? raw.fy ?? defaultFy,
+      ),
+    ),
+    procurement_date: invoiceDate,
+    invoice_date: invoiceDate,
     quantity_mt: qtyFromLines ?? headerQty.quantity_mt,
     quantity: qtyFromLines ?? headerQty.quantity_mt ?? null,
     unit: 'MT',
-    conversion_factor: cf,
+    conversion_factor: nullNum(raw.conversion_factor ?? raw.conversionFactor),
+    doc_status: 'inbox',
     recycled_plastic_percent: nullNum(raw.recycled_plastic_percent ?? raw.recycledPlasticPercent),
     invoice_number: nullVal(
       raw.invoice_number ?? raw.invoiceNumber ?? raw.inv ?? raw.invoice_no ?? raw.billNo
@@ -684,7 +739,7 @@ export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all', convers
     invoice_filename: fileName || null,
     vendor_name: resolveSupplierName(raw),
     seller_name: resolveSupplierName(raw),
-    item_name: nullVal(firstLine?.product ?? firstLine?.productDescription),
+    item_name: nullVal(firstLineItem?.product ?? firstLineItem?.productDescription),
     lineItems,
     extraction: raw,
     _source_fields: {},
@@ -703,7 +758,7 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
   const first = firstLine(lineItems);
 
-  const qty = sumMtFromLines(lineItems) || qtyToMt(raw.quantitySoldMt ?? raw.quantityMt);
+  const qty = sumMtFromLines(lineItems) || qtyToMt(raw.quantitySoldMt ?? raw.quantityMt, 'MT');
 
   const hsnStr = String(first?.hsn || raw.hsnCode || '').replace(/[^0-9]/g, '');
   const isClinker = hsnStr.includes('25231000');
@@ -738,7 +793,7 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
     address: x.addressLine1,
 
-    state: x.state,
+    state: nullVal(resolveState(x.state, x.buyerGst || x.gstNumber)),
 
     district: x.district,
 
@@ -765,6 +820,8 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
     invoice_date: x.invoiceDate,
 
+    financial_year: nullVal(resolveFinancialYear(x.invoiceDate, x.financialYear)),
+
     item_name: nf(first?.productDescription),
 
     quantity: qty,
@@ -780,6 +837,8 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
     extraction: x,
 
     _source_fields: {},
+
+    doc_status: 'inbox',
 
   };
 

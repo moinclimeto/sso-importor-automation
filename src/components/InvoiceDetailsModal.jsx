@@ -1,6 +1,11 @@
 import { useState, useEffect, useRef } from 'react';
-import { Eye, FileText, X, ArrowLeftRight } from 'lucide-react';
+import { Eye, FileText, X, ArrowLeftRight, Pencil } from 'lucide-react';
 import PdfViewer from './PdfViewer';
+import {
+  enrichSaleRecord,
+  resolveSalesDistrict,
+  resolveSalesGstOtherCharges,
+} from '../../shared/reviewEnrichment.js';
 
 
 
@@ -65,7 +70,7 @@ function getLineItems(invoice) {
 
  */
 
-export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase', onClose }) {
+export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase', onClose, onEdit }) {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [loadingFile, setLoadingFile] = useState(false);
 
@@ -137,8 +142,8 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
 
   if (!open || !invoice) return null;
 
-  const data = invoice.data || invoice;
   const isPurchase = docType === 'purchase';
+  const data = isPurchase ? (invoice.data || invoice) : enrichSaleRecord(invoice.data || invoice);
   const lineItems = getLineItems(invoice);
   
   const fileName = invoice.fileName || data.invoice_filename || data.invoice_file_name || '—';
@@ -159,7 +164,9 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
         .join(', ')
     : [data.address, data.district, data.state].filter(Boolean).join(', ');
     
-  const total = data.total_amount || data.gst_other_charges || 0;
+  const total = data.total_amount || resolveSalesGstOtherCharges(data) || 0;
+  const district = resolveSalesDistrict(data);
+  const gstOtherCharges = resolveSalesGstOtherCharges(data);
   const qrApplied = Boolean(invoice.qr?.priorityApplied || data._qr);
 
   return (
@@ -212,6 +219,12 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
                 <dt className="text-[11px] uppercase tracking-wide text-slate-400">State</dt>
                 <dd className="text-slate-700">{displayValue(data.state)}</dd>
               </div>
+              {!isPurchase && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-slate-400">District</dt>
+                  <dd className="text-slate-700">{displayValue(district)}</dd>
+                </div>
+              )}
               <div>
                 <dt className="text-[11px] uppercase tracking-wide text-slate-400">Contact</dt>
                 <dd className="font-mono text-xs text-slate-700">
@@ -228,6 +241,16 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
                   ₹{Number(total || 0).toLocaleString('en-IN')}
                 </dd>
               </div>
+              {!isPurchase && (
+                <div>
+                  <dt className="text-[11px] uppercase tracking-wide text-slate-400">GST & Other Charges</dt>
+                  <dd className="font-medium text-slate-800 tabular-nums">
+                    {displayAmount(gstOtherCharges) === '—'
+                      ? '—'
+                      : `₹${Number(gstOtherCharges).toLocaleString('en-IN', { maximumFractionDigits: 2 })}`}
+                  </dd>
+                </div>
+              )}
               {!isPurchase && (
                 <>
                   <div>
@@ -319,11 +342,21 @@ export default function InvoiceDetailsModal({ open, invoice, docType = 'purchase
           )}
         </div>
 
-        <div className="flex justify-end px-5 py-3 border-t border-slate-200 flex-shrink-0">
+        <div className="flex justify-end gap-2 px-5 py-3 border-t border-slate-200 flex-shrink-0">
+          {onEdit && (
+            <button
+              type="button"
+              onClick={() => onEdit(data)}
+              className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg border border-blue-200 bg-blue-50 text-sm text-blue-700 hover:bg-blue-100 font-medium"
+            >
+              <Pencil size={14} />
+              Edit
+            </button>
+          )}
           <button
             type="button"
             onClick={onClose}
-            className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-bg-slate-50 font-medium"
+            className="px-4 py-2 rounded-lg border border-slate-300 text-sm text-slate-600 hover:bg-slate-50 font-medium"
           >
             Close
           </button>
