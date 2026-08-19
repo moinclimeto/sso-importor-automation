@@ -1028,7 +1028,7 @@ export default function CpcbRegistrationPage() {
     `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
 
   return (
-    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative pb-32">
+    <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
       <Toast toast={toast} onClose={hideToast} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
@@ -1276,6 +1276,7 @@ export default function CpcbRegistrationPage() {
                 </div>
               </>
             )}
+            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">State/UT *</label>
               <select
@@ -1303,6 +1304,19 @@ export default function CpcbRegistrationPage() {
                 className={lockedInputClass}
                 required
               />
+            </div>
+            <div>
+              <label className="block text-sm font-medium text-slate-700 mb-1">Designation *</label>
+              <input
+                name="authDesignation"
+                value={generalInfo.authDesignation}
+                onChange={handleGeneralChange}
+                type="text"
+                placeholder="e.g. Director, Manager"
+                className={lockedInputClass}
+                required
+              />
+            </div>
             </div>
           </div>
         </div>
@@ -1683,21 +1697,6 @@ export default function CpcbRegistrationPage() {
           </p>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Designation *</label>
-              <input
-                name="authDesignation"
-                value={generalInfo.authDesignation}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="e.g. Director, Manager"
-                className={lockedInputClass}
-                
-                
-                required
-              />
-            </div>
-            <div />
             <div>
               <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
               <div className="relative">
