@@ -28,7 +28,7 @@ function emptyToNull(value) {
   return text === '' ? null : text;
 }
 
-function buildFormDataJson(data = {}) {
+function buildFormDataJson(data = {}, existingFormDataJson = null) {
   if (data.form_data_json) {
     try {
       const parsed = JSON.parse(data.form_data_json);
@@ -50,12 +50,45 @@ function buildFormDataJson(data = {}) {
   if (data.formData && typeof data.formData === 'object') {
     return JSON.stringify(data.formData);
   }
-  return JSON.stringify({
-    email: data.email || '',
-    mobile: data.mobile || '',
-    generalInfo: data.generalInfo || {},
-    autoData: data.autoData || {},
-  });
+
+  if (data.generalInfo !== undefined || data.autoData !== undefined) {
+    return JSON.stringify({
+      email: data.email ?? '',
+      mobile: data.mobile ?? '',
+      generalInfo: data.generalInfo ?? {},
+      autoData: data.autoData ?? {},
+    });
+  }
+
+  if (existingFormDataJson && (data.email !== undefined || data.mobile !== undefined || data.password !== undefined)) {
+    try {
+      const parsed = JSON.parse(existingFormDataJson);
+      const generalInfo = { ...(parsed.generalInfo || {}) };
+      if (data.password) {
+        generalInfo.password = data.password;
+        generalInfo.confirmPassword = data.confirm_password || data.password;
+      }
+      return JSON.stringify({
+        email: data.email ?? parsed.email ?? '',
+        mobile: data.mobile ?? parsed.mobile ?? '',
+        generalInfo,
+        autoData: parsed.autoData || {},
+      });
+    } catch {
+      /* fall through */
+    }
+  }
+
+  if (!existingFormDataJson && (data.email || data.mobile || data.password)) {
+    return JSON.stringify({
+      email: data.email || '',
+      mobile: data.mobile || '',
+      generalInfo: {},
+      autoData: {},
+    });
+  }
+
+  return existingFormDataJson || null;
 }
 
 function extractColumnsFromForm(formDataJson, data = {}) {
@@ -162,15 +195,14 @@ export async function saveRegistrationDetails(data = {}) {
   const db = getDb();
   await ensureRegistrationColumns(db);
 
-  const formDataJson = buildFormDataJson(data);
+  const existing = await findRegistrationRow(db);
+  const formDataJson = buildFormDataJson(data, existing?.form_data_json);
   const cols = extractColumnsFromForm(formDataJson, data);
   const ceprId = emptyToNull(data.cepr_id);
   const email = emptyToNull(data.email);
   const mobile = emptyToNull(data.mobile);
   const password = emptyToNull(data.password);
   const confirmPassword = emptyToNull(data.confirm_password);
-
-  const existing = await findRegistrationRow(db);
 
   if (existing) {
     await db.run(
@@ -233,7 +265,7 @@ export async function saveRegistrationDetails(data = {}) {
     mobile,
     password,
     confirmPassword,
-    formDataJson,
+    formDataJson ?? JSON.stringify({ email: email || '', mobile: mobile || '', generalInfo: {}, autoData: {} }),
     cols.hasProductionFacility,
     cols.capitalInvested,
     cols.yearOfCommencement,
@@ -277,6 +309,9 @@ export async function getRegistrationDetails() {
           generalInfo: formData,
           autoData: formData,
         };
+      }
+      if (formData && !formData.autoData) {
+        formData.autoData = {};
       }
     } catch (err) {
       log.warn('stored form_data_json is invalid JSON', { error: err.message });

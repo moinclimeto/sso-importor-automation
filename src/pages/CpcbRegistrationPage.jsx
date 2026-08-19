@@ -19,8 +19,15 @@ import {
   TYPE_OF_COMPANY_OPTIONS,
   INDIAN_STATES,
   GENERAL_INFO_EMPTY,
-  buildGeneralInfoFromDocData,
 } from '../utils/registrationGeneralInfo.js';
+import {
+  buildRegistrationSavePayload,
+  fetchRegistrationDocData,
+  hasPersistableFormContent,
+  mergeAutoData,
+  mergeGeneralInfoFromSources,
+  pickNonEmpty,
+} from '../utils/registrationFormPersistence.js';
 import { getLocalFilePath } from '../utils/partCLetterValues.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -156,6 +163,10 @@ export default function CpcbRegistrationPage() {
 
     setWizardStep('partA');
 
+    if (form.autoData) {
+      setAutoData((prev) => ({ ...EMPTY_AUTO, ...pickNonEmpty(form.autoData), ...pickNonEmpty(prev) }));
+    }
+
     if (form.generalInfo) {
       const parsedAddr = parseGstLabeledAddress(
         form.generalInfo.registeredAddressLine1 || form.autoData?.registeredAddress || ''
@@ -252,30 +263,29 @@ export default function CpcbRegistrationPage() {
     });
   }, [showToast]);
 
-  const applyRegistrationData = useCallback(async (docData = {}) => {
+  const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
     const { data } = resolveRegistrationData(docData);
-    setAutoData({ ...EMPTY_AUTO, ...data });
 
-    const fromDocs = buildGeneralInfoFromDocData(data);
-    setGeneralInfo((prev) => ({
-      ...prev,
-      ...Object.fromEntries(
-        Object.entries(fromDocs).filter(([, v]) => String(v || '').trim())
-      ),
-      typeOfBusiness: fromDocs.typeOfBusiness || data.typeOfBusiness || prev.typeOfBusiness,
-      typeOfCompany: fromDocs.typeOfCompany || data.typeOfCompany || prev.typeOfCompany,
-      registeredAddressLine1: fromDocs.registeredAddressLine1 || prev.registeredAddressLine1,
-      district: fromDocs.district || prev.district,
-      cin: fromDocs.cin || prev.cin,
-      stateUt: fromDocs.stateUt || prev.stateUt,
-      authDesignation: data.authDesignation || prev.authDesignation,
-    }));
+    setAutoData((prev) => mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || prev));
+    setGeneralInfo((prev) => {
+      const merged = mergeGeneralInfoFromSources(data, savedForm?.generalInfo || prev);
+      return {
+        ...merged,
+        password: savedForm?.generalInfo?.password || prev.password || merged.password || '',
+        confirmPassword:
+          savedForm?.generalInfo?.confirmPassword ||
+          savedForm?.generalInfo?.password ||
+          prev.confirmPassword ||
+          merged.confirmPassword ||
+          '',
+      };
+    });
 
     let docs = [];
     if (window.pwp?.documents?.getAll) {
       docs = await window.pwp.documents.getAll();
     }
-    const { ready, isDummy: readyDummy, missing } = isRegistrationReadyWithFallback(docs, docData);
+    const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
     setDocReady(ready);
     setMissingDocs(missing);
   }, []);
@@ -286,18 +296,31 @@ export default function CpcbRegistrationPage() {
     const load = async () => {
       setLoadingSavedRegistration(true);
       try {
+        let saved = null;
         if (window.pwp?.registration?.get) {
           const res = await window.pwp.registration.get();
-          if (res.success && res.data?.cepr_id) {
+          if (res.success && res.data) {
+            saved = res.data;
             setSavedRegistration(res.data);
-            if (!res.data.formData) {
-              await applyRegistrationData({});
-            }
-            await applySavedRegistration(res.data);
-            return;
           }
         }
-        await applyRegistrationData({});
+
+        const { docData } = await fetchRegistrationDocData();
+
+        if (saved?.cepr_id) {
+          await applySavedRegistration(saved);
+          if (Object.keys(pickNonEmpty(docData)).length) {
+            setAutoData((prev) => ({ ...EMPTY_AUTO, ...pickNonEmpty(docData), ...pickNonEmpty(prev) }));
+          }
+          return;
+        }
+
+        const savedForm = saved?.formData || null;
+        await applyRegistrationData(docData, { savedForm });
+        if (saved) {
+          setEmail(String(saved.email || savedForm?.email || '').trim());
+          setMobile(String(saved.mobile || savedForm?.mobile || '').trim());
+        }
       } finally {
         setLoadingSavedRegistration(false);
       }
@@ -309,45 +332,33 @@ export default function CpcbRegistrationPage() {
     if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
-      const creds = {
-        email: email.trim() || undefined,
-        mobile: mobile.trim() || undefined,
-        password: generalInfo.password?.trim() || undefined,
-        confirm_password: generalInfo.confirmPassword?.trim() || undefined,
-      };
-      if (creds.email || creds.mobile || creds.password) {
-        window.pwp.registration.save(creds);
-      }
-    }, 700);
+      if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
+
+      window.pwp.registration
+        .save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          })
+        )
+        .catch((err) => console.error('Auto-save failed:', err));
+    }, 1200);
 
     return () => clearTimeout(timer);
-  }, [email, mobile, generalInfo.password, generalInfo.confirmPassword, registrationComplete, loadingSavedRegistration]);
-
-  // Dummy data and setSaved removed
-
-  // Debounced auto-save for all form state
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (window.pwp?.registration?.save && email && mobile && !registrationComplete) {
-        const updatedFormData = {
-          ...(savedRegistration?.formData || {}),
-          email,
-          mobile,
-          autoData,
-          generalInfo
-        };
-        window.pwp.registration.save({
-          ...(savedRegistration || {}),
-          applicant_type: savedRegistration?.applicant_type || 'PIBO',
-          sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
-          email,
-          mobile,
-          form_data_json: JSON.stringify(updatedFormData)
-        }).catch(err => console.error('Auto-save failed:', err));
-      }
-    }, 1500);
-    return () => clearTimeout(timer);
-  }, [generalInfo, autoData, email, mobile, savedRegistration, registrationComplete]);
+  }, [
+    generalInfo,
+    autoData,
+    email,
+    mobile,
+    savedRegistration,
+    savedCeprId,
+    registrationComplete,
+    loadingSavedRegistration,
+  ]);
 
   const handleGeneralChange = (e) => {
     const { name, value } = e.target;
@@ -360,14 +371,17 @@ export default function CpcbRegistrationPage() {
 
   const persistRegistrationForm = async () => {
     if (!window.pwp?.registration?.save) return;
-    await window.pwp.registration.save({
-      applicant_type: savedRegistration?.applicant_type || 'PIBO',
-      sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
-      cepr_id: savedCeprId || savedRegistration?.cepr_id,
-      email,
-      mobile,
-      form_data_json: JSON.stringify({ email, mobile, autoData, generalInfo }),
-    });
+    if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
+    await window.pwp.registration.save(
+      buildRegistrationSavePayload({
+        savedRegistration,
+        email,
+        mobile,
+        autoData,
+        generalInfo,
+        ceprId: savedCeprId || savedRegistration?.cepr_id,
+      })
+    );
   };
 
   const handleSaveAndNext = async () => {
@@ -1092,11 +1106,6 @@ export default function CpcbRegistrationPage() {
       {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
         <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
-        {!docReady && missingDocs.length > 0 && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Missing documents: {missingDocs.map((d) => d.replace('_', ' ')).join(', ')}
-          </div>
-        )}
       </div>
       )}
 

@@ -7,6 +7,7 @@ import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
 import { compressPdf } from '../utils/pdfCompressor.js';
+import { registrationDocFileName } from '../utils/registrationDocFileName.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -269,11 +270,13 @@ export function registerIpcHandlers() {
           fs.mkdirSync(destDir, { recursive: true });
         }
         
-        const shortId = Math.random().toString(36).substring(2, 8);
         const docType = data.doc_type || 'document';
-        const ext = path.extname(finalPath).toLowerCase();
-        const newFileName = `${docType}_${shortId}${ext}`;
+        const ext = path.extname(finalPath).toLowerCase() || '.pdf';
+        const newFileName = registrationDocFileName(docType, ext);
         const newPath = path.join(destDir, newFileName);
+        if (fs.existsSync(newPath)) {
+          fs.unlinkSync(newPath);
+        }
 
         if (ext === '.pdf') {
           console.log(`Compressing PDF: ${finalPath} -> ${newPath}`);

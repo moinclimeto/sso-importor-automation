@@ -13,11 +13,18 @@ import {
   resolveRegistrationLoginCredentials,
 } from '../utils/registrationDummyData.js';
 import {
+  buildRegistrationSavePayload,
+  fetchRegistrationDocData,
+  hasPersistableFormContent,
+  mergeAutoData,
+  mergeGeneralInfoFromSources,
+  pickNonEmpty,
+} from '../utils/registrationFormPersistence.js';
+import {
   TYPE_OF_BUSINESS_OPTIONS,
   TYPE_OF_COMPANY_OPTIONS,
   INDIAN_STATES,
   GENERAL_INFO_EMPTY,
-  buildGeneralInfoFromDocData,
 } from '../utils/registrationGeneralInfo.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 
@@ -232,30 +239,29 @@ export default function NewApplicationPage() {
     }
   }, []);
 
-  const applyRegistrationData = useCallback(async (docData = {}) => {
+  const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
     const { data } = resolveRegistrationData(docData);
-    setAutoData({ ...EMPTY_AUTO, ...data });
 
-    const fromDocs = buildGeneralInfoFromDocData(data);
-    setGeneralInfo((prev) => ({
-      ...prev,
-      ...Object.fromEntries(
-        Object.entries(fromDocs).filter(([, v]) => String(v || '').trim())
-      ),
-      typeOfBusiness: fromDocs.typeOfBusiness || data.typeOfBusiness || prev.typeOfBusiness,
-      typeOfCompany: fromDocs.typeOfCompany || data.typeOfCompany || prev.typeOfCompany,
-      registeredAddressLine1: fromDocs.registeredAddressLine1 || prev.registeredAddressLine1,
-      district: fromDocs.district || prev.district,
-      cin: fromDocs.cin || prev.cin,
-      stateUt: fromDocs.stateUt || prev.stateUt,
-      authDesignation: data.authDesignation || prev.authDesignation,
-    }));
+    setAutoData((prev) => mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || prev));
+    setGeneralInfo((prev) => {
+      const merged = mergeGeneralInfoFromSources(data, savedForm?.generalInfo || prev);
+      return {
+        ...merged,
+        password: savedForm?.generalInfo?.password || prev.password || merged.password || '',
+        confirmPassword:
+          savedForm?.generalInfo?.confirmPassword ||
+          savedForm?.generalInfo?.password ||
+          prev.confirmPassword ||
+          merged.confirmPassword ||
+          '',
+      };
+    });
 
     let docs = [];
     if (window.pwp?.documents?.getAll) {
       docs = await window.pwp.documents.getAll();
     }
-    const { ready, isDummy: readyDummy, missing } = isRegistrationReadyWithFallback(docs, docData);
+    const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
     setDocReady(ready);
     setMissingDocs(missing);
   }, []);
@@ -266,79 +272,80 @@ export default function NewApplicationPage() {
     const load = async () => {
       setLoadingSavedRegistration(true);
       try {
+        let saved = null;
         if (window.pwp?.registration?.get) {
           const res = await window.pwp.registration.get();
-          console.log('[registration:get]', res);
-          const row = res?.data;
-          const ceprId = row?.cepr_id || row?.epr_id || row?.ceprId;
-          if (res?.success && row && ceprId) {
-            const saved = { ...row, cepr_id: ceprId };
+          if (res.success && res.data) {
+            saved = res.data;
             setSavedRegistration(saved);
-            if (!saved.formData) {
-              await applyRegistrationData({});
-            }
-            await applySavedRegistration(saved);
-            return;
-          }
-          if (res && res.success === false) {
+          } else if (res && res.success === false) {
             showToast('Could not load registration from SQLite: ' + (res.error || 'unknown error'), 'error');
           }
         }
-        await applyRegistrationData({});
+
+        const { docData } = await fetchRegistrationDocData();
+        const ceprId = saved?.cepr_id || saved?.epr_id || saved?.ceprId;
+
+        if (saved && ceprId) {
+          await applySavedRegistration({ ...saved, cepr_id: ceprId });
+          if (Object.keys(pickNonEmpty(docData)).length) {
+            setAutoData((prev) => ({ ...EMPTY_AUTO, ...pickNonEmpty(docData), ...pickNonEmpty(prev) }));
+          }
+          return;
+        }
+
+        const savedForm = saved?.formData || null;
+        await applyRegistrationData(docData, { savedForm });
+        if (saved) {
+          setEmail(String(saved.email || savedForm?.email || '').trim());
+          setMobile(String(saved.mobile || savedForm?.mobile || '').trim());
+        }
       } catch (err) {
         console.error('[registration:get] failed', err);
         showToast('Could not load saved registration: ' + err.message, 'error');
-        await applyRegistrationData({});
+        const { docData } = await fetchRegistrationDocData();
+        await applyRegistrationData(docData);
       } finally {
         setLoadingSavedRegistration(false);
       }
     };
     load();
-  }, [applyRegistrationData, applySavedRegistration]);
+  }, [applyRegistrationData, applySavedRegistration, showToast]);
 
   useEffect(() => {
     if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
-      const creds = {
-        email: email.trim() || undefined,
-        mobile: mobile.trim() || undefined,
-        password: generalInfo.password?.trim() || undefined,
-        confirm_password: generalInfo.confirmPassword?.trim() || undefined,
-      };
-      if (creds.email || creds.mobile || creds.password) {
-        window.pwp.registration.save(creds);
-      }
-    }, 700);
+      if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
 
-    return () => clearTimeout(timer);
-  }, [email, mobile, generalInfo.password, generalInfo.confirmPassword, registrationComplete, loadingSavedRegistration]);
-
-  // Debounced auto-save for all form state
-  useEffect(() => {
-    const timer = setTimeout(() => {
-      if (window.pwp?.registration?.save && email && mobile) {
-        const payload = {
-          applicant_type: savedRegistration?.applicant_type || 'PIBO',
-          sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
-          email,
-          mobile,
-          form_data_json: JSON.stringify({
+      window.pwp.registration
+        .save(
+          buildRegistrationSavePayload({
+            savedRegistration,
             email,
             mobile,
-            generalInfo,
             autoData,
-          }),
-        };
-        const ceprId = savedCeprId || savedRegistration?.cepr_id;
-        if (ceprId) payload.cepr_id = ceprId;
-        window.pwp.registration.save(payload).then((res) => {
+            generalInfo,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          })
+        )
+        .then((res) => {
           if (!res?.success) console.error('[registration:save] failed', res);
-        }).catch(err => console.error('Auto-save failed:', err));
-      }
-    }, 1500);
+        })
+        .catch((err) => console.error('Auto-save failed:', err));
+    }, 1200);
+
     return () => clearTimeout(timer);
-  }, [generalInfo, autoData, email, mobile, savedRegistration, savedCeprId]);
+  }, [
+    generalInfo,
+    autoData,
+    email,
+    mobile,
+    savedRegistration,
+    savedCeprId,
+    registrationComplete,
+    loadingSavedRegistration,
+  ]);
 
   const handleGeneralChange = (e) => {
     const { name, value } = e.target;
@@ -1645,11 +1652,6 @@ export default function NewApplicationPage() {
           </div>
         </div>
 
-        {!docReady && missingDocs.length > 0 && !registrationComplete && (
-          <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-            Missing documents: {missingDocs.map((d) => d.replace('_', ' ')).join(', ')}
-          </div>
-        )}
 
         <div className="pt-4 border-t border-slate-100 flex justify-end gap-3">
           <button

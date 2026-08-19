@@ -11,8 +11,10 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
-  REQUIRED_REGISTRATION_DOCS,
 } from '../utils/registrationDataMapper.js';
+import {
+  normalizeCompanyDocumentExtraction,
+} from '../utils/companyDocNormalize.js';
 import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 
 const REGISTRATION_DOC_TYPES = new Set([
@@ -79,35 +81,74 @@ async function notifyExtracted(onExtracted) {
   onExtracted(buildRegistrationDataFromDocuments(relevant));
 }
 
-function normalizeDocType(data) {
-  let type = data.doc_type || 'unknown';
-  if (type === 'pan') {
-    const pan = String(data.document_number || '').toUpperCase();
-    type = pan.charAt(3) === 'C' ? 'company_pan' : 'person_pan';
-    data.doc_type = type;
+function normalizeDocType(data, fileName = '') {
+  normalizeCompanyDocumentExtraction(data, fileName);
+  return data.doc_type || 'unknown';
+}
+
+async function repairStoredDocument(doc) {
+  if (!window.pwp?.documents?.add || !window.pwp?.documents?.delete) return doc;
+
+  let parsed = {};
+  try {
+    parsed = JSON.parse(doc.raw_json || '{}');
+  } catch {
+    parsed = {};
   }
-  return type;
+
+  const fileName = doc.file_path?.split(/[/\\]/).pop() || '';
+  const merged = normalizeCompanyDocumentExtraction(
+    {
+      ...parsed,
+      doc_type: doc.doc_type,
+      document_number: doc.document_number || parsed.document_number,
+      entity_name: doc.entity_name || parsed.entity_name,
+    },
+    fileName,
+    { allowFilenameReclassify: false }
+  );
+
+  const docTypeChanged = merged.doc_type !== doc.doc_type;
+  const numberAdded = !doc.document_number && merged.document_number;
+  if (!docTypeChanged && !numberAdded) return doc;
+
+  await window.pwp.documents.delete(doc.id);
+  const payload = buildDocumentPayload(merged, doc.file_path || '');
+  const saved = await window.pwp.documents.add(payload);
+  return { ...doc, ...saved, doc_type: merged.doc_type, document_number: merged.document_number, entity_name: merged.entity_name, id: saved.id };
 }
 
 function ProgressPanel({ progress }) {
   if (!progress) return null;
-  const total = Math.max(0, Number(progress.total || progress.totalPages || 0));
-  const current = Math.max(0, Number(progress.current || 0));
-  const processed = Math.max(0, Number(progress.processed || 0));
-  const displayCount = progress.stage === 'complete' ? processed : current || processed;
-  const percent =
-    total > 0
-      ? Math.min(100, Math.round(((progress.stage === 'complete' ? processed : current) / total) * 100))
-      : 0;
+  const total = Math.max(
+    0,
+    Number(progress.batchTotal || progress.selectedTotal || progress.total || progress.totalPages || 0)
+  );
+  const processed = Math.max(0, Number(progress.processed || progress.current || 0));
+  const success = Math.max(0, Number(progress.successCount || 0));
+  const failed = Math.max(0, Number(progress.failedCount || 0));
+  const remaining = Math.max(
+    0,
+    Number.isFinite(progress.remaining)
+      ? progress.remaining
+      : total - processed
+  );
+  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
   const done = progress.stage === 'complete';
 
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
       <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="font-medium text-slate-800">{progress.message}</span>
-        <span className="text-slate-500 tabular-nums font-medium">
-          {displayCount}/{total || '—'}
+        <span className="font-medium text-slate-800">
+          {progress.message || (done ? 'Processing complete' : 'Processing documents…')}
         </span>
+        <span className="text-slate-500 tabular-nums font-medium">
+          {done ? `${success} extracted` : `${remaining} remaining`}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+        <span>{success} extracted successfully{failed > 0 ? ` · ${failed} failed` : ''}</span>
+        <span>{processed}/{total || '—'} processed</span>
       </div>
       <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
         <div
@@ -198,6 +239,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const [processing, setProcessing] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [batchCount, setBatchCount] = useState(null);
   const [removingId, setRemovingId] = useState(null);
   const [showGuidelines, setShowGuidelines] = useState(false);
 
@@ -215,7 +257,8 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         const relevant = (docs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
         if (!relevant.length) return;
 
-        const items = relevant.map((doc) => {
+        const repaired = await Promise.all(relevant.map((doc) => repairStoredDocument(doc)));
+        const items = repaired.map((doc) => {
           dbIdsByType.current[doc.doc_type] = doc.id;
           return {
             id: `db-${doc.id}`,
@@ -230,9 +273,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
           };
         });
         setDocList(items);
-        if (onExtracted) {
-          onExtracted(buildRegistrationDataFromDocuments(relevant));
-        }
+        await notifyExtracted(onExtracted);
       } catch {
         /* ignore */
       }
@@ -309,12 +350,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     }
 
     setProcessing(true);
+    const batchTotal = targets.length;
+    setBatchCount({ total: batchTotal, success: 0, failed: 0, remaining: batchTotal });
     setProgress({
       stage: 'start',
-      total: targets.length,
+      batchTotal,
+      total: batchTotal,
+      selectedTotal: batchTotal,
       processed: 0,
       current: 0,
-      message: `Processing ${targets.length} document(s)…`,
+      successCount: 0,
+      failedCount: 0,
+      remaining: batchTotal,
+      message: `Processing ${batchTotal} document(s)…`,
       currentFile: '',
     });
 
@@ -331,7 +379,26 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
 
     if (typeof unsubRef.current === 'function') unsubRef.current();
     if (window.pwp.ocr.onProgress) {
-      unsubRef.current = window.pwp.ocr.onProgress((p) => setProgress(p));
+      unsubRef.current = window.pwp.ocr.onProgress((p) => {
+        const total = Math.max(0, Number(p.selectedTotal || p.total || batchTotal));
+        const processed = Math.max(0, Number(p.processed || p.current || 0));
+        const success = Math.max(0, Number(p.successCount || 0));
+        const failed = Math.max(0, Number(p.failedCount || 0));
+        const remaining = Math.max(0, total - processed);
+        setBatchCount({ total, success, failed, remaining });
+        setProgress({
+          ...p,
+          batchTotal: total,
+          total,
+          processed,
+          successCount: success,
+          failedCount: failed,
+          remaining,
+          message:
+            p.message ||
+            `${success} extracted · ${remaining} remaining`,
+        });
+      });
     }
 
     let savedCount = 0;
@@ -358,11 +425,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             status: 'failed',
             error: r.message || 'Extraction failed',
           });
+          const processedSoFar = savedCount + failedCount;
+          const remainingNow = Math.max(0, batchTotal - processedSoFar);
+          setBatchCount({
+            total: batchTotal,
+            success: savedCount,
+            failed: failedCount,
+            remaining: remainingNow,
+          });
           continue;
         }
 
         const data = { ...(r.data || {}) };
-        const docType = normalizeDocType(data);
+        const docType = normalizeDocType(data, fileName);
 
         try {
           const saved = await saveDocument(data, sourcePath);
@@ -389,16 +464,56 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             error: err?.message || 'Save failed',
           });
         }
+
+        const processedSoFar = savedCount + failedCount;
+        const remainingNow = Math.max(0, batchTotal - processedSoFar);
+        setBatchCount({
+          total: batchTotal,
+          success: savedCount,
+          failed: failedCount,
+          remaining: remainingNow,
+        });
+        setProgress((prev) => ({
+          ...(prev || {}),
+          batchTotal,
+          total: batchTotal,
+          processed: processedSoFar,
+          successCount: savedCount,
+          failedCount: failedCount,
+          remaining: remainingNow,
+          message: `${savedCount} extracted · ${remainingNow} remaining`,
+        }));
       }
+
+      const allDocs = await window.pwp.documents.getAll();
+      const relevant = (allDocs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
+      const processedTotal = savedCount + failedCount;
+      const remaining = Math.max(0, batchTotal - processedTotal);
+
+      setBatchCount({
+        total: batchTotal,
+        success: savedCount,
+        failed: failedCount,
+        remaining: 0,
+      });
 
       setProgress((prev) => ({
         ...(prev || {}),
         stage: 'complete',
-        message: `Done · ${savedCount} saved${failedCount ? ` · ${failedCount} failed` : ''}`,
+        batchTotal,
+        total: batchTotal,
+        processed: processedTotal,
+        successCount: savedCount,
+        failedCount: failedCount,
+        remaining: 0,
+        message: `Done · ${savedCount} extracted${failedCount ? ` · ${failedCount} failed` : ''}${remaining > 0 ? ` · ${remaining} skipped` : ''}`,
       }));
 
       if (savedCount > 0) {
-        showToast?.(`${savedCount} document(s) extracted and saved`, 'success');
+        showToast?.(
+          `${savedCount} new document(s) saved · ${relevant.length} total uploaded`,
+          'success'
+        );
       }
       if (failedCount > 0 && savedCount === 0) {
         showToast?.('Could not extract documents. Check files and try again.', 'error');
@@ -406,6 +521,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     } catch (err) {
       showToast?.(err?.message || 'Batch extraction failed', 'error');
       setProgress(null);
+      setBatchCount(null);
     } finally {
       setProcessing(false);
       if (typeof unsubRef.current === 'function') {
@@ -508,8 +624,12 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   };
 
   const savedDocs = docList.filter((d) => d.status === 'done');
-  const uploadedTypes = new Set(savedDocs.map((d) => d.docType));
-  const uploadedCount = REQUIRED_REGISTRATION_DOCS.filter((t) => uploadedTypes.has(t)).length;
+  const totalUploaded = savedDocs.length;
+  const countLabel = resolving
+    ? 'Reading files…'
+    : processing
+      ? `${batchCount?.remaining ?? batchCount?.total ?? 0} remaining`
+      : `${totalUploaded} uploaded`;
 
   return (
     <div className="space-y-4 relative">
@@ -535,7 +655,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
-          {uploadedCount}/{REQUIRED_REGISTRATION_DOCS.length} ready
+          {countLabel}
         </span>
       </div>
 
@@ -611,7 +731,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       {docList.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Documents · {docList.length}
+            Documents · {totalUploaded}
           </p>
           <div className="max-h-[40vh] overflow-y-auto space-y-2 pr-1">
             {docList.map((item) => (
@@ -629,7 +749,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       {docList.length === 0 && !processing && (
         <div className="flex items-center gap-2 text-xs text-slate-400 px-1">
           <AlertCircle size={14} />
-          Upload all 4 documents — extracted data will auto-fill the form below
+          Upload documents — extracted data will auto-fill the form below
         </div>
       )}
     </div>

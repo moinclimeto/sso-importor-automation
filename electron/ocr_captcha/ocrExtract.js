@@ -98,26 +98,31 @@ export function qtyToMt(raw) {
 
  */
 
-export function buildExtractionPrompt(type, financialYear = 'all', companyDocType = null) {
+export function buildExtractionPrompt(type, financialYear = 'all', companyDocType = null, fileNameHint = '') {
+  const fileHint = fileNameHint
+    ? `\nFilename hint (weak): "${fileNameHint}". If filename contains "CIN", prefer doc_type=cin when a CIN number or letterhead is visible.`
+    : '';
 
   if (type === 'company_document') {
     switch (companyDocType) {
       case 'auto':
         return `OCR Company Document. IDENTIFY the document type and extract accordingly. JSON only minified. 
           Determine "doc_type" from: [gst, unit_gst, pan, cin, iec, cto, udyam, supporting_category_doc, operations_details, plastic_packaging_picture, covering_letter, signature, self_declaration, other].
+          IMPORTANT CIN RULE: If the document shows "CIN", "CIN#", Corporate Identity Number, or a 21-character CIN (e.g. U13111MP2025PTC080792), ALWAYS use doc_type=cin and extract document_number, entity_name, issue_date, address — even on company letterheads, declarations, or informal certificates. Do NOT classify such documents as self_declaration.
           If gst or unit_gst: Extract: {"doc_type":"(gst or unit_gst)","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","district":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. (document_number=GSTIN. address=clean comma-separated address without GST labels. district=district name only)
           If pan: Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","dob":"YYYY-MM-DD","issue_date":"YYYY-MM-DD"}. (document_number=PAN, if 4th letter 'C' set doc_type="company_pan" else "person_pan")
-          If cin: Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}.
+          If cin: Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}. (document_number=CIN without label, entity_name=company name, issue_date=incorporation date if visible)
           If iec: Extract: {"doc_type":"iec","document_number":"","entity_name":""}.
           If cto: Extract: {"doc_type":"cto","document_number":"","entity_name":"","address":"","industry_category":"","allowed_capacity":"","issue_date":"YYYY-MM-DD","validity_date":"YYYY-MM-DD"}.
           If udyam: Extract: {"doc_type":"udyam","document_number":"","entity_name":"","enterprise_type":"","social_category":"","address":"","date_of_incorporation":"","date_of_commencement":"","issue_date":"YYYY-MM-DD","units":[{"sno":"","name":""}],"nic_codes":[{"nic_2":"","nic_4":"","nic_5":"","activity":""}]}.
-          For supporting_category_doc, operations_details, plastic_packaging_picture, covering_letter, signature, self_declaration, other: DO NOT extract textual data. ONLY return {"doc_type":"..."} based on what the document is.`;
+          For supporting_category_doc, operations_details, plastic_packaging_picture, covering_letter, signature: DO NOT extract textual data. ONLY return {"doc_type":"..."}.
+          For self_declaration or other: ONLY return {"doc_type":"..."} if no GSTIN/PAN/CIN/IEC/Udyam numbers are visible.${fileHint}`;
       case 'gst':
         return `OCR GST Certificate. JSON only minified. Extract: {"doc_type":"gst","document_number":"","entity_name":"","trade_name":"","constitution_of_business":"","address":"","district":"","issue_date":"YYYY-MM-DD","date_of_liability":"YYYY-MM-DD"}. RULES: document_number=GSTIN. entity_name=Legal Name. trade_name=Trade Name. issue_date=Date of Registration. address=clean comma-separated postal address WITHOUT labels like "Building No./Flat No.:" or "District:". district=district name only (e.g. Raisen).`;
       case 'pan':
         return `OCR PAN Card. JSON only minified. Extract: {"doc_type":"","document_number":"","entity_name":"","father_name":"","dob":"YYYY-MM-DD","issue_date":"YYYY-MM-DD"}. RULES: document_number=PAN number. If 4th letter of PAN is 'C' set doc_type="company_pan", otherwise set doc_type="person_pan". entity_name=Name on card. father_name=Father's Name (blank if company). For person_pan: dob=Date of Birth exactly as on card converted to YYYY-MM-DD (look for "DOB", "Date of Birth", birth date field). Set issue_date same as dob. For company_pan: dob="", issue_date=Date of Incorporation if present.`;
       case 'cin':
-        return `OCR CIN/Incorporation Certificate. JSON only minified. Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}. RULES: document_number=Corporate Identity Number (CIN). entity_name=Name of Company. issue_date=Date of Incorporation (YYYY-MM-DD, or just YYYY if full date missing). address=Registered Office Address.`;
+        return `OCR CIN/Incorporation Certificate or company letterhead with CIN. JSON only minified. Extract: {"doc_type":"cin","document_number":"","entity_name":"","issue_date":"","address":""}. RULES: document_number=Corporate Identity Number (CIN, 21 chars like U13111MP2025PTC080792, strip CIN# prefix). entity_name=Name of Company. issue_date=Date of Incorporation (YYYY-MM-DD, or just YYYY if full date missing). address=Registered Office Address.${fileHint}`;
       case 'cto':
         return `OCR CTO (Consent to Operate). JSON only minified. Extract: {"doc_type":"cto","document_number":"","entity_name":"","address":"","industry_category":"","allowed_capacity":"","issue_date":"YYYY-MM-DD","validity_date":"YYYY-MM-DD"}. RULES: document_number=Consent Order No. entity_name=Company/Industry Name. address=Plant Address/Location. industry_category=Category (Red/Orange/Green/White). allowed_capacity=Allowed Products/Capacity limits. issue_date=Issue/Consent Date. validity_date=Valid Upto.`;
       case 'electricity':

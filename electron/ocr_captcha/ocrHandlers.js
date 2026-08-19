@@ -24,9 +24,51 @@ import {
   pageInvoiceFileName,
 } from '../utils/pdfPages.js';
 import { resolveUploadPaths } from '../utils/zipExpand.js';
+import {
+  normalizeCompanyDocumentExtraction,
+  needsCinOcrRetry,
+} from '../../src/utils/companyDocNormalize.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+async function runGeminiJsonExtraction({
+  genAI,
+  modelNames,
+  prompt,
+  mimeType,
+  base64,
+  log,
+}) {
+  let lastError = null;
+  for (const modelName of modelNames) {
+    try {
+      const model = genAI.getGenerativeModel({
+        model: modelName,
+        generationConfig: {
+          responseMimeType: 'application/json',
+          temperature: 0.1,
+          maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
+        },
+      });
+      const result = await model.generateContent([
+        { text: prompt },
+        { inlineData: { mimeType, data: base64 } },
+      ]);
+      const text = result.response
+        .text()
+        .trim()
+        .replace(/```json\n?/g, '')
+        .replace(/```\n?/g, '')
+        .trim();
+      return { parsed: JSON.parse(text), usedModel: modelName, lastError: null };
+    } catch (err) {
+      lastError = err;
+      log.warn('Gemini model failed', { modelName, message: err?.message });
+    }
+  }
+  return { parsed: null, usedModel: null, lastError };
+}
 function loadEnvFile() {
   const candidates = [
     path.join(process.cwd(), '.env'),
@@ -167,38 +209,40 @@ async function extractOneInvoice({
     const modelNames = [
       ...new Set([...(envModel ? [envModel] : []), ...envCandidates, ...defaultModels]),
     ];
-    const prompt = buildExtractionPrompt(invoiceType, financialYear, companyDocType);
-    let parsed = null;
-    let lastError = null;
-    let usedModel = null;
+    const prompt = buildExtractionPrompt(invoiceType, financialYear, companyDocType, sourceName);
+    let { parsed, usedModel, lastError } = await runGeminiJsonExtraction({
+      genAI,
+      modelNames,
+      prompt,
+      mimeType,
+      base64,
+      log,
+    });
 
-    for (const modelName of modelNames) {
-      try {
-        const model = genAI.getGenerativeModel({
-          model: modelName,
-          generationConfig: {
-            responseMimeType: 'application/json',
-            temperature: 0.1,
-            maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
-          },
-        });
-        const result = await model.generateContent([
-          { text: prompt },
-          { inlineData: { mimeType, data: base64 } },
-        ]);
-        const text = result.response
-          .text()
-          .trim()
-          .replace(/```json\n?/g, '')
-          .replace(/```\n?/g, '')
-          .trim();
-        parsed = JSON.parse(text);
-        usedModel = modelName;
-        break;
-      } catch (err) {
-        lastError = err;
-        log.warn('Gemini model failed', { modelName, message: err?.message });
+    if (
+      parsed &&
+      invoiceType === 'company_document' &&
+      needsCinOcrRetry(parsed, sourceName, companyDocType || 'auto')
+    ) {
+      log.info('Retrying CIN-focused OCR', { sourceName });
+      const cinPrompt = buildExtractionPrompt(invoiceType, financialYear, 'cin', sourceName);
+      const retry = await runGeminiJsonExtraction({
+        genAI,
+        modelNames,
+        prompt: cinPrompt,
+        mimeType,
+        base64,
+        log,
+      });
+      if (retry.parsed) {
+        parsed = retry.parsed;
+        usedModel = retry.usedModel || usedModel;
+        lastError = retry.lastError;
       }
+    }
+
+    if (parsed && invoiceType === 'company_document') {
+      parsed = normalizeCompanyDocumentExtraction(parsed, sourceName);
     }
 
     if (!parsed) {
