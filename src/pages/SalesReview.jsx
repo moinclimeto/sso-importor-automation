@@ -61,6 +61,23 @@ function buildHeaderFromRow(row) {
   return buildSalesHeaderFromRow(row);
 }
 
+function linePatchAffectsMt(patch = {}) {
+  return [
+    'processedQuantity',
+    'quantity',
+    'unit',
+    'quantityDerivationType',
+    'conversionFactor',
+    'conversionFactorApplied',
+    'weight_mt',
+    'weight',
+    'weight_unit',
+    'amount',
+    'gstPaid',
+    'cfBaseSource',
+  ].some((key) => key in patch);
+}
+
 export default function SalesReview() {
   const { id } = useParams();
   const [searchParams] = useSearchParams();
@@ -148,18 +165,16 @@ export default function SalesReview() {
         pkg || [],
       );
       const computedQty = sumLineProcessedMt(drafts);
-      const savedQty = row.quantity_sold_mt;
-      quantityManualRef.current =
-        savedQty != null &&
-        savedQty !== '' &&
-        (computedQty == null || Math.abs(parseFloat(savedQty) - computedQty) > 1e-6);
+      quantityManualRef.current = false;
       skipDirtyRef.current = true;
       setHeader({
         ...buildHeaderFromRow(row),
         quantity_sold_mt:
-          savedQty != null && savedQty !== ''
-            ? String(savedQty)
-            : (computedQty != null ? String(computedQty) : ''),
+          computedQty != null
+            ? String(computedQty)
+            : (row.quantity_sold_mt != null && row.quantity_sold_mt !== ''
+              ? String(row.quantity_sold_mt)
+              : ''),
       });
       setLines(drafts);
       setBulkCat(row.category_of_plastic || 'Cat-II');
@@ -226,9 +241,16 @@ export default function SalesReview() {
   }, [lines, readOnly]);
 
   const updateLine = (idx, patch) => {
+    if (linePatchAffectsMt(patch)) {
+      quantityManualRef.current = false;
+    }
     setLines((prev) => {
       const next = [...prev];
       let draft = { ...next[idx], ...patch };
+      if (patch.processedQuantity != null && !patch.quantityDerivationType) {
+        draft.quantityDerivationType = draft.quantityDerivationType || 'manual';
+        draft.conversionMethodUsed = draft.conversionMethodUsed || CONVERSION_METHOD.MANUAL;
+      }
       if (patch.quantityDerivationType) {
         draft = recalcLineOnCfModeChange(draft, patch.quantityDerivationType);
       } else {
@@ -368,9 +390,11 @@ export default function SalesReview() {
     const lineItems = lines.map(lineDraftToPersist);
     const computedMt = sumLineProcessedMt(lines);
     const manualQty =
-      header.quantity_sold_mt === '' || header.quantity_sold_mt == null
-        ? null
-        : parseFloat(header.quantity_sold_mt);
+      quantityManualRef.current &&
+      header.quantity_sold_mt !== '' &&
+      header.quantity_sold_mt != null
+        ? parseFloat(header.quantity_sold_mt)
+        : null;
     const totalMt = Number.isFinite(manualQty) ? manualQty : computedMt;
     const first = lineItems[0];
     const hsnStr = String(first?.hsn || record.hsn_code || '').replace(/\D/g, '');

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState, useMemo } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
-  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Edit2, Search, ChevronLeft, ChevronRight, ClipboardCheck
+  Trash2, Download, FileSpreadsheet, Loader2, UploadCloud, X, Globe, Plus, ChevronDown, ArrowLeftRight, Search, ChevronLeft, ChevronRight, ClipboardCheck
 } from 'lucide-react';
 import {
   downloadExcelTemplate,
@@ -16,9 +16,6 @@ import { enrichSaleRecord, resolveSalesDistrict, resolveSalesGstOtherCharges } f
 import CpcbConfirmationModal from '../components/CpcbConfirmationModal.jsx';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
-import InvoiceDetailsModal, {
-  ViewInvoiceButton,
-} from '../components/InvoiceDetailsModal.jsx';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { Toast, useToast } from '../components/Toast.jsx';
 import * as XLSX from 'xlsx';
@@ -949,19 +946,8 @@ function PaginationBar({ currentPage, totalPages, totalRecords, pageSize, onPage
   );
 }
 
-function rowLineCount(r) {
-  return Array.isArray(r?.line_items) ? r.line_items.length : 0;
-}
-
-
-
-
-
-
-
 function renderWideTable(rows, columns, onDelete, extras = {}) {
   const {
-    onView,
     onReview,
     getValue,
     selectedIds,
@@ -969,7 +955,6 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
     onToggleSelectAll,
     onMove,
     moveLabel,
-    onEdit,
   } = extras;
   const allSelected = rows.length > 0 && rows.every((r) => selectedIds?.has(r.id));
   const someSelected = rows.some((r) => selectedIds?.has(r.id));
@@ -1039,11 +1024,6 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
               })}
               <td className="td text-right sticky right-0 bg-white">
                 <div className="inline-flex items-center gap-1.5">
-                  <ViewInvoiceButton
-                    onClick={() => onView?.(r)}
-                    disabled={!rowLineCount(r)}
-                    title={rowLineCount(r) ? 'View line items' : 'No line items'}
-                  />
                   {onMove && (
                     <button
                       type="button"
@@ -1063,16 +1043,6 @@ function renderWideTable(rows, columns, onDelete, extras = {}) {
                     >
                       <ClipboardCheck size={14} />
                       Review
-                    </button>
-                  )}
-                  {onEdit && (
-                    <button
-                      type="button"
-                      onClick={() => onEdit(r)}
-                      className="p-1.5 rounded-lg text-slate-400 hover:bg-blue-50 hover:text-blue-600"
-                      title="Edit"
-                    >
-                      <Edit2 size={15} />
                     </button>
                   )}
                   <button
@@ -1279,10 +1249,7 @@ export default function DocTable() {
   const excelMenuRef = useRef(null);
 
   const [addOpen, setAddOpen] = useState(false);
-  const [editRow, setEditRow] = useState(null);
 
-  const [detailRow, setDetailRow] = useState(null);
-  
   // Search & Pagination state
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -2053,9 +2020,7 @@ export default function DocTable() {
 
           <>
             {renderWideTable(paginatedRows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
-              onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename }),
               onReview: (r) => navigate(`/procurement-review/${r.id}?tab=${docTab}`),
-              onEdit: setEditRow,
               getValue: (r, col, _idx, value) => {
                 if (col.key === 'category_of_plastic') return 'Cat-II';
                 if (col.key === 'supplier_name' && !value) return r.vendor_name;
@@ -2084,12 +2049,7 @@ export default function DocTable() {
 
           <>
             {renderWideTable(paginatedRows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
-              onView: (r) => setDetailRow({
-                data: isPurchase ? r : enrichSaleRecord(r),
-                fileName: r.invoice_file_name,
-              }),
               onReview: (r) => navigate(`/sales-review/${r.id}?tab=${docTab}`),
-              onEdit: (r) => setEditRow(isPurchase ? r : enrichSaleRecord(r)),
               getValue: (r, col, idx, value) => {
                 if (col.key === 's_no' && (value === undefined || value === '')) return (Math.min(currentPage, totalPages) - 1) * pageSize + idx + 1;
                 if (col.key === 'entity_name' && !value) return r.customer_name;
@@ -2189,44 +2149,6 @@ export default function DocTable() {
         />
       )}
 
-      {editRow && (() => {
-        const editIdx = filteredRows.findIndex(r => r.id === editRow.id);
-        const hasNext = editIdx >= 0 && editIdx < filteredRows.length - 1;
-        const hasPrev = editIdx > 0;
-        
-        return (
-          <SingleRecordModal
-            type={type}
-            initialData={editRow}
-            hasNext={hasNext}
-            hasPrev={hasPrev}
-            onNext={() => {
-              if (hasNext) {
-                const next = filteredRows[editIdx + 1];
-                setEditRow(isPurchase ? next : enrichSaleRecord(next));
-              }
-            }}
-            onPrev={() => {
-              if (hasPrev) {
-                const prev = filteredRows[editIdx - 1];
-                setEditRow(isPurchase ? prev : enrichSaleRecord(prev));
-              }
-            }}
-            onClose={() => setEditRow(null)}
-            onSaveAndNext={() => {
-              if (hasNext) {
-                const next = filteredRows[editIdx + 1];
-                setEditRow(isPurchase ? next : enrichSaleRecord(next));
-              }
-            }}
-            onSaved={() => {
-              showToast(`${title} record updated successfully.`, 'success');
-              load();
-            }}
-          />
-        );
-      })()}
-
       {monthDetail && (
         <div className="fixed inset-0 bg-black/50 z-[60] flex items-center justify-center p-4 sm:p-6">
           <div className="bg-white rounded-2xl shadow-2xl w-full max-w-6xl max-h-[95vh] flex flex-col">
@@ -2251,10 +2173,7 @@ export default function DocTable() {
               </div>
             </div>
             <div className="p-0 overflow-y-auto flex-1">
-              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras({
-                onView: (r) => setDetailRow({ data: r, fileName: r.invoice_filename || r.invoice_file_name }),
-                onEdit: setEditRow,
-              }))}
+              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras())}
             </div>
           </div>
         </div>
@@ -2269,18 +2188,6 @@ export default function DocTable() {
         busy={actionBusy}
         onCancel={() => !actionBusy && setConfirmDialog(null)}
         onConfirm={executeConfirmedAction}
-      />
-
-      <InvoiceDetailsModal
-        open={Boolean(detailRow)}
-        invoice={detailRow}
-        docType={type}
-        onClose={() => setDetailRow(null)}
-        onEdit={(data) => {
-          setDetailRow(null);
-          const row = { ...data, id: data.id ?? detailRow?.data?.id };
-          setEditRow(isPurchase ? row : enrichSaleRecord(row));
-        }}
       />
 
 
