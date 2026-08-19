@@ -14,6 +14,7 @@ import {
 } from '../utils/registrationDataMapper.js';
 import {
   normalizeCompanyDocumentExtraction,
+  resolveGstDocType,
 } from '../utils/companyDocNormalize.js';
 import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 
@@ -81,8 +82,9 @@ async function notifyExtracted(onExtracted) {
   onExtracted(buildRegistrationDataFromDocuments(relevant));
 }
 
-function normalizeDocType(data, fileName = '') {
+function normalizeDocType(data, fileName = '', gstContext = {}) {
   normalizeCompanyDocumentExtraction(data, fileName);
+  resolveGstDocType(data, fileName, gstContext);
   return data.doc_type || 'unknown';
 }
 
@@ -404,6 +406,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     let savedCount = 0;
     let failedCount = 0;
 
+    let companyGstNumber = null;
+    let hasCompanyGst = false;
+    try {
+      const existingDocs = await window.pwp.documents.getAll();
+      const existingGst = (existingDocs || []).find((d) => d.doc_type === 'gst');
+      if (existingGst?.document_number) {
+        companyGstNumber = String(existingGst.document_number).toUpperCase();
+        hasCompanyGst = true;
+      }
+    } catch {
+      /* ignore */
+    }
+
     try {
       const batch = await window.pwp.ocr.extractBatch({
         filePaths: targets.map((t) => t.path),
@@ -437,7 +452,12 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         }
 
         const data = { ...(r.data || {}) };
-        const docType = normalizeDocType(data, fileName);
+        const docType = normalizeDocType(data, fileName, { companyGstNumber, hasCompanyGst });
+
+        if (data.doc_type === 'gst' && data.document_number) {
+          companyGstNumber = String(data.document_number).toUpperCase();
+          hasCompanyGst = true;
+        }
 
         try {
           const saved = await saveDocument(data, sourcePath);

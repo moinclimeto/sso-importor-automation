@@ -155,6 +155,8 @@ export function buildRegistrationDataFromDocuments(docs = []) {
 
   const gst = byType.gst;
   const gstRaw = parseRaw(gst);
+  const unitGstDoc = byType.unit_gst;
+  const unitGstRaw = parseRaw(unitGstDoc);
   const companyPanDoc = byType.company_pan;
   const personPanDoc = byType.person_pan;
   const cto = byType.cto;
@@ -201,6 +203,17 @@ export function buildRegistrationDataFromDocuments(docs = []) {
   const registeredAddress = parsedAddress.address || rawAddress;
   const cinNumber = firstNonEmpty(cin?.document_number).toUpperCase();
 
+  const unitGstin = firstNonEmpty(unitGstDoc?.document_number, unitGstRaw.document_number).toUpperCase();
+  const unitRawAddress = firstNonEmpty(unitGstDoc?.address, unitGstRaw.address);
+  const unitParsedAddress = parseGstLabeledAddress(unitRawAddress);
+  const plantAddress = unitParsedAddress.address || unitRawAddress;
+  const unitDistrict = firstNonEmpty(
+    unitGstRaw.district,
+    unitGstDoc?.district,
+    unitParsedAddress.district,
+    extractDistrictFromAddress(plantAddress)
+  );
+
   return {
     gstin,
     companyPan,
@@ -224,10 +237,16 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     industryCategory: firstNonEmpty(cto?.industry_category),
     allowedCapacity: firstNonEmpty(cto?.allowed_capacity),
     enterpriseType: firstNonEmpty(udyam?.enterprise_type),
-    
+
+    unitGst: unitGstin,
+    plantAddress,
+    unitDistrict,
+    hasUnitGst: Boolean(unitGstDoc),
+
     // File paths for automation auto-upload
     panDocumentPath: firstNonEmpty(companyPanDoc?.file_path, personPanDoc?.file_path),
     gstDocumentPath: firstNonEmpty(gst?.file_path),
+    unitGstDoc: firstNonEmpty(unitGstDoc?.file_path),
     cinDocumentPath: firstNonEmpty(cin?.file_path),
     iecDocumentPath: firstNonEmpty(iecDoc?.file_path),
   };
@@ -290,6 +309,8 @@ export const AUTO_FILLED_FIELDS = [
   { key: 'constitutionOfBusiness', label: 'Type of Business', source: 'GST Certificate' },
   { key: 'registeredAddress', label: 'Registered Address', source: 'GST / CTO' },
   { key: 'district', label: 'District', source: 'GST Address' },
+  { key: 'unitGst', label: 'Unit GST Number', source: 'Unit GST Certificate' },
+  { key: 'plantAddress', label: 'Plant/Unit Address', source: 'Unit GST Certificate' },
   { key: 'cin', label: 'Company CIN', source: 'CIN Certificate' },
   { key: 'ctoNumber', label: 'CTO Number', source: 'CTO Certificate' },
   { key: 'ctoValidity', label: 'CTO Validity', source: 'CTO Certificate' },

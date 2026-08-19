@@ -91,15 +91,25 @@ export function buildGeneralInfoFromDocData(docData = {}) {
   } catch {
     /* mapper helper missing */
   }
+
+  const hasUnitGst = Boolean(docData.hasUnitGst || docData.unitGst || docData.plantAddress);
+  const plantAddress = docData.plantAddress || '';
+  const unitGst = docData.unitGst || '';
+  const unitDistrict = docData.unitDistrict || '';
+  const unitState = plantAddress ? extractStateFromAddress(plantAddress) : '';
+
   return {
     typeOfBusiness: mapConstitutionToTypeOfBusiness(docData.constitutionOfBusiness),
     typeOfCompany: mapEnterpriseToTypeOfCompany(docData.enterpriseType),
     registeredAddressLine1: cleanAddress,
     registeredAddressLine2: docData.registeredAddressLine2 || '',
     cin: docData.cin || '',
-    stateUt: defaultState,
-    operatingStates: [defaultState],
-    district,
+    isSameAsRegisteredAddress: hasUnitGst ? false : true,
+    plantAddress,
+    unitGst,
+    stateUt: hasUnitGst && unitState ? unitState : defaultState,
+    operatingStates: hasUnitGst && unitState ? [unitState] : [defaultState],
+    district: hasUnitGst && unitDistrict ? unitDistrict : district,
   };
 }
 

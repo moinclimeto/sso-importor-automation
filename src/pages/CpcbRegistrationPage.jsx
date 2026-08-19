@@ -53,6 +53,7 @@ const EMPTY_AUTO = {
   ctoValidity: '',
   dateOfCommencement: '',
   iecDocumentPath: '',
+  unitGstDoc: '',
 };
 
 function AutoFilledPreview({ data, isDummy }) {
@@ -1265,22 +1266,25 @@ export default function CpcbRegistrationPage() {
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={(e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        setAutoData(prev => ({ ...prev, unitGstDoc: file.path || file.name }));
-                      }
-                    }}
-                    className={inputClass}
-                    required
-                  />
-                  {autoData.unitGstDoc && (
-                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
-                      Selected: {autoData.unitGstDoc.split(/[/\\]/).pop()}
+                  {autoData.unitGstDoc ? (
+                    <p className="text-xs text-green-600 mt-1 truncate px-3 py-2 border border-green-200 bg-green-50 rounded-lg" title={autoData.unitGstDoc}>
+                      Uploaded: {autoData.unitGstDoc.split(/[/\\]/).pop()}
                     </p>
+                  ) : (
+                    <>
+                      <input
+                        type="file"
+                        accept=".pdf,.png,.jpg,.jpeg"
+                        onChange={(e) => {
+                          const file = e.target.files[0];
+                          if (file) {
+                            setAutoData(prev => ({ ...prev, unitGstDoc: file.path || file.name }));
+                          }
+                        }}
+                        className={inputClass}
+                        required
+                      />
+                    </>
                   )}
                 </div>
               </>

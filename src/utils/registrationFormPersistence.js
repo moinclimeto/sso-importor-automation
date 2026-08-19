@@ -22,6 +22,10 @@ export function mergeGeneralInfoFromSources(docData = {}, savedGeneral = {}) {
   const fromDocs = buildGeneralInfoFromDocData(docData);
   const saved = pickNonEmpty(savedGeneral);
   const docFields = pickNonEmpty(fromDocs);
+  const docHasUnitGst = Boolean(docData.hasUnitGst || docFields.unitGst || docFields.plantAddress);
+  const savedHasUnitFields = Boolean(
+    String(savedGeneral.unitGst || '').trim() || String(savedGeneral.plantAddress || '').trim()
+  );
 
   return {
     ...GENERAL_INFO_EMPTY,
@@ -31,9 +35,17 @@ export function mergeGeneralInfoFromSources(docData = {}, savedGeneral = {}) {
     typeOfCompany: saved.typeOfCompany || docFields.typeOfCompany || docData.typeOfCompany || '',
     registeredAddressLine1:
       saved.registeredAddressLine1 || docFields.registeredAddressLine1 || docData.registeredAddress || '',
-    district: saved.district || docFields.district || docData.district || '',
+    district: saved.district || docFields.district || docData.district || docData.unitDistrict || '',
     cin: saved.cin || docFields.cin || docData.cin || '',
     stateUt: saved.stateUt || docFields.stateUt || docData.stateUt || '',
+    unitGst: saved.unitGst || docFields.unitGst || docData.unitGst || '',
+    plantAddress: saved.plantAddress || docFields.plantAddress || docData.plantAddress || '',
+    isSameAsRegisteredAddress:
+      docHasUnitGst && !savedHasUnitFields
+        ? false
+        : typeof savedGeneral.isSameAsRegisteredAddress === 'boolean'
+          ? savedGeneral.isSameAsRegisteredAddress
+          : docFields.isSameAsRegisteredAddress ?? true,
     authDesignation: saved.authDesignation || docData.authDesignation || '',
     password: savedGeneral.password || '',
     confirmPassword: savedGeneral.confirmPassword || savedGeneral.password || '',

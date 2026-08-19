@@ -24,6 +24,35 @@ export function fileNameHintsCin(fileName = '') {
   return /\bcin\b/i.test(String(fileName || ''));
 }
 
+export function fileNameHintsUnitGst(fileName = '') {
+  return /\bunit[\s_-]?gst\b/i.test(String(fileName || ''));
+}
+
+export function resolveGstDocType(data, fileName = '', context = {}) {
+  const type = data.doc_type || 'unknown';
+  if (type !== 'gst' && type !== 'unit_gst') return type;
+
+  const gstin = String(data.document_number || '').toUpperCase().replace(/[^A-Z0-9]/g, '');
+  const { companyGstNumber = null, hasCompanyGst = false } = context;
+
+  if (fileNameHintsUnitGst(fileName)) {
+    data.doc_type = 'unit_gst';
+    return 'unit_gst';
+  }
+
+  if (type === 'gst' && hasCompanyGst && companyGstNumber && gstin && gstin !== companyGstNumber) {
+    data.doc_type = 'unit_gst';
+    return 'unit_gst';
+  }
+
+  if (type === 'unit_gst' && !hasCompanyGst && !companyGstNumber && gstin) {
+    data.doc_type = 'gst';
+    return 'gst';
+  }
+
+  return data.doc_type;
+}
+
 const CIN_RECLASSIFY_TYPES = new Set([
   'self_declaration',
   'other',
