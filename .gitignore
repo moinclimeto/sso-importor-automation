@@ -71,3 +71,7 @@ coverage/
 
 # Vite
 *.local
+
+# Scraped Playwright Data
+playwright_data/*.json
+playwright_data/*.png

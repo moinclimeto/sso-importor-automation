@@ -45,19 +45,19 @@ async function loginEpr(username, password) {
         // ============================================
         console.log("🖱️ Checking for 'Continue' button...");
         try {
-            // Using a broader locator for the text 'Continue'
-            const continueBtn = page.locator('text=Continue').first();
+            // Target the button that contains the <p> Continue </p> text
+            const continueBtn = page.locator('button:has-text("Continue")').first();
             // Wait for it to be visible (max 5 seconds) before clicking
             await continueBtn.waitFor({ state: 'visible', timeout: 5000 });
-            await continueBtn.click();
-            console.log("✅ Clicked 'Continue'.");
+            await continueBtn.click({ force: true });
+            console.log("✅ Clicked '<button><p> Continue </p></button>'.");
         } catch (e) {
             console.log("⚠️ 'Continue' button not found (might not be required on restored session). Proceeding...");
         }
 
         console.log("⏳ Waiting for '<button> Open </button>' on dashboard...");
-        // Match a visible button with class card-btn that contains the text 'Open'
-        const firstOpenBtn = page.locator('button.card-btn:has-text("Open") >> visible=true').first();
+        // Match a visible button that contains the text 'Open'
+        const firstOpenBtn = page.locator('button:has-text("Open") >> visible=true').first();
         
         // Explicitly wait for it to be visible
         await firstOpenBtn.waitFor({ state: 'visible', timeout: 15000 });
