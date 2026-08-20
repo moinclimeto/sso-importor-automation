@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 
 # Build output
@@ -40,7 +40,7 @@ captcha-artifacts/
 registration-screenshots/
 cpcb-browser-session/
 processed_invoices/
-
+playwright_data/
 # OCR / temp artifacts
 pwp-ocr-pages/
 pwp-captcha-artifacts/
