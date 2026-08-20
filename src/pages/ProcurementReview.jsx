@@ -46,6 +46,7 @@ import {
   applyBulkPlasticToLines,
   normalizePlasticMaterial,
   resolveInvoiceNumberFromRecord,
+  validateReviewDocument,
 } from '../../shared/reviewEnrichment';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport';
 
@@ -76,8 +77,6 @@ export default function ProcurementReview() {
   const [lines, setLines] = useState([]);
   const [packagingRows, setPackagingRows] = useState([]);
   const [previewUrl, setPreviewUrl] = useState(null);
-  const [validationMsg, setValidationMsg] = useState('');
-  const [validationOk, setValidationOk] = useState(false);
   const [bulkCat, setBulkCat] = useState('');
   const [bulkMaterial, setBulkMaterial] = useState('');
   const [selectedLines, setSelectedLines] = useState(() => new Set());
@@ -89,16 +88,41 @@ export default function ProcurementReview() {
   const autoSaveTimerRef = useRef(null);
   const skipDirtyRef = useRef(true);
 
-  const readOnly = tab === 'published';
+  const isPublished = tab === 'published';
+  const draftStatus = isPublished ? 'published' : 'inbox';
+  const readOnly = false;
+
+  const validation = useMemo(
+    () =>
+      validateReviewDocument({
+        header,
+        lines,
+        record: record || {},
+        packagingRows,
+        mode: 'purchase',
+      }),
+    [header, lines, record, packagingRows],
+  );
+
+  const applyValidationDraft = useCallback(() => {
+    const { headerDraft, enrichedLines } = validation;
+    if (
+      headerDraft.invoice_number !== header.invoice_number ||
+      headerDraft.financial_year !== header.financial_year
+    ) {
+      setHeader(headerDraft);
+    }
+    setLines(enrichedLines);
+  }, [validation, header.invoice_number, header.financial_year]);
 
   const markUnsaved = useCallback(() => {
     if (readOnly || skipDirtyRef.current) return;
     setDirty(true);
     if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
     autoSaveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current?.('inbox', { silent: true, skipReload: true });
+      handleSaveRef.current?.(draftStatus, { silent: true, skipReload: true });
     }, 2000);
-  }, [readOnly]);
+  }, [draftStatus]);
 
   const patchHeader = useCallback((patch) => {
     setHeader((h) => ({ ...h, ...patch }));
@@ -118,10 +142,10 @@ export default function ProcurementReview() {
   useEffect(() => {
     setPageHeader({
       title: 'Procurement Document Processing',
-      description: readOnly ? 'Published — view only' : 'OCR Review',
+      description: isPublished ? 'Published — editable' : 'OCR Review',
     });
     return clearPageHeader;
-  }, [readOnly, setPageHeader, clearPageHeader]);
+  }, [isPublished, setPageHeader, clearPageHeader]);
 
   const loadRecord = useCallback(async () => {
     if (!window.pwp?.purchases || !id) return;
@@ -154,8 +178,6 @@ export default function ProcurementReview() {
       setBulkStatus('');
       setDirty(false);
       setPackagingRows(pkg || []);
-      setValidationOk(false);
-      setValidationMsg('');
       requestAnimationFrame(() => {
         skipDirtyRef.current = false;
       });
@@ -211,6 +233,13 @@ export default function ProcurementReview() {
     setLines((prev) => {
       const next = [...prev];
       let draft = { ...next[idx], ...patch };
+      if (patch.processedQuantity != null && !patch.quantityDerivationType) {
+        draft.quantityDerivationType = 'manual';
+        draft.conversionMethodUsed = CONVERSION_METHOD.MANUAL;
+        draft.masterSource = 'manual';
+        draft.conversionFactorApplied = '';
+        draft.conversionFactor = '';
+      }
       if (patch.quantityDerivationType) {
         draft = recalcLineOnCfModeChange(draft, patch.quantityDerivationType);
       } else {
@@ -222,7 +251,6 @@ export default function ProcurementReview() {
       next[idx] = draft;
       return next;
     });
-    setValidationOk(false);
     markUnsaved();
   };
 
@@ -293,7 +321,6 @@ export default function ProcurementReview() {
       return;
     }
     setLines(nextLines);
-    setValidationOk(false);
     markUnsaved();
     const msg = updated > 0
       ? `Updated ${updated} line(s) — check Category/Material columns in the table →`
@@ -303,44 +330,11 @@ export default function ProcurementReview() {
   };
 
   const runValidation = () => {
-    const headerDraft = { ...header };
-    if (!headerDraft.invoice_number?.trim()) {
-      headerDraft.invoice_number = resolveInvoiceNumberFromRecord(record || {});
-    }
-    headerDraft.financial_year = resolveFinancialYear(
-      headerDraft.invoice_date,
-      headerDraft.financial_year,
-    );
-    if (headerDraft.invoice_number !== header.invoice_number || headerDraft.financial_year !== header.financial_year) {
-      setHeader(headerDraft);
-    }
-
-    const enrichedLines = enrichReviewLines(lines, { ...record, ...headerDraft }, packagingRows);
-
-    const errors = [];
-    if (!headerDraft.invoice_number?.trim()) errors.push('Document number is required');
-    if (!headerDraft.invoice_date?.trim()) errors.push('Document date is required');
-    if (!headerDraft.financial_year?.trim()) errors.push('Financial year is required');
-    if (!enrichedLines.length) errors.push('At least one line item is required');
-
-    enrichedLines.forEach((line, i) => {
-      const mt = resolveLineMt(line);
-      if (mt == null || mt <= 0) errors.push(`Line ${i + 1}: Qty (MT) is required`);
-      if (!line.plasticCategory?.trim()) errors.push(`Line ${i + 1}: Category is required`);
-      if (!line.plasticMaterial?.trim()) errors.push(`Line ${i + 1}: Material is required`);
-    });
-
-    if (errors.length) {
-      setLines(enrichedLines);
-      setValidationMsg(errors.join(' · '));
-      setValidationOk(false);
+    applyValidationDraft();
+    if (!validation.ok) {
       showToast('Validation failed — check highlighted fields', 'error');
       return false;
     }
-    setLines(enrichedLines);
-    setHeader(headerDraft);
-    setValidationMsg('');
-    setValidationOk(true);
     showToast('Document passed validation', 'success');
     return true;
   };
@@ -378,7 +372,15 @@ export default function ProcurementReview() {
     try {
       const payload = buildSavePayload(docStatus);
       const result = await window.pwp.purchases.update(payload);
-      setRecord((prev) => (prev ? { ...prev, ...payload, line_items: payload.lineItems } : prev));
+      const savedLines = result?.lineItems ?? payload.lineItems;
+      setRecord((prev) => (prev ? {
+        ...prev,
+        ...payload,
+        line_items: savedLines,
+        lineItems: savedLines,
+        quantity_mt: result?.quantity_mt ?? payload.quantity_mt,
+        quantity: result?.quantity ?? payload.quantity,
+      } : prev));
       setDirty(false);
       if (silent) {
         showToast(
@@ -389,15 +391,17 @@ export default function ProcurementReview() {
         );
       } else {
         showToast(
-          docStatus === 'published'
-            ? 'Published successfully'
-            : result?.packagingSynced > 0
-              ? `Saved · ${result.packagingSynced} product(s) synced to Packaging Master`
-              : 'Saved',
+          docStatus === 'published' && tab === 'published'
+            ? 'Changes saved'
+            : docStatus === 'published'
+              ? 'Published successfully'
+              : result?.packagingSynced > 0
+                ? `Saved · ${result.packagingSynced} product(s) synced to Packaging Master`
+                : 'Saved',
           'success',
         );
       }
-      if (docStatus === 'published') {
+      if (docStatus === 'published' && tab !== 'published') {
         navigate('/doc-table', { state: { type: 'purchase', tab: 'published' } });
       } else if (!skipReload) {
         await loadRecord();
@@ -413,7 +417,11 @@ export default function ProcurementReview() {
   handleSaveRef.current = handleSave;
 
   const handlePublish = async () => {
-    if (!runValidation()) return;
+    applyValidationDraft();
+    if (!validation.ok) {
+      showToast(validation.errors.join(' · ') || 'Complete required fields before publishing', 'error');
+      return;
+    }
     await handleSave('published');
   };
 
@@ -448,9 +456,9 @@ export default function ProcurementReview() {
   const goNav = async (delta) => {
     const next = navRows[navIndex + delta];
     if (!next) return;
-    if (dirty && !readOnly && record?.id) {
+    if (dirty && record?.id) {
       try {
-        await handleSave('inbox', { silent: true, skipReload: true });
+        await handleSave(draftStatus, { silent: true, skipReload: true });
       } catch {
         return;
       }
@@ -472,12 +480,12 @@ export default function ProcurementReview() {
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2">
           <span className="text-xs font-bold uppercase tracking-wider text-emerald-700 bg-emerald-50 px-2 py-1 rounded-md">
-            {readOnly ? 'Published' : 'OCR Review'}
+            {isPublished ? 'Published' : 'OCR Review'}
           </span>
           <span className="text-sm text-slate-500">
             {navPos} / {navTotal}
           </span>
-          {dirty && !readOnly ? (
+          {dirty ? (
             <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
               Unsaved — auto-saving…
             </span>
@@ -493,12 +501,12 @@ export default function ProcurementReview() {
           <button type="button" onClick={() => navigate('/master-data?tab=packaging')} className="btn-secondary text-sm py-1.5 px-3">
             <Package size={15} /> Manage Packaging
           </button>
-          {!readOnly && (
+          {!isPublished && (
             <button type="button" onClick={handleReject} disabled={saving} className="btn-secondary text-sm py-1.5 px-3 text-red-600 border-red-100 hover:bg-red-50">
               <XCircle size={15} /> Move to Reject
             </button>
           )}
-          {readOnly && (
+          {isPublished && (
             <button type="button" onClick={handleUnpublish} disabled={saving} className="btn-secondary text-sm py-1.5 px-3">
               Unpublish to Inbox
             </button>
@@ -799,14 +807,29 @@ export default function ProcurementReview() {
           {/* Footer actions */}
           <div className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm flex flex-wrap items-center justify-between gap-3">
             <div className="text-xs text-slate-500">
-              {validationMsg ? <span className="text-red-600">{validationMsg}</span> : validationOk ? <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 size={14} /> Ready to publish</span> : 'Validate document coding, then Publish to move from Inbox to Published.'}
+              {validation.errors.length ? (
+                <span className="text-red-600">{validation.errors.join(' · ')}</span>
+              ) : validation.ok ? (
+                <span className="text-emerald-600 flex items-center gap-1"><CheckCircle2 size={14} /> {isPublished ? 'Valid — save changes when ready' : 'Ready to publish'}</span>
+              ) : (
+                isPublished
+                  ? 'Fix highlighted fields, then save changes.'
+                  : 'Complete required fields, then Publish to move from Inbox to Published.'
+              )}
             </div>
             <div className="flex gap-2">
-              {!readOnly && (
+              {isPublished ? (
+                <>
+                  <button type="button" disabled={saving} onClick={() => handleSave('published')} className="btn-primary text-sm py-2 px-5">
+                    {saving ? <Loader2 size={14} className="animate-spin inline" /> : null} Save Changes
+                  </button>
+                  <button type="button" disabled={saving} onClick={runValidation} className="btn-secondary text-sm py-2 px-4 border-emerald-200 text-emerald-700 hover:bg-emerald-50">Validate</button>
+                </>
+              ) : (
                 <>
                   <button type="button" disabled={saving} onClick={() => handleSave('inbox')} className="btn-secondary text-sm py-2 px-4">Save Draft</button>
                   <button type="button" disabled={saving} onClick={runValidation} className="btn-secondary text-sm py-2 px-4 border-emerald-200 text-emerald-700 hover:bg-emerald-50">Validate</button>
-                  <button type="button" disabled={saving || !validationOk} onClick={handlePublish} className="btn-primary text-sm py-2 px-5 disabled:opacity-50">
+                  <button type="button" disabled={saving || !validation.ok} onClick={handlePublish} className="btn-primary text-sm py-2 px-5 disabled:opacity-50">
                     {saving ? <Loader2 size={14} className="animate-spin inline" /> : null} Publish
                   </button>
                 </>

@@ -38,10 +38,6 @@ const categories = [
 export default function DocProcessor() {
   const navigate = useNavigate();
   const [counts, setCounts] = useState({ purchase: 0, sale: 0, production: 0 });
-  const [companyName, setCompanyName] = useState('');
-  const [gst, setGst] = useState('');
-  const [isSaving, setIsSaving] = useState(false);
-  const [saveMessage, setSaveMessage] = useState('');
 
   useEffect(() => {
     const load = async () => {
@@ -57,14 +53,6 @@ export default function DocProcessor() {
           sale: sales?.length || 0,
           production: productions?.length || 0,
         });
-        
-        if (window.pwp.extractor) {
-          const data = await window.pwp.extractor.getData();
-          if (data) {
-            setCompanyName(data.company_name || '');
-            setGst(data.gst || '');
-          }
-        }
       } catch {
         /* ignore */
       }
@@ -74,70 +62,8 @@ export default function DocProcessor() {
 
   const totalRecords = counts.purchase + counts.sale + counts.production;
 
-  const handleSaveCompany = async () => {
-    if (!window.pwp?.extractor) {
-      setSaveMessage('Error: API missing. Please fully restart the Electron app to apply backend changes.');
-      return;
-    }
-    setIsSaving(true);
-    setSaveMessage('');
-    try {
-      const res = await window.pwp.extractor.saveData({ companyName, gst });
-      if (res.success) {
-        setSaveMessage('Saved successfully! Updating UI...');
-        setTimeout(() => {
-          setSaveMessage('');
-          window.location.reload();
-        }, 1000);
-      } else {
-        setSaveMessage('Error saving data.');
-      }
-    } catch (err) {
-      setSaveMessage('Error saving data.');
-    } finally {
-      setIsSaving(false);
-    }
-  };
-
   return (
     <div className="space-y-6 w-full py-2">
-      <div className="bg-white rounded-2xl border border-slate-200 p-6 shadow-sm mb-8 relative overflow-hidden">
-        <div className="absolute top-0 left-0 h-1 w-full bg-gradient-to-r from-blue-500 to-indigo-400 opacity-80" />
-        <h3 className="text-lg font-bold text-slate-900 mb-4">Targeted Company (Extractor Data)</h3>
-        <div className="flex flex-col md:flex-row gap-4 items-end">
-          <div className="flex-1 w-full">
-            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">Company Name</label>
-            <input 
-              type="text" 
-              value={companyName}
-              onChange={(e) => setCompanyName(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
-              placeholder="Enter company name"
-            />
-          </div>
-          <div className="flex-1 w-full">
-            <label className="block text-xs font-medium text-slate-500 uppercase tracking-wider mb-2">GST Number</label>
-            <input 
-              type="text" 
-              value={gst}
-              onChange={(e) => setGst(e.target.value)}
-              className="w-full px-4 py-2.5 rounded-xl border border-slate-200 bg-slate-50 text-slate-900 focus:outline-none focus:ring-2 focus:ring-blue-500/50 focus:border-blue-500 transition-all"
-              placeholder="Enter GST number"
-            />
-          </div>
-          <div className="w-full md:w-auto mt-4 md:mt-0 flex items-center gap-3">
-            <button
-              onClick={handleSaveCompany}
-              disabled={isSaving}
-              className="px-6 py-2.5 rounded-xl bg-blue-600 hover:bg-blue-700 text-white font-semibold shadow-sm transition-all active:scale-95 disabled:opacity-70 disabled:active:scale-100"
-            >
-              {isSaving ? 'Saving...' : 'Save'}
-            </button>
-            {saveMessage && <span className="text-sm font-medium text-emerald-600">{saveMessage}</span>}
-          </div>
-        </div>
-      </div>
-
       <div className="flex items-center justify-between mb-4 px-1 mt-2">
         <h2 className="text-xs font-bold tracking-widest text-slate-400 uppercase">
           Document Categories

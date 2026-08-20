@@ -199,6 +199,48 @@ export function resolveCfBaseNumber({
   return null;
 }
 
+/** Evaluate Auto-Function formula (result in MT). Variables: gst, amount, quantity, rate, total. */
+export function evaluateCfFormula(formula, ctx = {}) {
+  const raw = String(formula ?? '').trim();
+  if (!raw) return null;
+
+  const gst = parseNum(ctx.lineGstAmount ?? ctx.gstPaid ?? ctx.gst);
+  const amount = parseNum(ctx.lineAmount ?? ctx.amount);
+  const quantity = parseNum(ctx.quantity ?? ctx.qty);
+  const rate = parseNum(ctx.lineRate ?? ctx.rate);
+  const total =
+    amount != null && gst != null ? amount + gst : amount ?? gst ?? null;
+
+  const replacements = [
+    ['gst_paid', gst],
+    ['subtotal', amount],
+    ['sub_total', amount],
+    ['amount', amount],
+    ['quantity', quantity],
+    ['qty', quantity],
+    ['rate', rate],
+    ['total', total],
+    ['gst', gst],
+  ];
+
+  let expr = raw.toLowerCase();
+  for (const [name, val] of replacements) {
+    if (val == null) continue;
+    expr = expr.replace(new RegExp(`\\b${name}\\b`, 'g'), String(val));
+  }
+
+  if (/[a-z_]/i.test(expr)) return null;
+  if (!/^[\d+\-*/().\s]+$/.test(expr)) return null;
+
+  try {
+    const result = Function(`"use strict"; return (${expr})`)();
+    const n = typeof result === 'number' && Number.isFinite(result) ? result : null;
+    return n != null && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
+
 export function convertQuantityToMT(value, unit, kgPerMeter = null, kgPerLiter = null) {
   if (value === null || value === undefined || value === '' || value === '-') return null;
   let valStr = String(value).replace(/,/g, '');
@@ -248,6 +290,7 @@ export function deriveProcessedQuantityMT({
   lineGstAmount = null,
   cfManualBase = null,
   weightMt = null,
+  cfFormula = null,
 }) {
   const mode = String(quantityDerivationType || 'default').trim().toLowerCase();
   const unitEffective = unitForProcessedQuantityMt(unitInInvoice);
@@ -266,6 +309,17 @@ export function deriveProcessedQuantityMT({
   if (mode === 'manual') {
     const manual = parseNum(effectiveManual);
     return manual != null && manual > 0 ? manual : null;
+  }
+
+  if (mode === 'auto_function') {
+    const fromFormula = evaluateCfFormula(cfFormula, {
+      quantity,
+      lineAmount,
+      lineGstAmount,
+      lineRate,
+    });
+    if (fromFormula != null) return fromFormula;
+    return null;
   }
 
   if (isMeterUnit && (meterFactorNum == null || meterFactorNum <= 0)) return null;
@@ -325,6 +379,18 @@ export function lookupPackagingMasterRow(rows = [], line, listType = 'gpl') {
   );
 }
 
+/** Only auto-apply packaging master on first pass — never overwrite saved/manual CF. */
+export function shouldAutoApplyPackagingMaster(draft = {}) {
+  const mode = String(draft.quantityDerivationType || 'default').trim().toLowerCase();
+  if (mode !== 'default') return false;
+  if (parseNum(draft.conversionFactorApplied || draft.conversionFactor) > 0) return false;
+  if (String(draft.conversionMethodUsed || '').toLowerCase() === CONVERSION_METHOD.MANUAL) return false;
+  if (parseNum(draft.processedQuantity) > 0 && draft.masterSource && draft.masterSource !== 'none') {
+    return false;
+  }
+  return true;
+}
+
 export function applyPackagingMasterToDraft(draft, masterRow) {
   if (!masterRow) return draft;
   const cf = parseNum(masterRow.conversion_factor);
@@ -370,11 +436,13 @@ export function resolveLineMt(draft) {
     cfBaseSource: draft.cfBaseSource || 'quantity',
     lineAmount: draft.amount,
     lineGstAmount: draft.gstPaid,
+    lineRate: draft.rate,
     manualProcessedQuantity: draft.processedQuantity,
     weightMt: draft.weight_mt,
     kgPerMeter: draft.kgPerMeter,
     kgPerLiter: draft.kgPerLiter,
     constantWeight: draft.constantWeight,
+    cfFormula: draft.cfFormula ?? draft.cf_formula,
   });
   return mt != null ? Number(mt.toFixed(6)) : null;
 }
@@ -449,6 +517,7 @@ export function itemToLineDraft(item, idx = 0) {
     !isLikelyCountStoredAsMt(item, unit, qty) &&
     (cfMode === 'manual' ||
       cfMode === 'conversion_factor' ||
+      cfMode === 'auto_function' ||
       hasCf ||
       !isCountUom(unit));
 
@@ -484,6 +553,7 @@ export function itemToLineDraft(item, idx = 0) {
     conversionFactorApplied:
       item.conversionFactorApplied ?? item.conversion_factor_applied ?? '',
     cfBaseSource: normalizeCfBaseSource(item.cfBaseSource ?? item.cf_base_source ?? 'quantity'),
+    cfFormula: item.cfFormula ?? item.cf_formula ?? '',
     processedQuantity,
     lineStatus: item.lineStatus ?? item.line_status ?? 'incomplete',
     plasticCategory: item.plasticCategory ?? item.category_of_plastic ?? '',
@@ -494,7 +564,13 @@ export function itemToLineDraft(item, idx = 0) {
   };
 
   const mt = resolveLineMt(draft);
-  if (mt != null) {
+  const mode = String(draft.quantityDerivationType || 'default').trim().toLowerCase();
+  if (mode === 'manual') {
+    const manual = parseNum(draft.processedQuantity);
+    if (manual != null && manual > 0) {
+      draft.processedQuantity = String(manual);
+    }
+  } else if (mt != null) {
     draft.processedQuantity = String(mt);
   } else if (isCountUom(unit) && cfMode === 'default' && !hasCf) {
     draft.processedQuantity = '';
@@ -503,7 +579,12 @@ export function itemToLineDraft(item, idx = 0) {
 }
 
 export function lineDraftToPersist(draft) {
-  const mt = resolveLineMt(draft);
+  const mode = String(draft.quantityDerivationType || 'default').trim().toLowerCase();
+  const mt =
+    mode === 'manual'
+      ? parseNum(draft.processedQuantity)
+      : resolveLineMt(draft);
+  const persistMt = mt != null && mt > 0 ? mt : null;
   return {
     lineNo: draft.lineNo,
     product: draft.productDescription,
@@ -521,20 +602,22 @@ export function lineDraftToPersist(draft) {
     amount: draft.amount,
     weight: draft.weight || null,
     weight_unit: draft.weight_unit,
-    weight_mt: draft.weight_mt ?? mt,
-    valueInMt: mt ?? parseNum(draft.processedQuantity),
-    quantityDerivationType: draft.quantityDerivationType,
-    quantity_derivation_type: draft.quantityDerivationType,
-    conversionMethodUsed: draft.conversionMethodUsed,
-    conversion_method_used: draft.conversionMethodUsed,
+    weight_mt: mode === 'manual' ? persistMt : (draft.weight_mt ?? persistMt),
+    valueInMt: persistMt ?? parseNum(draft.processedQuantity),
+    quantityDerivationType: mode === 'manual' ? 'manual' : draft.quantityDerivationType,
+    quantity_derivation_type: mode === 'manual' ? 'manual' : draft.quantityDerivationType,
+    conversionMethodUsed:
+      mode === 'manual' ? CONVERSION_METHOD.MANUAL : draft.conversionMethodUsed,
+    conversion_method_used:
+      mode === 'manual' ? CONVERSION_METHOD.MANUAL : draft.conversionMethodUsed,
     conversionFactor: draft.conversionFactor,
     conversion_factor: draft.conversionFactor,
     conversionFactorApplied: draft.conversionFactorApplied,
     conversion_factor_applied: draft.conversionFactorApplied,
     cfBaseSource: draft.cfBaseSource,
     cf_base_source: draft.cfBaseSource,
-    processedQuantity: mt != null ? String(mt) : draft.processedQuantity,
-    processed_quantity: mt != null ? String(mt) : draft.processedQuantity,
+    processedQuantity: persistMt != null ? String(persistMt) : draft.processedQuantity,
+    processed_quantity: persistMt != null ? String(persistMt) : draft.processedQuantity,
     lineStatus: draft.lineStatus,
     line_status: draft.lineStatus,
     plasticCategory: draft.plasticCategory,
@@ -546,9 +629,33 @@ export function lineDraftToPersist(draft) {
     other_plastic_material: draft.otherPlasticMaterial,
     recycledPercent: draft.recycledPercent,
     recycled_plastic_percent: draft.recycledPercent,
-    masterSource: draft.masterSource,
-    master_source: draft.masterSource,
+    masterSource: mode === 'manual' ? (draft.masterSource || 'manual') : draft.masterSource,
+    master_source: mode === 'manual' ? (draft.masterSource || 'manual') : draft.masterSource,
+    cfFormula: draft.cfFormula ?? draft.cf_formula ?? '',
+    cf_formula: draft.cfFormula ?? draft.cf_formula ?? '',
   };
+}
+
+/** Normalize line MT + header total before save (single source of truth). */
+export function syncRecordMtFromLines(data = {}, docType = 'purchase') {
+  const rawItems = data.lineItems ?? data.line_items ?? [];
+  if (!Array.isArray(rawItems) || !rawItems.length) return data;
+
+  const drafts = rawItems.map((li, i) => itemToLineDraft(li, i));
+  const normalizedLines = drafts.map((d) => lineDraftToPersist(d));
+  const totalMt = sumLineProcessedMt(drafts);
+
+  const next = { ...data, lineItems: normalizedLines, line_items: normalizedLines };
+  if (totalMt != null && totalMt > 0) {
+    if (docType === 'purchase') {
+      next.quantity_mt = totalMt;
+      next.quantity = totalMt;
+    } else {
+      next.quantity_sold_mt = totalMt;
+      next.quantity = totalMt;
+    }
+  }
+  return next;
 }
 
 export function sumLineProcessedMt(lineDrafts = []) {
@@ -562,6 +669,78 @@ export function sumLineProcessedMt(lineDrafts = []) {
     }
   }
   return has ? Number(sum.toFixed(6)) : null;
+}
+
+export function parseRecordLineItems(row = {}) {
+  let items = row.line_items ?? row.lineItems ?? [];
+  if (typeof items === 'string') {
+    try {
+      items = JSON.parse(items);
+    } catch {
+      items = [];
+    }
+  }
+  return Array.isArray(items) ? items : [];
+}
+
+/** Single MT total for a record: line QTY MT sum when lines exist, else stored header. */
+export function resolveRecordTotalMt(row, docType = 'sale') {
+  const lines = parseRecordLineItems(row);
+  if (lines.length) {
+    const sum = sumLineProcessedMt(lines.map((li, i) => itemToLineDraft(li, i)));
+    if (sum != null && sum > 0) return sum;
+  }
+  const raw =
+    docType === 'purchase'
+      ? row.quantity_mt ?? row.quantity
+      : row.quantity_sold_mt ?? row.quantity;
+  const n = parseFloat(raw);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+/** When header MT was corrected manually, sync persisted line items so reports and reload stay consistent. */
+export function reconcilePersistedLinesToHeaderMt(persistedLines = [], lineDrafts = [], headerMt) {
+  const computed = sumLineProcessedMt(lineDrafts);
+  if (
+    !Number.isFinite(headerMt) ||
+    headerMt <= 0 ||
+    computed == null ||
+    Math.abs(headerMt - computed) <= 0.0001 ||
+    !persistedLines.length
+  ) {
+    return persistedLines;
+  }
+
+  if (persistedLines.length === 1) {
+    const mt = Number(Number(headerMt).toFixed(6));
+    return persistedLines.map((li) => ({
+      ...li,
+      processedQuantity: String(mt),
+      processed_quantity: String(mt),
+      weight_mt: mt,
+      valueInMt: mt,
+      quantityDerivationType: 'manual',
+      quantity_derivation_type: 'manual',
+      conversionMethodUsed: CONVERSION_METHOD.MANUAL,
+      conversion_method_used: CONVERSION_METHOD.MANUAL,
+    }));
+  }
+
+  const ratio = headerMt / computed;
+  return persistedLines.map((li, i) => {
+    const draftMt = resolveLineMt(lineDrafts[i]);
+    if (draftMt == null || draftMt <= 0) return li;
+    const mt = Number((draftMt * ratio).toFixed(6));
+    return {
+      ...li,
+      processedQuantity: String(mt),
+      processed_quantity: String(mt),
+      weight_mt: mt,
+      valueInMt: mt,
+      quantityDerivationType: li.quantityDerivationType || li.quantity_derivation_type || 'manual',
+      quantity_derivation_type: li.quantity_derivation_type || li.quantityDerivationType || 'manual',
+    };
+  });
 }
 
 export function sumLineGst(lineDrafts = []) {
@@ -628,6 +807,9 @@ export function recalcLineOnCfModeChange(draft, mode) {
   const next = { ...draft, quantityDerivationType: mode };
   if (mode === 'manual') {
     next.conversionMethodUsed = CONVERSION_METHOD.MANUAL;
+    next.masterSource = next.masterSource || 'manual';
+    next.conversionFactorApplied = '';
+    next.conversionFactor = '';
     return next;
   }
   if (mode === 'default') {

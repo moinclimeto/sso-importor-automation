@@ -4,7 +4,11 @@ import { initDatabase, getDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
 import { chromium } from 'playwright';
 import { lineItemsToPackagingSyncRows } from '../shared/packagingMasterSync.js';
-import { buildProductMatchKey, normalizeLineUom } from '../shared/procurementConversionFactor.js';
+import { buildProductMatchKey, normalizeLineUom, syncRecordMtFromLines } from '../shared/procurementConversionFactor.js';
+import {
+  assertNoDuplicatePurchase,
+  assertNoDuplicateSale,
+} from './invoiceDuplicateCheck.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { createRequire } from 'module';
@@ -599,9 +603,12 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
 
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicatePurchase(db, data);
+
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+    processedData = syncRecordMtFromLines(processedData, 'purchase');
 
     await autoPopulatePackagingMaster(
       db,
@@ -708,7 +715,10 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
 
   ipcMain.handle('purchases:update', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicatePurchase(db, data, { excludeId: data.id });
+
     const oldData = await db.get('SELECT file_hash FROM purchases WHERE id = ?', data.id);
+    const synced = syncRecordMtFromLines(data, 'purchase');
 
     const stmt = await db.prepare(`
       UPDATE purchases SET
@@ -724,72 +734,78 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
     `);
 
     await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.category_of_plastic,
-      data.supplier_name,
-      data.address_line_1,
-      data.address_line_2,
-      data.state,
-      data.city,
-      data.pin_code,
-      data.buyer_gst,
-      data.is_supplier_gst_available,
-      data.supplier_gst_number,
-      data.supplier_mobile_number,
-      data.procurement_date,
-      data.quantity_mt,
-      data.invoice_number,
-      data.hsn_code,
-      data.invoice_filename,
-      data.vendor_name,
-      data.vendor_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
-      data.entity_type,
-      data.registration_type,
-      data.financial_year,
-      data.plastic_type,
-      data.recycled_plastic_percent,
-      data.country,
-      data.irn_no || null,
-      data.account_number || null,
-      data.ifsc_code || null,
-      data.conversion_factor ?? null,
-      data.doc_status || 'inbox',
-      data.id
+      synced.company_id,
+      synced.record_type,
+      synced.category_of_plastic,
+      synced.supplier_name,
+      synced.address_line_1,
+      synced.address_line_2,
+      synced.state,
+      synced.city,
+      synced.pin_code,
+      synced.buyer_gst,
+      synced.is_supplier_gst_available,
+      synced.supplier_gst_number,
+      synced.supplier_mobile_number,
+      synced.procurement_date,
+      synced.quantity_mt,
+      synced.invoice_number,
+      synced.hsn_code,
+      synced.invoice_filename,
+      synced.vendor_name,
+      synced.vendor_gstin,
+      synced.invoice_no,
+      synced.invoice_date,
+      synced.item_name,
+      synced.quantity,
+      synced.unit,
+      synced.total_amount,
+      synced.lineItems ? JSON.stringify(synced.lineItems) : null,
+      synced.extraction ? JSON.stringify(synced.extraction) : null,
+      synced._source_fields ? JSON.stringify(synced._source_fields) : null,
+      synced._routing ? JSON.stringify(synced._routing) : null,
+      synced.fileHash || null,
+      synced.entity_type,
+      synced.registration_type,
+      synced.financial_year,
+      synced.plastic_type,
+      synced.recycled_plastic_percent,
+      synced.country,
+      synced.irn_no || null,
+      synced.account_number || null,
+      synced.ifsc_code || null,
+      synced.conversion_factor ?? null,
+      synced.doc_status || 'inbox',
+      synced.id
     );
     await stmt.finalize();
 
     // Update fileHash in the file_hashes table if it changed
-    if (data.fileHash && oldData.file_hash !== data.fileHash) {
-      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
-      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (synced.fileHash && oldData.file_hash !== synced.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', synced.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', synced.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
       }
-    } else if (data.fileHash && !oldData.file_hash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    } else if (synced.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
     }
 
     const packagingResult = await syncReviewLinesToPackagingMaster(
       db,
-      data.company_id,
+      synced.company_id,
       'gpl',
-      data.lineItems || [],
-      data.supplier_gst_number || data.vendor_gstin,
-      data.supplier_name || data.vendor_name,
+      synced.lineItems || [],
+      synced.supplier_gst_number || synced.vendor_gstin,
+      synced.supplier_name || synced.vendor_name,
     );
 
-    return { success: true, packagingSynced: packagingResult.synced || 0 };
+    return {
+      success: true,
+      packagingSynced: packagingResult.synced || 0,
+      lineItems: synced.lineItems,
+      quantity_mt: synced.quantity_mt,
+      quantity: synced.quantity,
+    };
   });
 
   ipcMain.handle('purchases:delete', async (_, id) => {
@@ -891,9 +907,12 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
 
   ipcMain.handle('sales:add', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicateSale(db, data);
+
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+    processedData = syncRecordMtFromLines(processedData, 'sale');
 
     await autoPopulatePackagingMaster(
       db,
@@ -985,7 +1004,10 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
 
   ipcMain.handle('sales:update', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicateSale(db, data, { excludeId: data.id });
+
     const oldData = await db.get('SELECT file_hash FROM sales WHERE id = ?', data.id);
+    const synced = syncRecordMtFromLines(data, 'sale');
 
     const stmt = await db.prepare(`
       UPDATE sales SET
@@ -1000,68 +1022,74 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
     `);
 
     await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.s_no,
-      data.category_of_plastic,
-      data.process_code,
-      data.plastic_type,
-      data.product_type,
-      data.recycled_plastic_percent,
-      data.conversion_factor,
-      data.available_quantity_mt,
-      data.quantity_sold_mt,
-      data.registration_type,
-      data.entity_name,
-      data.address,
-      data.state,
-      data.district,
-      data.account_number,
-      data.ifsc_code,
-      data.gst_other_charges,
-      data.invoice_file_name,
-      data.application_number,
-      data.customer_name,
-      data.customer_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
-      data.entity_type,
-      data.financial_year,
-      data.mobile_number,
-      data.doc_status || 'inbox',
-      data.id
+      synced.company_id,
+      synced.record_type,
+      synced.s_no,
+      synced.category_of_plastic,
+      synced.process_code,
+      synced.plastic_type,
+      synced.product_type,
+      synced.recycled_plastic_percent,
+      synced.conversion_factor,
+      synced.available_quantity_mt,
+      synced.quantity_sold_mt,
+      synced.registration_type,
+      synced.entity_name,
+      synced.address,
+      synced.state,
+      synced.district,
+      synced.account_number,
+      synced.ifsc_code,
+      synced.gst_other_charges,
+      synced.invoice_file_name,
+      synced.application_number,
+      synced.customer_name,
+      synced.customer_gstin,
+      synced.invoice_no,
+      synced.invoice_date,
+      synced.item_name,
+      synced.quantity,
+      synced.unit,
+      synced.total_amount,
+      synced.lineItems ? JSON.stringify(synced.lineItems) : null,
+      synced.extraction ? JSON.stringify(synced.extraction) : null,
+      synced._source_fields ? JSON.stringify(synced._source_fields) : null,
+      synced._routing ? JSON.stringify(synced._routing) : null,
+      synced.fileHash || null,
+      synced.entity_type,
+      synced.financial_year,
+      synced.mobile_number,
+      synced.doc_status || 'inbox',
+      synced.id
     );
     await stmt.finalize();
 
     // Update fileHash in the file_hashes table if it changed
-    if (data.fileHash && oldData.file_hash !== data.fileHash) {
-      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
-      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (synced.fileHash && oldData.file_hash !== synced.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', synced.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', synced.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
       }
-    } else if (data.fileHash && !oldData.file_hash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    } else if (synced.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
     }
 
     const packagingResult = await syncReviewLinesToPackagingMaster(
       db,
-      data.company_id,
+      synced.company_id,
       'gpl',
-      data.lineItems || [],
-      data.customer_gstin || data.buyer_gst,
-      data.customer_name || data.entity_name,
+      synced.lineItems || [],
+      synced.customer_gstin || synced.buyer_gst,
+      synced.customer_name || synced.entity_name,
     );
 
-    return { success: true, packagingSynced: packagingResult.synced || 0 };
+    return {
+      success: true,
+      packagingSynced: packagingResult.synced || 0,
+      lineItems: synced.lineItems,
+      quantity_sold_mt: synced.quantity_sold_mt,
+      quantity: synced.quantity,
+    };
   });
 
   ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {

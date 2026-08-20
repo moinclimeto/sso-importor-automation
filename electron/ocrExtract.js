@@ -151,31 +151,10 @@ function sumLineWeightMt(lineItems = []) {
   return has ? Number(sum.toFixed(6)) : null;
 }
 
-/** Total plastic MT: sum line TOTAL weights; else kg/ton qty; else pieces ÷ CF. */
-export function calcTotalPlasticQuantityMt(lineItems = [], conversionFactor) {
-  const weightTotal = sumLineWeightMt(lineItems);
-  if (weightTotal != null) return weightTotal;
-
-  let totalMt = 0;
-  let hasWeightQty = false;
-  for (const li of lineItems) {
-    const q = num(li.quantity);
-    if (q <= 0 || !isWeightQuantityUnit(li.unit)) continue;
-    const mt = weightToMt(q, li.unit);
-    if (mt != null && mt > 0) {
-      totalMt += mt;
-      hasWeightQty = true;
-    }
-  }
-  if (hasWeightQty) return Number(totalMt.toFixed(6));
-
-  const cf = num(conversionFactor);
-  const pieceSum = sumNonWeightLineQuantities(lineItems);
-  if (pieceSum != null && cf > 0) {
-    return Number((pieceSum / cf).toFixed(6));
-  }
-
-  return null;
+/** Total plastic MT — delegates to shared line sum (all CF modes). */
+export function calcTotalPlasticQuantityMt(lineItems = [], _conversionFactor) {
+  const drafts = (lineItems || []).map((li, i) => itemToLineDraft(li, i));
+  return sumLineProcessedMt(drafts);
 }
 
 function mapProcurementLineItems(raw = {}) {

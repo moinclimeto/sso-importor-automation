@@ -6,6 +6,7 @@ export {
   sumLineProcessedMt,
   itemToLineDraft,
   lineDraftToPersist,
+  syncRecordMtFromLines,
 } from '../../shared/procurementConversionFactor.js';
 
 import {
@@ -14,6 +15,7 @@ import {
   resolveLineMt,
   sumLineProcessedMt,
   itemToLineDraft,
+  lineDraftToPersist,
 } from '../../shared/procurementConversionFactor.js';
 
 function parseNum(v) {
@@ -65,8 +67,6 @@ export function totalPlasticQuantityHint(lineItems = []) {
 export function enrichLineItemsWithWeightMt(lineItems = []) {
   return (lineItems || []).map((item, i) => {
     const draft = itemToLineDraft(item, i);
-    const mt = resolveLineMt(draft);
-    if (mt == null || mt <= 0) return { ...item, valueInMt: null, processedQuantity: '' };
-    return { ...item, weight_mt: mt, valueInMt: mt, processedQuantity: String(mt) };
+    return { ...item, ...lineDraftToPersist(draft) };
   });
 }

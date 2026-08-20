@@ -7,6 +7,7 @@ import { createLogger, createTrackId } from './logger.js';
 import { getDb } from './database.js';
 import { expandFilesToPageJobs } from './pdfPages.js';
 import { getFileSha256 } from './hashUtils.js'; // From HEAD
+import { getAllProcessedFileHashes } from './invoiceDuplicateCheck.js';
 
 function normName(name) {
   return String(name || '')
@@ -18,8 +19,7 @@ function normName(name) {
 // Modified to use file_hashes table from SQLite
 export async function getExistingInvoiceHashes() {
   const db = getDb();
-  const hashes = await db.all('SELECT hash FROM file_hashes');
-  return new Set(hashes.map(row => row.hash));
+  return getAllProcessedFileHashes(db);
 }
 
 /**

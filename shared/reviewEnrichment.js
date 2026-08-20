@@ -1,9 +1,11 @@
 import {
   applyPackagingMasterToDraft,
   lookupPackagingMasterRow,
+  shouldAutoApplyPackagingMaster,
   resolveFinancialYear,
   resolveLineRate,
   formatLineRate,
+  resolveLineMt,
 } from './procurementConversionFactor.js';
 import { resolveState } from './gstStateCodes.js';
 import { normalizePlasticCategory } from './plasticCategories.js';
@@ -347,7 +349,7 @@ export function enrichReviewLines(drafts = [], row = {}, packagingRows = []) {
       if (rateVal != null) line.rate = formatLineRate(rateVal);
     }
     const master = lookupPackagingMasterRow(packagingRows, line);
-    if (master) {
+    if (master && shouldAutoApplyPackagingMaster(line)) {
       line = applyPackagingMasterToDraft(line, master);
     }
     if (!String(line.plasticCategory || '').trim()) {
@@ -401,5 +403,48 @@ export function buildProcurementHeaderFromRow(row = {}) {
       row.extraction?.supplier_mobile_number ||
       row.extraction?.mobile ||
       '',
+  };
+}
+
+/** Live validation for OCR review — used to enable Publish when required fields are complete. */
+export function validateReviewDocument({
+  header = {},
+  lines = [],
+  record = {},
+  packagingRows = [],
+  mode = 'purchase',
+} = {}) {
+  const headerDraft = { ...header };
+  if (!headerDraft.invoice_number?.trim()) {
+    headerDraft.invoice_number = resolveInvoiceNumberFromRecord(record || {});
+  }
+  headerDraft.financial_year = resolveFinancialYear(
+    headerDraft.invoice_date,
+    headerDraft.financial_year,
+  );
+
+  const enrichedLines = enrichReviewLines(lines, { ...record, ...headerDraft }, packagingRows);
+  const errors = [];
+
+  if (mode === 'sale' && !headerDraft.entity_name?.trim()) {
+    errors.push('Customer / entity name is required');
+  }
+  if (!headerDraft.invoice_number?.trim()) errors.push('Document number is required');
+  if (!headerDraft.invoice_date?.trim()) errors.push('Document date is required');
+  if (!headerDraft.financial_year?.trim()) errors.push('Financial year is required');
+  if (!enrichedLines.length) errors.push('At least one line item is required');
+
+  enrichedLines.forEach((line, i) => {
+    const mt = resolveLineMt(line);
+    if (mt == null || mt <= 0) errors.push(`Line ${i + 1}: Qty (MT) is required`);
+    if (!line.plasticCategory?.trim()) errors.push(`Line ${i + 1}: Category is required`);
+    if (!line.plasticMaterial?.trim()) errors.push(`Line ${i + 1}: Material is required`);
+  });
+
+  return {
+    ok: errors.length === 0,
+    errors,
+    headerDraft,
+    enrichedLines,
   };
 }

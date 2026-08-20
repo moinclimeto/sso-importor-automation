@@ -177,25 +177,14 @@ function MainLayoutInner() {
 
     useEffect(() => {
       const loadCompany = async () => {
-        let found = false;
-        if (window.pwp?.extractor) {
-          try {
-            const data = await window.pwp.extractor.getData();
-            if (data && data.company_name) {
-              setMyCompany({ name: data.company_name, gstin: data.gst || '' });
-              found = true;
-            }
-          } catch (err) {
-            console.error('Failed to load extractor data', err);
+        if (!window.pwp?.companies) return;
+        try {
+          const companies = await window.pwp.companies.getAll();
+          if (companies?.length) {
+            setMyCompany(companies[0]);
           }
-        }
-        
-        if (!found && window.pwp?.companies) {
-          window.pwp.companies.getAll().then(companies => {
-            if (companies && companies.length > 0) {
-              setMyCompany(companies[0]);
-            }
-          });
+        } catch (err) {
+          console.error('Failed to load company profile', err);
         }
       };
       loadCompany();

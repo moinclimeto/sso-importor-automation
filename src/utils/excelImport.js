@@ -1,6 +1,7 @@
 import * as XLSX from 'xlsx';
 export { PLASTIC_CATEGORIES, normalizePlasticCategory } from '../../shared/plasticCategories.js';
 import { PLASTIC_CATEGORIES, normalizePlasticCategory } from '../../shared/plasticCategories.js';
+import { resolveRecordTotalMt } from '../../shared/procurementConversionFactor.js';
 
 /** Exact Excel column labels for Procurement (Purchases) */
 export const PURCHASE_EXCEL_HEADERS = [
@@ -225,6 +226,7 @@ function mapSaleRow(mapped, rowNum, errors) {
   const invoice_file_name = str(flat.invoice_file_name || get('Invoice File Name'));
   const application_number = str(flat.application_number || get('Application Number'));
   const quantity_sold_mt = num(flat.quantity_sold_mt || get('Quantity Sold (MT)'));
+  const invoice_date = excelDateToIso(flat.invoice_date || get('Invoice Date'));
 
   if (!entity_name && !invoice_file_name && !application_number && !quantity_sold_mt) {
     return null; // blank row
@@ -261,6 +263,8 @@ function mapSaleRow(mapped, rowNum, errors) {
     gst_other_charges: num(flat.gst_other_charges || get('GST & Other Charges')),
     invoice_file_name,
     application_number,
+    invoice_date,
+    doc_status: 'inbox',
     // Compat fields used elsewhere
     customer_name: entity_name,
     invoice_no: application_number || invoice_file_name,
@@ -281,7 +285,7 @@ function mapPurchaseRow(mapped, rowNum, errors) {
   const supplier_name = str(flat.supplier_name);
   const procurement_date = excelDateToIso(flat.procurement_date);
   const invoice_filename = str(flat.invoice_filename);
-  let quantity_mt = num(flat.quantity_mt);
+  const quantity_mt = num(flat.quantity_mt);
 
   if (!supplier_name && !invoice_filename && !quantity_mt) {
     return null;
@@ -300,46 +304,38 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     return null;
   }
 
-  if (is_gst === 'n' || is_gst === 'false' || is_gst === '0') is_gst = 'No';
-  if (is_gst !== 'Yes' && is_gst !== 'No') {
-    is_gst = str(flat.supplier_gst_number) ? 'Yes' : 'No';
-  }
-
-  const supplier_gst_number = str(flat.supplier_gst_number).toUpperCase();
-  if (is_gst === 'Yes' && !supplier_gst_number) {
-    errors.push(`Row ${rowNum}: Supplier GST Number is required when GST Available is Yes`);
-    return null;
-  }
+  const supplier_gst = str(flat.supplier_gst).toUpperCase();
+  const is_gst = supplier_gst ? 'Yes' : 'No';
 
   return {
     company_id: null,
     record_type: 'purchase_epr',
+    registration_type: str(flat.registration_type),
+    entity_type: str(flat.entity_type),
     category_of_plastic: normalizePlasticCategory(flat.category_of_plastic),
     supplier_name,
     address_line_1: str(flat.address_line_1),
-    address_line_2: str(flat.address_line_2),
-    state: str(flat.state),
-    city: str(flat.city),
-    pin_code: str(flat.pin_code),
-    buyer_gst: str(flat.buyer_gst).toUpperCase(),
+    supplier_mobile_number: str(flat.supplier_mobile_number),
+    plastic_type: str(flat.plastic_type),
+    country: str(flat.country),
+    financial_year: str(flat.financial_year),
+    buyer_gst: supplier_gst,
     is_supplier_gst_available: is_gst,
-    supplier_gst_number,
-    hsn_code: str(flat.hsn_code),
-    invoice_number,
-    irn_no: str(flat.irn_no),
+    supplier_gst_number: supplier_gst,
     quantity_mt,
-    quantity_kg,
-    date_of_entry: excelDateToIso(flat.date_of_entry) || new Date().toISOString().slice(0, 10),
+    recycled_plastic_percent: num(flat.recycled_plastic_percent),
     procurement_date,
     invoice_filename,
     vendor_name: supplier_name,
-    vendor_gstin: supplier_gst_number,
-    invoice_no: invoice_number,
+    vendor_gstin: supplier_gst,
+    invoice_no: invoice_filename,
+    invoice_number: invoice_filename,
     invoice_date: procurement_date,
-    item_name: normalizePlasticCategory(flat.category_of_plastic) || 'Plastic',
+    item_name: str(flat.plastic_type) || normalizePlasticCategory(flat.category_of_plastic) || 'Plastic',
     quantity: quantity_mt,
     unit: 'MT',
     total_amount: 0,
+    doc_status: 'inbox',
   };
 }
 
@@ -432,15 +428,24 @@ export async function importExcelRows(type, rows) {
     throw new Error('Excel import needs the Electron app. Run with npm run electron:dev');
   }
   let saved = 0;
+  let duplicates = 0;
   for (const row of rows) {
-    if (type === 'sale') {
-      await window.pwp.sales.add(row);
-    } else {
-      await window.pwp.purchases.add(row);
+    try {
+      if (type === 'sale') {
+        await window.pwp.sales.add(row);
+      } else {
+        await window.pwp.purchases.add(row);
+      }
+      saved += 1;
+    } catch (err) {
+      if (/duplicate invoice/i.test(err?.message || '')) {
+        duplicates += 1;
+      } else {
+        throw err;
+      }
     }
-    saved += 1;
   }
-  return saved;
+  return { saved, duplicates };
 }
 
 export async function exportExcelData(type, rows) {
@@ -450,14 +455,20 @@ export async function exportExcelData(type, rows) {
   const sheetData = rows.map(r => {
     const mapped = {};
     const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
+    const docType = isPurchase ? 'purchase' : 'sale';
+    const resolvedMt = resolveRecordTotalMt(r, docType);
     for (const col of columns) {
       if (col.key === 'category_of_plastic') {
         mapped[col.label] = 'Cat-II';
       } else if (col.key === 'product_type') {
         const hsn = String(r.hsn_code || r.hsn || '').trim();
         mapped[col.label] = hsn === '25231000' ? 'Clinker' : 'Cement';
-      } else if (col.key === 'quantity_mt' && !r[col.key] && r.quantity) {
-        mapped[col.label] = r.quantity;
+      } else if (col.key === 'quantity_mt') {
+        mapped[col.label] = resolvedMt ?? r.quantity_mt ?? r.quantity ?? '';
+      } else if (col.key === 'quantity_sold_mt') {
+        mapped[col.label] = resolvedMt ?? r.quantity_sold_mt ?? r.quantity ?? '';
+      } else if (col.key === 'quantity_kg' && resolvedMt != null) {
+        mapped[col.label] = resolvedMt * 1000;
       } else if (col.key === 'quantity_kg' && !r[col.key] && r.quantity_mt) {
         mapped[col.label] = r.quantity_mt * 1000;
       } else if (col.key === 'entity_name' && !r[col.key] && r.customer_name) {

@@ -544,6 +544,7 @@ export default function DocUpload() {
         extraction: data.extraction || null,
         _routing: sourceRow?.routing || data._routing,
         _page: data._page || (sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined),
+        fileHash: sourceRow?.fileHash || data.fileHash || data.file_hash || null,
       };
     }
 
@@ -591,6 +592,7 @@ export default function DocUpload() {
       _routing: sourceRow?.routing || data._routing,
       _page: data._page || (sourceRow?.filePath ? { sourceFileName: sourceRow.filePath } : undefined),
       invoice_date: data.invoice_date || data.date_of_entry || data.procurement_date || '',
+      fileHash: sourceRow?.fileHash || data.fileHash || data.file_hash || null,
     };
   };
 
@@ -683,8 +685,13 @@ export default function DocUpload() {
         }
         out.push({ ...item.r, saved: true, saveError: '' });
       } catch (err) {
-        saveFailed += 1;
-        out.push({ ...item.r, saved: false, saveError: err?.message || 'Save failed' });
+        const msg = err?.message || 'Save failed';
+        if (/duplicate invoice/i.test(msg)) {
+          out.push({ ...item.r, skipped: true, saved: false, message: msg });
+        } else {
+          saveFailed += 1;
+          out.push({ ...item.r, saved: false, saveError: msg });
+        }
       }
     };
 

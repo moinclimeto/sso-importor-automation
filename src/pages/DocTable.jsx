@@ -12,6 +12,7 @@ import {
   PURCHASE_TABLE_COLUMNS,
 } from '../utils/excelImport.js';
 import { enrichSaleRecord, resolveSalesDistrict, resolveSalesGstOtherCharges } from '../../shared/reviewEnrichment.js';
+import { resolveRecordTotalMt } from '../../shared/procurementConversionFactor.js';
 
 import CpcbConfirmationModal from '../components/CpcbConfirmationModal.jsx';
 import SingleRecordModal from '../components/SingleRecordModal.jsx';
@@ -1287,7 +1288,8 @@ export default function DocTable() {
       }
       
       groups[monthKey].rows.push(r);
-      const qtyMT = parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
+      const qtyMT = resolveRecordTotalMt(r, isPurchase ? 'purchase' : 'sale')
+        ?? parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
       const qtyKg = parseFloat(r.quantity_kg || 0);
       if (!isNaN(qtyMT)) groups[monthKey].totalQtyMT += qtyMT;
       if (!isNaN(qtyKg)) groups[monthKey].totalQtyKg += qtyKg;
@@ -1638,11 +1640,15 @@ export default function DocTable() {
 
 
 
-      const saved = await importExcelRows(type, parsed);
+      const { saved, duplicates } = await importExcelRows(type, parsed);
 
 
 
       let msg = `Imported ${saved} ${title.toLowerCase()} record(s) from Excel.`;
+
+      if (duplicates) {
+        msg += ` Skipped ${duplicates} duplicate invoice(s).`;
+      }
 
 
 
@@ -2029,9 +2035,16 @@ export default function DocTable() {
                 if (col.key === 'procurement_date') return cell(r.procurement_date || r.invoice_date || value);
                 if (col.key === 'date_of_entry') return cell(r.date_of_entry || r.invoice_date || value);
                 if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin;
-                if (col.key === 'quantity_mt' && (value === undefined || value === '')) return r.quantity != null ? fmt(r.quantity) : value;
+                if (col.key === 'quantity_mt' && (value === undefined || value === '')) {
+                  const mt = resolveRecordTotalMt(r, 'purchase');
+                  if (mt != null) return fmt(mt);
+                  return r.quantity != null ? fmt(r.quantity) : value;
+                }
                 if ((col.key === 'quantity_mt' || col.key === 'quantity_kg') && value !== undefined && value !== '') return fmt(value);
-                if (col.key === 'quantity_kg' && (value === undefined || value === '') && r.quantity_mt) return fmt(Number(r.quantity_mt) * 1000);
+                if (col.key === 'quantity_kg' && (value === undefined || value === '')) {
+                  const mt = resolveRecordTotalMt(r, 'purchase') ?? r.quantity_mt;
+                  if (mt) return fmt(Number(mt) * 1000);
+                }
                 return value;
               },
             }))}
@@ -2071,6 +2084,10 @@ export default function DocTable() {
                   if (resolved !== '' && resolved != null) return fmt(resolved);
                   if (value !== undefined && value !== '') return fmt(value);
                   return cell(value);
+                }
+                if (col.key === 'quantity_sold_mt') {
+                  const mt = resolveRecordTotalMt(r, 'sale');
+                  if (mt != null) return fmt(mt);
                 }
                 if (['conversion_factor', 'available_quantity_mt', 'quantity_sold_mt'].includes(col.key) && value !== undefined && value !== '') return fmt(value);
                 return value;

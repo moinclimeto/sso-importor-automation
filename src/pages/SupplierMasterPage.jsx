@@ -94,7 +94,7 @@ export default function SupplierMasterPage({ embedded = false }) {
               <tr>
                 <th className="px-4 py-3 font-medium">Company</th>
                 <th className="px-4 py-3 font-medium">GST Number</th>
-                <th className="px-4 py-3 font-medium">Trade Name</th>
+                <th className="px-4 py-3 font-medium">Extracted Company Name</th>
                 <th className="px-4 py-3 font-medium">Entity Type</th>
                 <th className="px-4 py-3 font-medium">Registration</th>
                 <th className="px-4 py-3 text-right font-medium">Actions</th>
@@ -148,7 +148,7 @@ export default function SupplierMasterPage({ embedded = false }) {
                 </div>
 
                 <div className="space-y-1">
-                  <label className="text-sm font-medium text-slate-700">Trade Name</label>
+                  <label className="text-sm font-medium text-slate-700">Extracted Company Name</label>
                   <input type="text" name="trade_name" defaultValue={modal.trade_name} required className="w-full rounded-lg border-slate-200 bg-slate-50 px-3 py-2 text-sm focus:bg-white focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500" />
                 </div>
 
