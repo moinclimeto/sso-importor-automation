@@ -1,5 +1,6 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from './ocrHandlers.js';
+import { registerGstVerifyHandlers } from './gstVerifyHandlers.js';
 import { initDatabase, getDb, dbJsonPath } from './database.js';
 import { warmupQrScanner } from './qrScan.js';
 import { chromium } from 'playwright';
@@ -64,6 +65,7 @@ export function registerIpcHandlers() {
     await migrateFromJsonToSqlite(dbInstance, dbJsonPath);
   }).catch(err => console.error("Failed to initialize database:", err));
   registerOcrHandlers();
+  registerGstVerifyHandlers();
   warmupQrScanner().catch(() => {});
 
   // ─── EPR SCRAPED DATA (SQLITE) ────────────────────────────────

@@ -17,6 +17,11 @@ import {
 import { createLogger, createTrackId } from './logger.js';
 import { runExtractQueue } from './extractQueue.js';
 import {
+  beginEntityVerifyBatch,
+  endEntityVerifyBatch,
+  enrichExtractedRowWithEntityVerify,
+} from './entityRegistrationVerify.js';
+import {
   getPdfPageCount,
   expandFilesToPageJobs,
   renderPdfPageToPng,
@@ -346,6 +351,15 @@ async function extractOneInvoice({
       row = normalizePurchasePartyFields(row);
     }
 
+    if (invoiceType === 'purchase' || invoiceType === 'sale') {
+      try {
+        const db = getDb();
+        row = await enrichExtractedRowWithEntityVerify(db, row, invoiceType);
+      } catch (err) {
+        log.warn('GST/PIBO verify skipped at extraction', { message: err.message });
+      }
+    }
+
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;
       if (!row._source_fields[key] && row[key] != null && row[key] !== '') {
@@ -506,6 +520,7 @@ export function registerOcrHandlers() {
     };
 
     try {
+      beginEntityVerifyBatch();
       return await runExtractQueue({
         filePaths,
         type,
@@ -540,6 +555,8 @@ export function registerOcrHandlers() {
         skippedCount: 0,
         total: 0,
       };
+    } finally {
+      endEntityVerifyBatch();
     }
   });
 }

@@ -79,6 +79,16 @@ contextBridge.exposeInMainWorld('pwp', {
       return () => ipcRenderer.removeListener('ocr:progress', handler);
     },
   },
+  gstVerify: {
+    probePartiesFromFiles: (payload) => ipcRenderer.invoke('gst:probe-parties', payload),
+    verifyComplete: (payload) => ipcRenderer.invoke('gst:verify-complete', payload),
+  },
+  entityVerify: {
+    lookupByGst: (payload) => ipcRenderer.invoke('entityVerify:lookupByGst', payload),
+  },
+  pibo: {
+    search: (payload) => ipcRenderer.invoke('pibo:search', payload),
+  },
   // Scraper
   scraper: {
     startRegistrationFlow: (payload) => ipcRenderer.invoke('scraper:startRegistrationFlow', payload),

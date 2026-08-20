@@ -19,6 +19,7 @@ import {
   resolveLineRate,
 } from '../shared/procurementConversionFactor.js';
 import { resolveState } from '../shared/gstStateCodes.js';
+import { fillLineItemsHsn, resolveLineHsn } from '../shared/hsnUtils.js';
 import { normalizePlasticCategory } from '../shared/plasticCategories.js';
 
 
@@ -196,7 +197,7 @@ function mapProcurementLineItems(raw = {}) {
         rate,
         amount: resolvedAmount,
         gstPaid,
-        hsn: nullVal(item.hsn ?? item.hsn_code),
+        hsn: resolveLineHsn(item) || null,
         quantityDerivationType: isWeightUom(unit) || weightMt ? 'default' : 'manual',
         conversionMethodUsed: CONVERSION_METHOD.DEFAULT,
         lineStatus: 'incomplete',
@@ -267,6 +268,19 @@ function resolveBuyerName(raw = {}) {
 function resolveBuyerGst(raw = {}) {
   const gst = nullVal(raw.buyer_gst ?? raw.buyerGst ?? raw.buyer_gstin ?? raw.buyerGstin);
   return gst ? gst.toUpperCase() : null;
+}
+
+function resolveBuyerAddress(raw = {}) {
+  return nullVal(
+    raw.buyer_address ??
+      raw.buyerAddress ??
+      raw.consignee_address ??
+      raw.consigneeAddress ??
+      raw.ship_to_address ??
+      raw.shipToAddress ??
+      raw.bill_to_address ??
+      raw.billToAddress,
+  );
 }
 
 function resolveSupplierGst(raw = {}) {
@@ -420,11 +434,12 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
 
     return `OCR PROCUREMENT / PURCHASE invoice. JSON only minified. Extract SUPPLIER (seller/vendor) details for data entry. Also extract BUYER details only for company matching — never copy buyer into supplier fields.
 ${fyHint}
-{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
+{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"buyer_address":null,"buyer_state":null,"buyer_city":null,"buyer_pin_code":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
 CRITICAL PARTY RULES:
 - supplier_name / supplier_gst / supplier_address / supplier_mobile = SELLER/VENDOR party ONLY (Bill From, Sold By, Dispatched From, Supplier, Party Name on purchase side).
-- buyer_name / buyer_gst = BUYER party ONLY (Bill To, Buyer, Consignee, Ship To — this is the importer/target company on the invoice).
+- buyer_name / buyer_gst / buyer_address / buyer_state / buyer_city / buyer_pin_code = BUYER party ONLY (Bill To, Buyer, Consignee, Ship To — full address block of customer).
 - NEVER put buyer name/address/GST into supplier_* fields.
+- NEVER put seller/supplier address into buyer_* fields.
 - If only one party block is visible and it is Bill To, leave supplier_* as null.
 INVOICE / BANK (extract if printed on invoice, else null — do not guess):
 invoice_number=Invoice No / Bill No / GST e-invoice document number.
@@ -438,6 +453,10 @@ country=Supplier country.
 supplier_state=Supplier state from address block (State / Place of Supply for supplier side).
 supplier_city=Supplier city if printed.
 supplier_pin_code=Supplier PIN / pincode if printed.
+buyer_address=Full buyer/consignee address (street, area, city — entire Bill To / Ship To block as one string).
+buyer_state=Buyer state name from buyer address block (not supplier state).
+buyer_city=Buyer city if printed.
+buyer_pin_code=Buyer PIN / pincode if printed.
 plastic_material_type=Plastic material (PET/HDPE/LDPE/PP/PS/Multi-layer/etc).
 category_of_plastic=Cat-I/Cat-II/Cat-III/Cat-IV or Category I/II/III/IV.
 financial_year=FY like 2025-26.
@@ -446,7 +465,8 @@ total_plastic_quantity=numeric grand total plastic/mass if printed (not piece co
 quantity_unit=unit printed with total quantity (MT/Ton/Kg/etc).
 recycled_plastic_percent=numeric recycled % if mentioned, else null.
 line_items=ALL product rows (max 50). Skip freight/tax/subtotal/grand-total rows.
-Each line_items[]: product, product_description, quantity (count e.g. 24 PC), unit (PC/KG/MT),
+Each line_items[]: product, product_description, hsn (4-8 digit HSN/SAC code — extract from HSN column or from text like "HSN CODE-39189090"),
+quantity (count e.g. 24 PC), unit (PC/KG/MT),
 weight=TOTAL weight for entire line row (use Total Weight / Gross Weight column — all pieces combined, NOT net unit weight per piece),
 weight_unit (KG/MT/G — default KG),
 rate=unit rate / price per unit (numeric, exclude GST unless only tax-inclusive rate is printed),
@@ -490,7 +510,7 @@ export function expandRawExtraction(raw = {}) {
 
       productDescription: nf(p.d ?? p.productDescription ?? p.description ?? p.item_name),
 
-      hsn: nf(p.h ?? p.hsn ?? p.hsnCode ?? p.hsn_code),
+      hsn: nf(p.h ?? p.hsn ?? p.hsnCode ?? p.hsn_code) || resolveLineHsn(p),
 
       plasticMaterial: nf(p.m ?? p.plasticMaterial ?? p.plasticType ?? p.plastic_type),
 
@@ -647,7 +667,10 @@ function firstLine(lineItems) {
 
 /** Map → procurement EPR row (registration-style fields + line items). */
 export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
-  const lineItems = mapProcurementLineItems(raw);
+  const lineItems = fillLineItemsHsn(
+    mapProcurementLineItems(raw),
+    raw.hsn_code ?? raw.hsn ?? raw.hsnCode,
+  );
   const headerQty = parsePlasticQuantity(raw);
   const qtyFromLines = sumMtFromProcurementLines(lineItems);
   const defaultFy =
@@ -670,6 +693,10 @@ export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
     is_supplier_gst_available: resolveSupplierGst(raw) ? 'Yes' : null,
     buyer_name: resolveBuyerName(raw),
     buyer_gst: resolveBuyerGst(raw),
+    buyer_address: resolveBuyerAddress(raw),
+    buyer_state: nullVal(raw.buyer_state ?? raw.buyerState),
+    buyer_city: nullVal(raw.buyer_city ?? raw.buyerCity),
+    buyer_pin_code: nullVal(raw.buyer_pin_code ?? raw.buyerPinCode ?? raw.buyer_pin),
     country: nullVal(raw.country ?? raw.supplier_country),
     address_line_1: resolveSupplierAddress(raw) ?? nullVal(raw.address ?? raw.address_line_1),
     address_line_2: null,
@@ -733,7 +760,10 @@ export function mapSaleFromOcr(raw, fileName, sNo = 1) {
 
   const x = expandRawExtraction(raw);
 
-  const lineItems = mapProductsToLineItems(x.products);
+  const lineItems = fillLineItemsHsn(
+    mapProductsToLineItems(x.products),
+    x.products?.[0]?.hsn || raw.hsnCode || raw.hsn_code,
+  );
 
   const first = firstLine(lineItems);
 
@@ -909,10 +939,8 @@ export function applyQrPriority(row, qrData, type) {
 
       mark('hsn_code');
 
-      if (Array.isArray(out.lineItems) && out.lineItems.length === 1 && !out.lineItems[0].hsn) {
-
-        out.lineItems = [{ ...out.lineItems[0], hsn }];
-
+      if (Array.isArray(out.lineItems) && out.lineItems.length) {
+        out.lineItems = fillLineItemsHsn(out.lineItems, hsn);
       }
 
     }
@@ -977,10 +1005,8 @@ export function applyQrPriority(row, qrData, type) {
 
       mark('hsn_code');
 
-      if (Array.isArray(out.lineItems) && out.lineItems.length === 1 && !out.lineItems[0].hsn) {
-
-        out.lineItems = [{ ...out.lineItems[0], hsn }];
-
+      if (Array.isArray(out.lineItems) && out.lineItems.length) {
+        out.lineItems = fillLineItemsHsn(out.lineItems, hsn);
       }
 
     }

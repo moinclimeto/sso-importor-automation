@@ -51,6 +51,7 @@ import {
   ReadonlyHeaderField,
   REGISTRATION_TYPE_OPTIONS,
 } from '../components/ReviewDocumentHeaderFields';
+import RegisteredEntityVerify from '../components/RegisteredEntityVerify.jsx';
 
 const PLASTIC_MATERIALS = ['HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'Others', 'PLA', 'PBAT', 'PVC', 'Multi-layer'];
 
@@ -148,6 +149,18 @@ export default function SalesReview() {
     setHeader((h) => ({ ...h, ...patch }));
     markUnsaved();
   }, [markUnsaved]);
+
+  const applyVerifiedEntity = useCallback((entity) => {
+    if (!entity) return;
+    patchHeader({
+      registration_type: entity.registration_type || header.registration_type,
+      entity_type: entity.entity_type || header.entity_type,
+      entity_name: entity.trade_name || header.entity_name,
+      address: entity.address || header.address,
+      mobile_number: entity.mobile || header.mobile_number,
+    });
+    showToast('Registration type and entity type updated from verified entity.', 'success');
+  }, [patchHeader, header.registration_type, header.entity_type, header.entity_name, header.address, header.mobile_number, showToast]);
 
   const isLineEditable = useCallback(
     (idx) => {
@@ -613,6 +626,15 @@ export default function SalesReview() {
                   state: header.state || resolveState('', v),
                 })}
                 readOnly={readOnly}
+              />
+              <RegisteredEntityVerify
+                gst={header.customer_gstin}
+                companyId={record?.company_id}
+                entityName={header.entity_name}
+                entityType={header.entity_type}
+                state={header.state}
+                disabled={readOnly}
+                onApply={applyVerifiedEntity}
               />
               <EditableHeaderField
                 label="Invoice Number"
