@@ -1,6 +1,6 @@
 import axios from 'axios';
 import { normalizeEntityType } from '../shared/entityRegistrationTypes.js';
-import { buildClimetoApiUrl, getClimetoApiBase } from './climetoApiConfig.js';
+import { buildClimetoApiUrl, getClimetoApiBase, getClimetoAuthHeaders } from './climetoApiConfig.js';
 
 function mapPiboRow(row, source, idx) {
   return {
@@ -25,7 +25,18 @@ export async function searchPiboEntities(db, { search = '', entityType = '', sta
 
   try {
     const url = buildClimetoApiUrl(baseUrl, 'pibo-entities/search', params.toString());
-    const res = await axios.get(url, { timeout: 12000, validateStatus: () => true });
+    const res = await axios.get(url, {
+      headers: await getClimetoAuthHeaders(db),
+      timeout: 12000,
+      validateStatus: () => true,
+    });
+    if (res.status === 401) {
+      return {
+        success: false,
+        entities: [],
+        error: 'Climeto API auth failed — please sign in again from the login page.',
+      };
+    }
     if (res.status < 400) {
       const list = res.data?.entities
         || res.data?.results

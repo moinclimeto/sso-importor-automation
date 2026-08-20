@@ -5,8 +5,8 @@ import {
   normalizeGstin,
   normalizeRegistrationType,
 } from '../shared/entityRegistrationTypes.js';
-import { getClimetoApiBase } from './gstVerifyService.js';
-import { buildClimetoApiUrl } from './climetoApiConfig.js';
+import { getClimetoApiBase, verifyGstComplete } from './gstVerifyService.js';
+import { buildClimetoApiUrl, getClimetoAuthHeaders } from './climetoApiConfig.js';
 import { searchPiboEntities } from './piboEntitiesService.js';
 
 const CPCB_GST_URL = 'https://epr.cpcb.gov.in/cpcbadmin/api/v1/gst/details';
@@ -42,10 +42,29 @@ async function lookupSupplierMaster(db, gst, companyId) {
   return rows.map((row) => mapLookupRow(row, 'supplier_master', 'supplier'));
 }
 
-async function lookupClimetoApi(baseUrl, gst) {
+async function lookupClimetoGstVerify(db, gst) {
+  const verified = await verifyGstComplete(db, gst);
+  if (!verified?.success) return null;
+
+  return {
+    id: `climeto-gst-${verified.gst}`,
+    gst: verified.gst,
+    trade_name: verified.tradeName || verified.legalName || '',
+    legal_name: verified.legalName || verified.tradeName || '',
+    address: verified.address || '',
+    mobile: '',
+    registration_type: verified.registration_type || 'Registered',
+    entity_type: verified.entity_type || '',
+    gst_status: verified.status || '',
+    source: 'climeto_gst',
+  };
+}
+
+async function lookupClimetoApi(db, baseUrl, gst) {
   const normalized = normalizeGstin(gst);
   if (!normalized) return [];
 
+  const authHeaders = await getClimetoAuthHeaders(db);
   const paths = [
     buildClimetoApiUrl(baseUrl, 'epr/registered-entities', `gst=${encodeURIComponent(normalized)}`),
     buildClimetoApiUrl(baseUrl, 'registered-entities', `gst=${encodeURIComponent(normalized)}`),
@@ -55,7 +74,11 @@ async function lookupClimetoApi(baseUrl, gst) {
 
   for (const url of paths) {
     try {
-      const res = await axios.get(url, { timeout: 8000, validateStatus: () => true });
+      const res = await axios.get(url, {
+        headers: authHeaders,
+        timeout: 8000,
+        validateStatus: () => true,
+      });
       if (res.status >= 400) continue;
       const payload = res.data;
       const list = payload?.entities
@@ -114,6 +137,7 @@ export function pickBestRegisteredEntity(entities = []) {
   const score = (entity) => {
     if (entity.source === 'supplier_master') return 40;
     if (entity.source === 'climeto_api') return 30;
+    if (entity.source === 'climeto_gst') return 25;
     if (entity.source === 'cpcb_gst') return 20;
     if (entity.source === 'fallback') return 0;
     return 10;
@@ -153,7 +177,9 @@ export function applyVerifiedEntityToExtractedRow(row, entity, invoiceType) {
     }
   };
 
-  const trusted = entity.source === 'supplier_master' || entity.source === 'climeto_api';
+  const trusted = entity.source === 'supplier_master'
+    || entity.source === 'climeto_api'
+    || entity.source === 'climeto_gst';
   setField('registration_type', entity.registration_type, { force: trusted });
   setField('entity_type', entity.entity_type, { force: trusted });
 
@@ -213,12 +239,14 @@ export async function lookupRegisteredEntities(db, { gst, companyId } = {}) {
 
   const climetoBase = await getClimetoApiBase(db);
   const supplierRows = await lookupSupplierMaster(db, normalized, companyId);
-  const climetoRows = await lookupClimetoApi(climetoBase, normalized);
+  const climetoGstRow = await lookupClimetoGstVerify(db, normalized);
+  const climetoRows = await lookupClimetoApi(db, climetoBase, normalized);
   const cpcbRow = await lookupCpcbGst(normalized);
 
   let entities = [
     ...supplierRows,
     ...climetoRows,
+    ...(climetoGstRow ? [climetoGstRow] : []),
     ...(cpcbRow ? [cpcbRow] : []),
   ];
 

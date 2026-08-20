@@ -2,6 +2,7 @@ import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
 import { initDatabase } from './database.js';
+import { registerAuthHandlers } from './authHandlers.js';
 import { registerIpcHandlers } from './ipcHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -43,6 +44,7 @@ app.whenReady().then(async () => {
     app.setAppUserModelId('com.climeto.pwp');
   }
   await initDatabase();
+  registerAuthHandlers();
   registerIpcHandlers();
   createWindow();
 });
