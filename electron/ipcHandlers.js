@@ -2133,16 +2133,19 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       // await browser.close();
       console.log("EPR Scraping completed successfully.");
       
-      // Auto-sync JSONs to SQLite
+      // Persist scraped data directly to SQLite (no JSON files on disk)
       try {
-          const syncPath = path.join(__dirname, '..', 'sync_to_sqlite.js');
-          const syncModule = await import('file://' + syncPath.replace(/\\/g, '/'));
-          if (syncModule.default) {
-              await syncModule.default(memoryDataMap);
-          }
+          const { createRequire } = await import('module');
+          const require = createRequire(import.meta.url);
+          const { persistScrapedData } = require('../src/extractors/epr/scrapedDataPersist.cjs');
+          await persistScrapedData({
+            rootDir: path.join(__dirname, '..'),
+            data: {
+              new_application_data: allData.newApplication,
+            },
+          });
       } catch (err) {
-          console.error("Failed to sync to SQLite:", err);
-          throw err;
+          console.error('Failed to save scraped data to SQLite:', err);
       }
 
       return { success: true, data: allData };
@@ -2477,27 +2480,49 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
   ipcMain.handle('eprData:getNewApplicationData', async () => {
     const db = getDb();
     try {
-      // Find all tables related to new_application
-      const tables = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'new_app%');");
       const result = {};
-      
+
+      const appRow = await db.get(
+        'SELECT * FROM scraped_new_application ORDER BY scraped_at DESC LIMIT 1',
+      );
+      if (appRow) {
+        const { id, ...app } = appRow;
+        result.new_application_part_a = app;
+        result.new_application_part_b = app;
+      }
+
+      const plasticRows = await db.all(
+        'SELECT financial_year, rigid_plastic_cat_i_mt, flexible_plastic_cat_ii_mt, mlp_plastic_cat_iii_mt, compostable_plastic_cat_iv_mt, unit_gst, scraped_at FROM scraped_plastic_consumed ORDER BY financial_year',
+      );
+      if (plasticRows.length) {
+        result.new_app_plastic_consumed_tpa = plasticRows;
+      }
+
+      if (result.new_application_part_a) return result;
+
+      // Legacy fallback: old new_app* tables
+      const tables = await db.all(
+        "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'new_app%');",
+      );
       for (const t of tables) {
         const rows = await db.all(`SELECT * FROM ${t.name}`);
-        // Remove internal/sqlite fields like _internal_id and file_source
-        const cleanRows = rows.map(row => {
+        const cleanRows = rows.map((row) => {
           const { _internal_id, file_source, ...rest } = row;
           return rest;
         });
-        
-        if (t.name === 'new_application_part_a' || t.name === 'new_application_part_b' || t.name === 'new_application_part_c') {
+        if (
+          t.name === 'new_application_part_a' ||
+          t.name === 'new_application_part_b' ||
+          t.name === 'new_application_part_c'
+        ) {
           result[t.name] = cleanRows.length > 0 ? cleanRows[0] : null;
         } else {
-          result[t.name] = cleanRows; // Arrays for nested tables
+          result[t.name] = cleanRows;
         }
       }
       return result;
     } catch (e) {
-      console.error("Failed to fetch new application data:", e);
+      console.error('Failed to fetch new application data:', e);
       return {};
     }
   });

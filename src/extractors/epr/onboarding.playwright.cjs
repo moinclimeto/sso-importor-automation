@@ -1,19 +1,86 @@
-const fs = require('fs');
-const path = require('path');
 const { loginEpr } = require('./login.playwright.cjs');
+const { extractEprNewApplication } = require('./new_application.extractor.cjs');
+const { persistScrapedData } = require('./scrapedDataPersist.cjs');
 
-async function extractApiDataFromDashboard(page, viewButtonIndex, apiPathKeyword, outputFilename) {
+/** Wait until CPCB full-page loader overlay is gone (blocks Fetch Data clicks). */
+async function waitForLoaderToHide(page, timeoutMs = 60000) {
+  const loader = page.locator('app-loader .loader-wrapper, app-loader').first();
+  const visible = await loader.isVisible({ timeout: 1500 }).catch(() => false);
+  if (visible) {
+    console.log('⏳ Waiting for page loader to disappear...');
+    await loader.waitFor({ state: 'hidden', timeout: timeoutMs }).catch(async () => {
+      await page
+        .waitForFunction(
+          () => {
+            const el = document.querySelector('app-loader .loader-wrapper, app-loader');
+            if (!el) return true;
+            const s = window.getComputedStyle(el);
+            return s.display === 'none' || s.visibility === 'hidden' || Number(s.opacity) === 0;
+          },
+          { timeout: timeoutMs },
+        )
+        .catch(() => {});
+    });
+  }
+  await page.waitForTimeout(400);
+}
+
+async function safeClick(locator, page, label = 'element') {
+  await waitForLoaderToHide(page);
+  try {
+    await locator.click({ timeout: 20000 });
+  } catch (err) {
+    console.log(`⚠️ Click blocked on ${label} — force click retry...`);
+    await waitForLoaderToHide(page, 45000);
+    await locator.click({ force: true, timeout: 20000 });
+  }
+  await waitForLoaderToHide(page, 45000);
+}
+
+async function runStep(name, fn) {
+  try {
+    await fn();
+  } catch (err) {
+    console.error(`❌ Step failed [${name}]:`, err.message);
+    console.log(`⏭️ Continuing to next step...`);
+  }
+}
+
+/** Run action + waitForResponse together so timeouts never become unhandled rejections. */
+async function waitForApiAfterAction(page, matchResponse, action, label = 'API', timeoutMs = 25000) {
+  try {
+    const [response] = await Promise.all([
+      page.waitForResponse(
+        (res) => {
+          if (res.request().method() === 'OPTIONS') return false;
+          return matchResponse(res);
+        },
+        { timeout: timeoutMs },
+      ),
+      (async () => {
+        await action();
+      })(),
+    ]);
+    return response;
+  } catch (err) {
+    console.error(`❌ API wait failed [${label}]:`, err.message.split('\n')[0]);
+    return null;
+  }
+}
+
+async function extractApiDataFromDashboard(page, viewButtonIndex, apiPathKeyword, label) {
     console.log(`\n========================================`);
-    console.log(`🚀 Starting Extraction: ${outputFilename}`);
+    console.log(`🚀 Starting Extraction: ${label}`);
     console.log(`========================================`);
 
     console.log(`🖱️ Clicking 'View' button at index ${viewButtonIndex}...`);
     const viewBtns = page.locator('button.btn-underline:has-text("View")');
     await viewBtns.nth(viewButtonIndex).waitFor({ state: 'visible', timeout: 10000 });
-    await viewBtns.nth(viewButtonIndex).click();
+    await safeClick(viewBtns.nth(viewButtonIndex), page, `View button #${viewButtonIndex}`);
 
     console.log("⏳ Waiting for Dashboard to load...");
-    await page.waitForTimeout(5000);
+    await waitForLoaderToHide(page);
+    await page.waitForTimeout(2000);
 
     console.log("🖱️ Setting first dropdown to 'Financial Year'...");
     const intervalSelect = page.locator('select.filter-select-input').nth(0);
@@ -40,41 +107,37 @@ async function extractApiDataFromDashboard(page, viewButtonIndex, apiPathKeyword
 
     for (const year of availableYears) {
         console.log(`🔄 Fetching data for Financial Year: ${year}`);
-        
-        await fySelect.selectOption(year);
-        await fySelect.dispatchEvent('change');
 
-        const responsePromise = page.waitForResponse(
-            (response) => response.url().includes(apiPathKeyword) && 
-                          response.url().includes(`financialYear=${year}`) && 
-                          response.request().method() !== 'OPTIONS',
-            { timeout: 15000 }
+        const apiResponse = await waitForApiAfterAction(
+            page,
+            (res) => res.url().includes(apiPathKeyword) && res.url().includes(`financialYear=${year}`),
+            async () => {
+                await fySelect.selectOption(year);
+                await fySelect.dispatchEvent('change');
+                await page.waitForTimeout(500);
+                await safeClick(fetchBtn, page, `Fetch Data (${year})`);
+            },
+            year,
         );
 
-        await page.waitForTimeout(500);
-        await fetchBtn.click();
-
-        try {
-            const apiResponse = await responsePromise;
-            const jsonPayload = await apiResponse.json();
-            console.log(`✅ Received API data for ${year}!`);
-            apiDataResults[year] = jsonPayload;
-        } catch (error) {
-            console.error(`❌ Failed to get API data for ${year}:`, error.message);
-            apiDataResults[year] = { error: "Failed to fetch data or timeout." };
+        if (apiResponse) {
+            try {
+                const jsonPayload = await apiResponse.json();
+                console.log(`✅ Received API data for ${year}!`);
+                apiDataResults[year] = jsonPayload;
+            } catch (error) {
+                console.error(`❌ Failed to parse API data for ${year}:`, error.message);
+                apiDataResults[year] = { error: 'Invalid JSON response.' };
+            }
+        } else {
+            apiDataResults[year] = { error: 'Failed to fetch data or timeout.' };
         }
-        
+
         await page.waitForTimeout(1000);
     }
 
-    const outputDir = path.join(process.cwd(), 'playwright_data');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    const outputPath = path.join(outputDir, outputFilename);
-    fs.writeFileSync(outputPath, JSON.stringify(apiDataResults, null, 2));
-    console.log(`🎉 Data successfully extracted and saved to: ${outputPath}`);
+    console.log(`🎉 ${label} extraction complete (${Object.keys(apiDataResults).length} records)`);
+    return apiDataResults;
 }
 
 async function extractRoadMakingData(page) {
@@ -86,7 +149,7 @@ async function extractRoadMakingData(page) {
     console.log(`🖱️ Clicking 'Operations' in the sidebar...`);
     const operationsMenu = page.locator('span.label, .menu-item, span').filter({ hasText: 'Operations' }).first();
     await operationsMenu.waitFor({ state: 'visible', timeout: 10000 });
-    await operationsMenu.click();
+    await safeClick(operationsMenu, page, 'Operations menu');
 
     console.log("⏳ Waiting for Operations menu to expand...");
     await page.waitForTimeout(2000);
@@ -95,7 +158,7 @@ async function extractRoadMakingData(page) {
     console.log("🖱️ Clicking 'Road Making Declaration' tab...");
     const roadMakingTab = page.getByText('Road Making Declaration').first();
     await roadMakingTab.waitFor({ state: 'visible', timeout: 15000 });
-    await roadMakingTab.click();
+    await safeClick(roadMakingTab, page, 'Road Making Declaration');
     await page.waitForTimeout(2000);
 
     // It seems "PW Procurement" is a sub-tab we need to click
@@ -103,7 +166,7 @@ async function extractRoadMakingData(page) {
     const pwProcurementTab = page.getByText('PW Procurement').first();
     try {
         await pwProcurementTab.waitFor({ state: 'visible', timeout: 5000 });
-        await pwProcurementTab.click();
+        await safeClick(pwProcurementTab, page, 'PW Procurement');
         await page.waitForTimeout(3000);
     } catch (e) {
         console.log("⚠️ 'PW Procurement' tab not found or not clickable, proceeding anyway...");
@@ -131,55 +194,51 @@ async function extractRoadMakingData(page) {
 
     for (const range of dateRanges) {
         console.log(`🔄 Fetching data for Period: ${range.start} to ${range.end}`);
-        
-        await dateInputs.nth(0).fill(range.start);
-        await dateInputs.nth(1).fill(range.end);
-        
-        await dateInputs.nth(0).dispatchEvent('change');
-        await dateInputs.nth(1).dispatchEvent('change');
 
-        // Set up relaxed API interceptor since dates might be in the POST body or differently named
-        const responsePromise = page.waitForResponse(
-            (response) => response.url().includes('get-dashboard-road') && 
-                          response.request().method() !== 'OPTIONS',
-            { timeout: 15000 }
+        const label = `${range.start}_to_${range.end}`;
+        const apiResponse = await waitForApiAfterAction(
+            page,
+            (res) => res.url().includes('get-dashboard-road'),
+            async () => {
+                await dateInputs.nth(0).fill(range.start);
+                await dateInputs.nth(1).fill(range.end);
+                await dateInputs.nth(0).dispatchEvent('change');
+                await dateInputs.nth(1).dispatchEvent('change');
+                await page.waitForTimeout(500);
+                await safeClick(fetchBtn, page, `Fetch Data (${label})`);
+            },
+            label,
         );
 
-        await page.waitForTimeout(500);
-        await fetchBtn.click();
-
-        try {
-            const apiResponse = await responsePromise;
-            const jsonPayload = await apiResponse.json();
-            console.log(`✅ Received Road Making API data for ${range.start} to ${range.end}!`);
-            apiDataResults[`${range.start}_to_${range.end}`] = jsonPayload;
-        } catch (error) {
-            console.error(`❌ Failed to get Road Making API data for ${range.start}:`, error.message);
-            apiDataResults[`${range.start}_to_${range.end}`] = { error: "Failed to fetch data or timeout." };
+        if (apiResponse) {
+            try {
+                const jsonPayload = await apiResponse.json();
+                console.log(`✅ Received Road Making API data for ${range.start} to ${range.end}!`);
+                apiDataResults[label] = jsonPayload;
+            } catch (error) {
+                console.error(`❌ Failed to parse Road Making data for ${range.start}:`, error.message);
+                apiDataResults[label] = { error: 'Invalid JSON response.' };
+            }
+        } else {
+            apiDataResults[label] = { error: 'Failed to fetch data or timeout.' };
         }
-        
+
         await page.waitForTimeout(1000);
     }
 
-    const outputDir = path.join(process.cwd(), 'playwright_data');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    const outputPath = path.join(outputDir, 'road_making_api_data.json');
-    fs.writeFileSync(outputPath, JSON.stringify(apiDataResults, null, 2));
-    console.log(`🎉 Road Making Data successfully extracted and saved to: ${outputPath}`);
+    console.log(`🎉 Road Making extraction complete (${Object.keys(apiDataResults).length} periods)`);
+    return apiDataResults;
 }
 
 async function extractWalletFrontendData(page) {
     console.log(`\n========================================`);
-    console.log(`🚀 Starting Extraction: wallet_frontend_data.json`);
+    console.log(`🚀 Starting Extraction: Wallet Frontend`);
     console.log(`========================================`);
 
     console.log(`🖱️ Clicking 'Wallet' in the sidebar...`);
     const walletMenu = page.locator('span.label, .menu-item, span').filter({ hasText: 'Wallet' }).first();
     await walletMenu.waitFor({ state: 'visible', timeout: 10000 });
-    await walletMenu.click();
+    await safeClick(walletMenu, page, 'Wallet menu');
 
     console.log("⏳ Waiting for Wallet page to load...");
     await page.waitForTimeout(5000);
@@ -297,19 +356,13 @@ async function extractWalletFrontendData(page) {
         return { data, logs };
     });
 
-    const outputDir = path.join(process.cwd(), 'playwright_data');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    const outputPath = path.join(outputDir, 'wallet_frontend_data.json');
-    fs.writeFileSync(outputPath, JSON.stringify(extractedData, null, 2));
-    console.log(`🎉 Wallet Frontend Data successfully extracted and saved to: ${outputPath}`);
+    console.log(`🎉 Wallet Frontend extraction complete`);
+    return extractedData;
 }
 
 async function extractWalletApiData(page) {
     console.log(`\n========================================`);
-    console.log(`🚀 Starting Extraction: wallet_api_data.json`);
+    console.log(`🚀 Starting Extraction: Wallet API`);
     console.log(`========================================`);
 
     const walletTabs = [
@@ -337,73 +390,76 @@ async function extractWalletApiData(page) {
 
     for (const tab of walletTabs) {
         console.log(`🔄 Extracting API data for tab: ${tab.name}`);
-        
-        // Setup API Interceptor
-        const responsePromise = page.waitForResponse(
-            (response) => response.url().includes(tab.apiPath) && 
-                          response.request().method() !== 'OPTIONS',
-            { timeout: 15000 }
-        );
 
-        // Before clicking 'Filing', we click 'Available' to ensure 'Filing' is not already active
         if (tab.name === 'Filing') {
             try {
                 await page.locator('span.certificate-tab', { hasText: 'Available' }).first().click({ force: true });
                 await page.waitForTimeout(1000);
-            } catch (e) {}
+            } catch (e) {
+                /* tab may already be inactive */
+            }
         }
 
-        // Click the tab
-        try {
-            const tabElem = page.locator('span.certificate-tab').filter({ hasText: tab.name }).first();
-            await tabElem.waitFor({ state: 'visible', timeout: 5000 });
-            await tabElem.click({ force: true });
+        const tabElem = page.locator('span.certificate-tab').filter({ hasText: tab.name }).first();
+        const apiResponse = await waitForApiAfterAction(
+            page,
+            (res) => res.url().includes(tab.apiPath),
+            async () => {
+                await tabElem.waitFor({ state: 'visible', timeout: 8000 });
+                await safeClick(tabElem, page, `Wallet tab ${tab.name}`);
+            },
+            tab.name,
+        );
 
-            // Wait for response
-            const apiResponse = await responsePromise;
-            const jsonPayload = await apiResponse.json();
-            console.log(`✅ Received Wallet API data for ${tab.name}!`);
-            apiDataResults[tab.name] = jsonPayload;
-
-        } catch (error) {
-            console.error(`❌ Failed to get API data for ${tab.name}:`, error.message);
-            apiDataResults[tab.name] = { error: "Failed to fetch data or timeout." };
+        if (apiResponse) {
+            try {
+                const jsonPayload = await apiResponse.json();
+                console.log(`✅ Received Wallet API data for ${tab.name}!`);
+                apiDataResults[tab.name] = jsonPayload;
+            } catch (error) {
+                console.error(`❌ Failed to parse Wallet API for ${tab.name}:`, error.message);
+                apiDataResults[tab.name] = { error: 'Invalid JSON response.' };
+            }
+        } else {
+            apiDataResults[tab.name] = { error: 'Failed to fetch data or timeout.' };
         }
 
         await page.waitForTimeout(1000);
     }
 
-    const outputDir = path.join(process.cwd(), 'playwright_data');
-    if (!fs.existsSync(outputDir)) {
-        fs.mkdirSync(outputDir, { recursive: true });
-    }
-    
-    const outputPath = path.join(outputDir, 'wallet_api_data.json');
-    fs.writeFileSync(outputPath, JSON.stringify(apiDataResults, null, 2));
-    console.log(`🎉 Wallet API Data successfully extracted and saved to: ${outputPath}`);
+    console.log(`🎉 Wallet API extraction complete (${Object.keys(apiDataResults).length} tabs)`);
+    return apiDataResults;
 }
 
 async function selectUnit(page) {
     console.log("🖱️ Clicking 'Select Unit' button...");
     const selectUnitBtn = page.locator('button.action-btn', { hasText: 'Select Unit' }).first();
     await selectUnitBtn.waitFor({ state: 'visible', timeout: 10000 });
-    await selectUnitBtn.click();
+    await safeClick(selectUnitBtn, page, 'Select Unit');
     
     console.log("⏳ Waiting for unit cards to load...");
+    await waitForLoaderToHide(page);
     const unitCardBtn = page.locator('button.unit-card', { hasText: 'MALOO INDUSTRIES' }).first();
     await unitCardBtn.waitFor({ state: 'visible', timeout: 10000 });
     
     console.log("🖱️ Clicking 'MALOO INDUSTRIES' unit card...");
-    await unitCardBtn.click();
+    await safeClick(unitCardBtn, page, 'MALOO INDUSTRIES unit');
     
     console.log("⏳ Waiting for data to refresh after unit selection...");
-    await page.waitForTimeout(5000);
+    await waitForLoaderToHide(page);
+    await page.waitForTimeout(2000);
 }
 
 async function extractOnboardingData() {
     console.log("🚀 Starting Combined API Data Extractor...");
+
+    process.on('unhandledRejection', (reason) => {
+        const msg = reason?.message || String(reason);
+        console.error('⚠️ Unhandled async error (script continues):', msg.split('\n')[0]);
+    });
     
     const { context, page } = await loginEpr("", "");
+    const scraped = {};
 
     try {
         console.log("🌐 Waiting for navigation to Onboarding page...");
@@ -412,48 +468,94 @@ async function extractOnboardingData() {
         // ---------------------------------------------------------
         // 1. EXTRACT PROCUREMENT DATA
         // ---------------------------------------------------------
-        await selectUnit(page);
-        await extractApiDataFromDashboard(page, 0, 'procurement/dashboard/summary', 'procurement_api_data.json');
+        await runStep('Procurement API', async () => {
+            await selectUnit(page);
+            scraped.procurement_api_data = await extractApiDataFromDashboard(
+              page, 0, 'procurement/dashboard/summary', 'Procurement API',
+            );
+        });
 
         // ---------------------------------------------------------
         // 2. NAVIGATE BACK TO DASHBOARD & EXTRACT SALES DATA
         // ---------------------------------------------------------
-        console.log("\n🔙 Navigating back to main dashboard...");
-        await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
-            .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
-        await page.waitForTimeout(5000);
+        await runStep('Sales API', async () => {
+            console.log("\n🔙 Navigating back to main dashboard...");
+            await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
+                .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
+            await waitForLoaderToHide(page);
+            await page.waitForTimeout(2000);
 
-        await selectUnit(page);
-        await extractApiDataFromDashboard(page, 1, 'importer/sales/getDashboard', 'sales_api_data.json');
+            await selectUnit(page);
+            scraped.sales_api_data = await extractApiDataFromDashboard(
+              page, 1, 'importer/sales/getDashboard', 'Sales API',
+            );
+        });
 
         // ---------------------------------------------------------
         // 3. NAVIGATE BACK TO DASHBOARD & EXTRACT ROAD MAKING DATA
         // ---------------------------------------------------------
-        console.log("\n🔙 Navigating back to main dashboard...");
-        await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
-            .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
-        await page.waitForTimeout(5000);
+        await runStep('Road Making API', async () => {
+            console.log("\n🔙 Navigating back to main dashboard...");
+            await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
+                .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
+            await waitForLoaderToHide(page);
+            await page.waitForTimeout(2000);
 
-        await selectUnit(page);
-        await extractRoadMakingData(page);
+            await selectUnit(page);
+            scraped.road_making_api_data = await extractRoadMakingData(page);
+        });
 
         // ---------------------------------------------------------
         // 4. NAVIGATE BACK TO DASHBOARD & EXTRACT WALLET FRONTEND
         // ---------------------------------------------------------
-        console.log("\n🔙 Navigating back to main dashboard...");
-        await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
-            .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
-        await page.waitForTimeout(5000);
+        await runStep('Wallet Frontend', async () => {
+            console.log("\n🔙 Navigating back to main dashboard...");
+            await page.goto('https://epr.cpcb.gov.in/onboarding/dashboard', { waitUntil: 'domcontentloaded', timeout: 30000 })
+                .catch(e => console.log("⚠️ page.goto timed out, continuing anyway..."));
+            await waitForLoaderToHide(page);
+            await page.waitForTimeout(2000);
 
-        await selectUnit(page); // This unlocks the sidebar menus
-        await extractWalletFrontendData(page);
+            await selectUnit(page);
+            await extractWalletFrontendData(page);
+        });
 
         // ---------------------------------------------------------
         // 5. EXTRACT WALLET API DATA (Directly after Frontend)
         // ---------------------------------------------------------
-        await extractWalletApiData(page);
+        await runStep('Wallet API', async () => {
+            scraped.wallet_api_data = await extractWalletApiData(page);
+        });
 
-        console.log("\n🛑 All scraping complete. The browser will remain open.");
+        // ---------------------------------------------------------
+        // 6. ALL APPLICATIONS → EYE → PART A / B / C
+        // ---------------------------------------------------------
+        await runStep('New Application', async () => {
+            console.log('\n========================================');
+            console.log('🚀 Starting Extraction: New Application');
+            console.log('========================================');
+
+            console.log('\n🔙 Navigating to onboarding dashboard for All Applications...');
+            await page
+              .goto('https://epr.cpcb.gov.in/onboarding/dashboard', {
+                waitUntil: 'domcontentloaded',
+                timeout: 30000,
+              })
+              .catch((e) => console.log('⚠️ page.goto timed out, continuing anyway...'));
+            await waitForLoaderToHide(page);
+            await page.waitForTimeout(2000);
+
+            scraped.new_application_data = await extractEprNewApplication(page);
+            const newAppData = scraped.new_application_data;
+            console.log(
+              `🎉 New Application extracted | Part A: ${Object.keys(newAppData.part_a || {}).length} fields | Part B: ${Object.keys(newAppData.part_b || {}).length} fields | Part C: ${Object.keys(newAppData.part_c || {}).length} fields`,
+            );
+        });
+
+        await runStep('Save to database', async () => {
+            await persistScrapedData({ rootDir: process.cwd(), data: scraped });
+        });
+
+        console.log('\n🛑 All scraping complete. The browser will remain open.');
         await new Promise(() => {});
         
     } catch (error) {

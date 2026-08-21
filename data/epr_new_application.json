@@ -1,0 +1,146 @@
+{
+  "newApplication": {
+    "part_a": {
+      "name_of_the_organization_legal_name": "MALOO INDUSTRIES",
+      "trade_name": "MALOO INDUSTRIES",
+      "type_of_business": "Partnership/Proprietorship",
+      "registered_address": "121 FB Scheme no 94 Pipliyahana Service Road",
+      "plant_unit_address": "on",
+      "company_pan": "AAZFM4608D",
+      "unit_gst": "23AAZFM4608D1Z7",
+      "cin_number_or_upload": "CIN must be in format: A12345AB1234ABC123456 or  PDF file (Max 1 MB)",
+      "gst": "23AAZFM4608D1Z7",
+      "type_of_company": "Micro",
+      "iec": "1117502406",
+      "supporting_document_for_company_category": "(Max File Size of PDF is 1 MB)",
+      "name": "SUYASH MALU",
+      "designation": "Partner",
+      "mobile_no": "8966066321",
+      "email": "eprmaloo@gmail.com",
+      "pan": "BGAPM1653A",
+      "2_a_select_states_uts_in_which_the_importer_is_operating": "Madhya Pradesh",
+      "2_b_does_the_importer_have_a_production_facility": "Select",
+      "2_c_total_capital_invested_in_the_project_rs_in_crores": "0.25",
+      "2_d_year_of_commencement_of_operations": "2022",
+      "3_a_details_type_quantity_of_products_produced_marketed": "60a2661b_1678451012.pdf",
+      "3_b_representative_picture_of_plastic_packaging_plastic_packaging_for_commodities_covering_different_epr_categories": "eb80eb22_1678450601.jpeg",
+      "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": "0",
+      "3d_status_of_compliance_with_pwm_rules": "Yes",
+      "3e_thickness_of_plastic_packaging_in_microns": "120",
+      "tables": {
+        "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": [
+          {
+            "year": "2020-21",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          },
+          {
+            "year": "2021-22",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          }
+        ]
+      },
+      "legal_name_of_company": "MALOO INDUSTRIES",
+      "pan_number": "BGAPM1653A",
+      "mobile_number": "8966066321",
+      "email_address": "eprmaloo@gmail.com"
+    },
+    "part_b": {
+      "name_of_the_organization_legal_name": "MALOO INDUSTRIES",
+      "trade_name": "MALOO INDUSTRIES",
+      "type_of_business": "Partnership/Proprietorship",
+      "registered_address": "121 FB Scheme no 94 Pipliyahana Service Road",
+      "plant_unit_address": "on",
+      "company_pan": "AAZFM4608D",
+      "unit_gst": "23AAZFM4608D1Z7",
+      "cin_number_or_upload": "CIN must be in format: A12345AB1234ABC123456 or  PDF file (Max 1 MB)",
+      "gst": "23AAZFM4608D1Z7",
+      "type_of_company": "Micro",
+      "iec": "1117502406",
+      "supporting_document_for_company_category": "(Max File Size of PDF is 1 MB)",
+      "name": "SUYASH MALU",
+      "designation": "Partner",
+      "mobile_no": "8966066321",
+      "email": "eprmaloo@gmail.com",
+      "pan": "BGAPM1653A",
+      "2_a_select_states_uts_in_which_the_importer_is_operating": "Madhya Pradesh",
+      "2_b_does_the_importer_have_a_production_facility": "Select",
+      "2_c_total_capital_invested_in_the_project_rs_in_crores": "0.25",
+      "2_d_year_of_commencement_of_operations": "2022",
+      "3_a_details_type_quantity_of_products_produced_marketed": "60a2661b_1678451012.pdf",
+      "3_b_representative_picture_of_plastic_packaging_plastic_packaging_for_commodities_covering_different_epr_categories": "eb80eb22_1678450601.jpeg",
+      "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": "0",
+      "3d_status_of_compliance_with_pwm_rules": "Yes",
+      "3e_thickness_of_plastic_packaging_in_microns": "120",
+      "tables": {
+        "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": [
+          {
+            "year": "2020-21",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          },
+          {
+            "year": "2021-22",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          }
+        ]
+      }
+    },
+    "part_c": {
+      "name_of_the_organization_legal_name": "MALOO INDUSTRIES",
+      "trade_name": "MALOO INDUSTRIES",
+      "type_of_business": "Partnership/Proprietorship",
+      "registered_address": "121 FB Scheme no 94 Pipliyahana Service Road",
+      "plant_unit_address": "on",
+      "company_pan": "AAZFM4608D",
+      "unit_gst": "23AAZFM4608D1Z7",
+      "cin_number_or_upload": "CIN must be in format: A12345AB1234ABC123456 or  PDF file (Max 1 MB)",
+      "gst": "23AAZFM4608D1Z7",
+      "type_of_company": "Micro",
+      "iec": "1117502406",
+      "supporting_document_for_company_category": "(Max File Size of PDF is 1 MB)",
+      "name": "SUYASH MALU",
+      "designation": "Partner",
+      "mobile_no": "8966066321",
+      "email": "eprmaloo@gmail.com",
+      "pan": "BGAPM1653A",
+      "2_a_select_states_uts_in_which_the_importer_is_operating": "Madhya Pradesh",
+      "2_b_does_the_importer_have_a_production_facility": "Select",
+      "2_c_total_capital_invested_in_the_project_rs_in_crores": "0.25",
+      "2_d_year_of_commencement_of_operations": "2022",
+      "3_a_details_type_quantity_of_products_produced_marketed": "60a2661b_1678451012.pdf",
+      "3_b_representative_picture_of_plastic_packaging_plastic_packaging_for_commodities_covering_different_epr_categories": "eb80eb22_1678450601.jpeg",
+      "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": "0",
+      "3d_status_of_compliance_with_pwm_rules": "Yes",
+      "3e_thickness_of_plastic_packaging_in_microns": "120",
+      "tables": {
+        "3c_total_quantity_of_plastic_consumed_for_plastic_packaging_of_commodities_tpa": [
+          {
+            "year": "2020-21",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          },
+          {
+            "year": "2021-22",
+            "rigid_plastic_cat_i": "0",
+            "flexible_plastic_cat_ii": "0",
+            "mlp_cat_iii": "0",
+            "compostable_plastic_cat_iv": "0"
+          }
+        ]
+      }
+    }
+  }
+}

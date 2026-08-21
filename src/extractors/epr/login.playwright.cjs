@@ -1,11 +1,51 @@
 const { chromium } = require('playwright');
 const path = require('path');
 
+const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
+const NAV_TIMEOUT_MS = 90000;
+
+async function gotoWithRetry(page, url, label = url) {
+  const waitStrategies = ['domcontentloaded', 'load'];
+  let lastError = null;
+
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    for (const waitUntil of waitStrategies) {
+      try {
+        console.log(`🌐 Navigating to ${label} (attempt ${attempt}, wait: ${waitUntil})...`);
+        await page.goto(url, { waitUntil, timeout: NAV_TIMEOUT_MS });
+        return;
+      } catch (err) {
+        lastError = err;
+        console.log(`⚠️ Navigation attempt ${attempt} (${waitUntil}) failed: ${err.message.split('\n')[0]}`);
+      }
+    }
+    await page.waitForTimeout(2000);
+  }
+
+  throw lastError || new Error(`Could not navigate to ${label}`);
+}
+
+async function waitForLoginOrDashboard(page) {
+  const deadline = Date.now() + NAV_TIMEOUT_MS;
+  while (Date.now() < deadline) {
+    const url = page.url();
+    if (/\/(dashboard|onboarding|home)\b/i.test(url)) return 'authenticated';
+    const hasLoginForm = await page
+      .locator('input[type="password"], input[formcontrolname="password"], input[name="password"]')
+      .first()
+      .isVisible({ timeout: 2000 })
+      .catch(() => false);
+    if (hasLoginForm) return 'login';
+    await page.waitForTimeout(1000);
+  }
+  throw new Error('Login page did not load — check network or CPCB portal availability.');
+}
+
 async function loginEpr(username, password) {
     console.log("🚀 Starting Playwright for EPR Login with Persistent Session...");
     
     // Directory to save browser session (cookies, local storage, etc.)
-    const userDataDir = path.join(process.cwd(), 'playwright_data');
+    const userDataDir = path.join(process.cwd(), 'playwright_session');
 
     // Launch persistent browser context
     // Set headless: false so you can see the browser and solve the Captcha manually if needed
@@ -18,26 +58,24 @@ async function loginEpr(username, password) {
     const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
 
     try {
-        console.log("🌐 Navigating to https://epr.cpcb.gov.in/login ...");
-        await page.goto('https://epr.cpcb.gov.in/login', { waitUntil: 'networkidle' });
+        await gotoWithRetry(page, LOGIN_URL, 'EPR login');
 
-        // Check if we are already logged in by looking at the URL or a specific element
-        if (page.url().includes('dashboard')) {
-            console.log("✅ Already logged in (session restored)! Reached dashboard.");
+        const authState = await waitForLoginOrDashboard(page);
+        if (authState === 'authenticated' || page.url().includes('dashboard') || page.url().includes('onboarding')) {
+            console.log('✅ Already logged in (session restored)!');
         } else {
             if (username && password) {
-                console.log("🔑 Filling credentials...");
+                console.log('🔑 Filling credentials...');
                 await page.locator('input[type="text"], input[formcontrolname="userName"], input[name="username"]').first().fill(username);
                 await page.locator('input[type="password"], input[formcontrolname="password"], input[name="password"]').first().fill(password);
                 
-                console.log("⏳ Please solve the Captcha and click Login. Waiting for dashboard to load...");
+                console.log('⏳ Please solve the Captcha and click Login. Waiting for dashboard to load...');
             } else {
-                console.log("⏳ Waiting for manual login (Username, Password, Captcha)....");
+                console.log('⏳ Waiting for manual login (Username, Password, Captcha)...');
             }
 
-            // We wait for the URL to change to something like dashboard.
-            await page.waitForURL('**/dashboard**', { timeout: 0 }); 
-            console.log("✅ Login successful, session is saved! Reached dashboard.");
+            await page.waitForURL(/\/(dashboard|onboarding|home)\b/i, { timeout: 0 });
+            console.log('✅ Login successful, session is saved!');
         }
 
         // ============================================
