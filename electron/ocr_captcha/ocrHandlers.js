@@ -10,11 +10,16 @@ import {
   buildExtractionPrompt,
   mapPurchaseFromOcr,
   mapSaleFromOcr,
+  normalizePurchasePartyFields,
   applyQrPriority,
   fileBaseName,
 } from './ocrExtract.js';
 import { createLogger, createTrackId } from '../utils/logger.js';
 import { runExtractQueue } from './extractQueue.js';
+import {
+  beginEntityVerifyBatch,
+  endEntityVerifyBatch,
+} from '../entityRegistrationVerify.js';
 import {
   getPdfPageCount,
   expandFilesToPageJobs,
@@ -31,6 +36,23 @@ import {
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+
+async function fetchDefaultConversionFactor(db) {
+  if (!db) return null;
+  try {
+    const tableCheck = await db.get(
+      `SELECT name FROM sqlite_master WHERE type='table' AND name='conversion_factor'`
+    );
+    if (!tableCheck) return null;
+    const row = await db.get(
+      'SELECT conversion_factor FROM conversion_factor ORDER BY _internal_id LIMIT 1'
+    );
+    const n = parseFloat(row?.conversion_factor);
+    return Number.isFinite(n) && n > 0 ? n : null;
+  } catch {
+    return null;
+  }
+}
 
 function isNetworkError(err) {
   const msg = `${err?.message || ''} ${err?.cause?.message || ''} ${err?.cause?.code || ''}`;
@@ -86,6 +108,7 @@ async function runGeminiJsonExtraction({
   }
   return { parsed: null, usedModel: null, lastError };
 }
+
 function loadEnvFile() {
   const candidates = [
     path.join(process.cwd(), '.env'),
@@ -184,7 +207,7 @@ async function extractOneInvoice({
   try {
     const invoiceType = type === 'sale' ? 'sale' : type === 'company_document' ? 'company_document' : 'purchase';
 
-    if (isPdf && invoiceType === 'company_document') {
+    if (isPdf) {
       log.info('Passing whole PDF to Gemini', {
         sourceName,
         pageCount: resolvedPageCount,
@@ -192,17 +215,6 @@ async function extractOneInvoice({
       base64 = fs.readFileSync(filePath).toString('base64');
       mimeType = 'application/pdf';
       qrTargetPath = filePath;
-    } else if (isPdf) {
-      log.info('Rendering PDF page for extract', {
-        sourceName,
-        pageNo,
-        pageCount: resolvedPageCount,
-      });
-      const pngBuf = await renderPdfPageToPng(filePath, pageNo, 2.2);
-      base64 = pngBuf.toString('base64');
-      mimeType = 'image/png';
-      tempPng = writeTempPng(pngBuf, `p${pageNo}`);
-      qrTargetPath = tempPng;
     } else {
       if (mimeType === 'application/octet-stream') {
         return { success: false, message: 'Unsupported file type.', trackId: log.trackId };
@@ -286,7 +298,7 @@ async function extractOneInvoice({
       invoiceType === 'company_document'
         ? { ...parsed, fileName: outFileName, decidedType: 'company_document', _source_fields: {} }
         : invoiceType === 'purchase'
-        ? mapPurchaseFromOcr(parsed, outFileName)
+        ? mapPurchaseFromOcr(parsed, outFileName, financialYear)
         : mapSaleFromOcr(parsed, outFileName, sNo);
 
     const cpy = row.extraction?.copyType;
@@ -365,9 +377,15 @@ async function extractOneInvoice({
       row.customer_name ||
       '';
 
+    if (invoiceType === 'purchase') {
+      row = normalizePurchasePartyFields(row);
+    }
+
+    // Counterparty GST/PIBO verify runs after company routing in DocUpload (with companyId + supplier_master cache).
+
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;
-      if (!row._source_fields[key] && row[key] !== '' && row[key] !== 0) {
+      if (!row._source_fields[key] && row[key] != null && row[key] !== '') {
         row._source_fields[key] = 'ocr';
       }
     }
@@ -525,6 +543,7 @@ export function registerOcrHandlers() {
     };
 
     try {
+      beginEntityVerifyBatch();
       return await runExtractQueue({
         filePaths,
         type,
@@ -559,6 +578,8 @@ export function registerOcrHandlers() {
         skippedCount: 0,
         total: 0,
       };
+    } finally {
+      endEntityVerifyBatch();
     }
   });
 }

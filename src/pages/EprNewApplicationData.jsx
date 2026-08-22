@@ -1,6 +1,41 @@
 import React, { useEffect, useState } from 'react';
 import { FileText, Building2, Wrench, Factory, RefreshCw } from 'lucide-react';
 
+const FIELD_LABELS = {
+  legal_name: 'Legal Name',
+  trade_name: 'Trade Name',
+  type_of_business: 'Type of Business',
+  registered_address: 'Registered Address',
+  plant_unit_address: 'Plant / Unit Address',
+  company_pan: 'Company PAN',
+  unit_gst: 'Unit GSTIN',
+  type_of_company: 'Type of Company',
+  iec: 'IEC',
+  contact_name: 'Authorised Person Name',
+  designation: 'Designation',
+  mobile: 'Mobile',
+  email: 'Email',
+  contact_pan: 'Authorised Person PAN',
+  operating_states: 'Operating States / UTs',
+  has_production_facility: 'Has Production Facility',
+  capital_invested_crores: 'Capital Invested (₹ Cr)',
+  year_of_commencement: 'Year of Commencement',
+  products_details_file: 'Products Details (file)',
+  packaging_picture_file: 'Packaging Picture (file)',
+  pwm_compliance: 'PWM Rules Compliance',
+  packaging_thickness_microns: 'Packaging Thickness (microns)',
+  scraped_at: 'Last Scraped',
+  financial_year: 'Financial Year',
+  rigid_plastic_cat_i_mt: 'Rigid Plastic Cat-I (MT)',
+  flexible_plastic_cat_ii_mt: 'Flexible Plastic Cat-II (MT)',
+  mlp_plastic_cat_iii_mt: 'MLP Cat-III (MT)',
+  compostable_plastic_cat_iv_mt: 'Compostable Cat-IV (MT)',
+};
+
+function formatLabel(key) {
+  return FIELD_LABELS[key] || key.replace(/_/g, ' ');
+}
+
 export default function EprNewApplicationData() {
   const [data, setData] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -29,7 +64,7 @@ export default function EprNewApplicationData() {
     try {
       const result = await window.pwp.eprData.getNewApplicationData();
       if (!result || Object.keys(result).length === 0) {
-        setDebugMsg("Database query succeeded, but no tables starting with 'new_app' were found in pwp.db.");
+        setDebugMsg('No scraped new application data found. Run the scraper or `npm run db:sync`.');
       }
       setData(result);
     } catch (e) {
@@ -98,7 +133,9 @@ export default function EprNewApplicationData() {
   const renderTable = (tableData, title) => {
     if (!tableData || tableData.length === 0) return null;
     
-    const headers = Object.keys(tableData[0]).filter(k => k !== 'id' && k !== 'created_at' && k !== 'updated_at');
+    const headers = Object.keys(tableData[0]).filter(
+      (k) => !['id', 'created_at', 'updated_at', 'unit_gst', 'scraped_at'].includes(k),
+    );
     
     return (
       <div className="mt-8 mb-6 bg-white border border-[#dee2e6] rounded-sm shadow-sm overflow-hidden">
@@ -111,7 +148,7 @@ export default function EprNewApplicationData() {
               <tr className="bg-[#343a40] text-white text-[13px]">
                 {headers.map(h => (
                   <th key={h} className="px-4 py-2 font-bold uppercase border border-[#454d55]">
-                    {h.replace(/_/g, ' ')}
+                    {formatLabel(h)}
                   </th>
                 ))}
               </tr>
@@ -193,7 +230,7 @@ export default function EprNewApplicationData() {
                   .filter(([k]) => !['id', 'created_at', 'updated_at'].includes(k))
                   .map(([key, value]) => (
                     <React.Fragment key={key}>
-                      {renderField(key.replace(/_/g, ' '), value)}
+                      {renderField(formatLabel(key), value)}
                     </React.Fragment>
                 ))}
               </div>
@@ -214,7 +251,7 @@ export default function EprNewApplicationData() {
                   .filter(([k]) => !['id', 'created_at', 'updated_at'].includes(k))
                   .map(([key, value]) => (
                     <React.Fragment key={key}>
-                      {renderField(key.replace(/_/g, ' '), value)}
+                      {renderField(formatLabel(key), value)}
                     </React.Fragment>
                 ))}
               </div>

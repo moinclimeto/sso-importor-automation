@@ -6,48 +6,76 @@ import logo from '../assets/ClimetoTransparentLogo.png';
 import { Toast, useToast } from '../components/Toast.jsx';
 
 export default function LoginPage() {
-  const { login, isLoggedIn } = useAuth();
+  const { loginWithCredentials, isLoggedIn, loading: authLoading } = useAuth();
   const navigate = useNavigate();
   const [form, setForm] = useState({ email: '', password: '' });
   const [showPw, setShowPw] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [forceConfirm, setForceConfirm] = useState(null);
   const { toast, showToast, hideToast } = useToast();
 
   useEffect(() => {
-    if (isLoggedIn) navigate('/', { replace: true });
-  }, [isLoggedIn, navigate]);
+    if (!authLoading && isLoggedIn) navigate('/', { replace: true });
+  }, [isLoggedIn, authLoading, navigate]);
 
   const handleChange = (e) => {
     setForm({ ...form, [e.target.name]: e.target.value });
   };
 
-  const handleSubmit = (e) => {
-    e.preventDefault();
-
+  const submitLogin = async ({ force = false } = {}) => {
     if (!form.email.trim() || !form.password) {
       showToast('Please enter email and password', 'error');
       return;
     }
 
-    const validEmail = 'admin@pwp.com';
-    const validPassword = 'Pwp@123';
-
     setLoading(true);
+    setForceConfirm(null);
 
-    if (
-      form.email.trim() === validEmail &&
-      form.password === validPassword
-    ) {
-      login('local-token', { email: validEmail });
-      showToast('Login successful');
-      setTimeout(() => {
-        navigate('/cpcb-dashboard');
-      }, 700);
-    } else {
-      showToast('Invalid email or password', 'error');
+    try {
+      const result = await loginWithCredentials({
+        email: form.email.trim(),
+        password: form.password,
+        force,
+      });
+
+      if (result?.requiresConfirmation) {
+        setForceConfirm(
+          result.message
+          || 'Already logged in elsewhere. Do you want to log out from that device and continue logging in here?',
+        );
+        return;
+      }
+
+      if (result?.success) {
+        showToast(result.message || 'Login successful');
+        setTimeout(() => navigate('/doc-processor'), 700);
+        return;
+      }
+
+      showToast(result?.error || 'Invalid email or password', 'error');
+    } catch (err) {
+      showToast(err.message || 'Login failed', 'error');
+    } finally {
       setLoading(false);
     }
   };
+
+  const handleSubmit = (e) => {
+    e.preventDefault();
+    submitLogin();
+  };
+
+  const handleForceLogin = () => {
+    submitLogin({ force: true });
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 flex items-center justify-center">
+        <p className="text-white text-sm">Loading session…</p>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-900 via-green-900 to-slate-900 flex items-center justify-center p-4">
@@ -65,6 +93,30 @@ export default function LoginPage() {
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">
           <h2 className="text-xl font-semibold text-slate-800 mb-6">Sign in to your account</h2>
+
+          {forceConfirm ? (
+            <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 p-4 text-sm text-amber-900">
+              <p className="mb-3">{forceConfirm}</p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  className="flex-1 rounded-lg bg-green-600 px-3 py-2 text-white hover:bg-green-700 disabled:opacity-60"
+                  onClick={handleForceLogin}
+                  disabled={loading}
+                >
+                  Continue here
+                </button>
+                <button
+                  type="button"
+                  className="flex-1 rounded-lg border border-slate-300 px-3 py-2 text-slate-700 hover:bg-slate-50"
+                  onClick={() => setForceConfirm(null)}
+                  disabled={loading}
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          ) : null}
 
           <form onSubmit={handleSubmit} className="space-y-4">
             <div>

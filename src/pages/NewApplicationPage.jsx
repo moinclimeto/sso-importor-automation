@@ -907,18 +907,37 @@ export default function NewApplicationPage() {
     }
     setLoginOtpSubmitting(true);
     setLoginOtpError('');
-    setLoadingMsg('Verifying login OTP on CPCB portal...');
+    setLoadingMsg('Verifying login OTP and syncing portal data...');
     try {
-      const res = await window.pwp.scraper.submitLoginOtp({ otp });
+      const res = await window.pwp.scraper.submitLoginOtp({ otp, autoScrape: true });
 
-      if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      if (
+        res.success &&
+        (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' ||
+          res.step === 'APPLICATION_ONBOARDING_COMPLETE')
+      ) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        showToast(
-          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-          'success',
-          { duration: 15000 }
-        );
+        const scrapeOk = res.scrape?.success !== false;
+        if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && scrapeOk) {
+          showToast(
+            `Registration pipeline complete! Application started and portal data synced to the app.`,
+            'success',
+            { duration: 15000 }
+          );
+        } else if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && !scrapeOk) {
+          showToast(
+            `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}. You can retry from Dashboard.`,
+            'error',
+            { duration: 15000 }
+          );
+        } else {
+          showToast(
+            `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
+            'success',
+            { duration: 15000 }
+          );
+        }
         return;
       }
 
@@ -964,12 +983,14 @@ export default function NewApplicationPage() {
         setCaptchaImage('');
         setCaptchaSubmitting(false);
         setLoadingMsg('');
-        await saveRegistrationSnapshot(res.ceprId, res.screenshotPath);
+        const ceprId = res.ceprId || savedCeprId;
+        await saveRegistrationSnapshot(ceprId, res.screenshotPath);
         showToast(
-          `Registration complete! CEPR ID: ${res.ceprId || 'saved'}${res.screenshotPath ? ' — screenshot saved' : ''}. Click New Application to login.`,
+          `Registration complete! CEPR ID: ${ceprId || 'saved'}. Starting login for portal sync...`,
           'success',
           { duration: 15000 }
         );
+        await beginLoginFlow(ceprId);
         return;
       }
 
@@ -1034,7 +1055,7 @@ export default function NewApplicationPage() {
               CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
             </p>
             <p className="text-xs text-green-600 mt-1">
-              Fill <strong>Part A, Part B and Part C</strong> below, then click <strong>New Application</strong> to login with captcha &amp; OTP.
+              Fill <strong>Part A, Part B and Part C</strong> below. Login and portal sync will start automatically after registration captcha — enter login captcha &amp; OTP when prompted.
             </p>
           </div>
         </div>

@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 import { getApi } from '../utils/pwpApi.js';
@@ -24,7 +24,6 @@ const navLinks = [
     icon: Database,
     label: 'EPR Data',
     subLinks: [
-      // { to: '/production-entry', label: 'Production Data' },
       { to: '/epr-sales', label: 'Sales Data' },
       { to: '/epr-procurement', label: 'Procurement Data' },
       { to: '/epr-inventory', label: 'Inventory Data' },
@@ -33,12 +32,14 @@ const navLinks = [
     ]
   },
   */
-  // { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
-  // { to: '/registration-form', icon: FileScan, label: 'Registration' },
+  { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
+  { to: '/master-data', icon: Database, label: 'Master Data' },
+  { to: '/cpcb-registration', icon: FileScan, label: 'Registration' },
 ];
 
 const pageHeaders = {
-  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board' },
+  '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
+  '/master-data': { title: 'Master Data', subtitle: 'Company, supplier, packaging & MT reports' },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },
   '/epr-data': { title: 'EPR Scraped Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
   '/epr-inventory': { title: 'EPR Inventory Data', subtitle: 'Data synced from CPCB portal', showEprRefresh: true },
@@ -176,15 +177,20 @@ function MainLayoutInner() {
     }
   };
 
-  useEffect(() => {
-    if (window.pwp?.companies) {
-      window.pwp.companies.getAll().then(companies => {
-        if (companies && companies.length > 0) {
-          setMyCompany(companies[0]);
+    useEffect(() => {
+      const loadCompany = async () => {
+        if (!window.pwp?.companies) return;
+        try {
+          const companies = await window.pwp.companies.getAll();
+          if (companies?.length) {
+            setMyCompany(companies[0]);
+          }
+        } catch (err) {
+          console.error('Failed to load company profile', err);
         }
-      });
-    }
-  }, []);
+      };
+      loadCompany();
+    }, []);
 
   const handleSyncEpr = async () => {
     setSyncingEpr(true);
@@ -221,8 +227,8 @@ function MainLayoutInner() {
       : baseHeader.title);
   const headerSubtitle = pageHeader?.subtitle ?? baseHeader.subtitle;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 

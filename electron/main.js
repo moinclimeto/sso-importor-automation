@@ -8,7 +8,10 @@ try {
 } catch {
   /* older Node */
 }
-import { initDatabase } from './db/database.js';
+
+import { initDatabase, dbJsonPath } from './db/database.js';
+import { migrateFromJsonToSqlite } from './db/dataMigration.js';
+import { registerAuthHandlers } from './authHandlers.js';
 import { registerIpcHandlers } from './ipc/ipcHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -58,18 +61,19 @@ function createWindow() {
 
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5180');
-    // win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 }
 
 app.whenReady().then(async () => {
-  // Windows taskbar grouping / custom icon
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.climeto.pwp');
   }
-  await initDatabase();
+  await initDatabase(async (db) => {
+    await migrateFromJsonToSqlite(db, dbJsonPath);
+  });
+  registerAuthHandlers();
   registerIpcHandlers();
   createWindow();
 });

@@ -1,10 +1,12 @@
 /**
  * Match OCR invoice parties against Company Profile (GST / PAN / name).
- * Same idea as my-dashboard:
- * - Our company as buyer  → purchase
- * - Our company as seller → sale
- * - No match              → reject
+ * Classification (same on Procurement and Post Consumer upload):
+ * - Company GST on invoice seller → Sale (Post Consumer)
+ * - Company GST on invoice buyer  → Purchase (Procurement)
+ * - No company party match       → reject / skip
  */
+
+import { resolveBuyerAddressFields } from '../../shared/reviewEnrichment.js';
 
 export function normalizeGst(value) {
   return String(value || '')
@@ -63,12 +65,17 @@ export function extractInvoiceParties(row = {}) {
   const data = row.data || row;
   const qr = data._qr || data.extraction?._qr || data.qr || {};
   const extraction = data.extraction || {};
+  const recordType = String(data.record_type || '').toLowerCase();
+  const isPurchase = recordType.includes('purchase');
 
   let sellerGst = normalizeGst(
     qr.SellerGstin ||
       qr.sellerGstin ||
       data.seller_gst ||
       data.sellerGst ||
+      data.supplier_gst_number ||
+      data.vendor_gstin ||
+      data.supplier_gst ||
       extraction.sellerGst ||
       extraction.SellerGstin
   );
@@ -77,12 +84,15 @@ export function extractInvoiceParties(row = {}) {
       qr.buyerGstin ||
       data.buyer_gst ||
       data.buyerGst ||
+      data.buyer_gstin ||
       extraction.buyerGst ||
       extraction.BuyerGstin
   );
 
   let sellerName = String(
-    data.seller_name ||
+    data.supplier_name ||
+      data.vendor_name ||
+      data.seller_name ||
       data.sellerName ||
       extraction.sellerName ||
       qr.SellerNm ||
@@ -98,18 +108,16 @@ export function extractInvoiceParties(row = {}) {
       ''
   ).trim();
 
-  // Fallback from mapped EPR fields (purchase = seller counterparty, sale = buyer)
-  const recordType = String(data.record_type || '').toLowerCase();
-  if (!sellerGst && (recordType.includes('purchase') || data.supplier_gst_number || data.vendor_gstin)) {
-    sellerGst = normalizeGst(data.supplier_gst_number || data.vendor_gstin);
+  if (!sellerGst && isPurchase) {
+    sellerGst = normalizeGst(data.supplier_gst_number || data.vendor_gstin || data.supplier_gst);
   }
-  if (!buyerGst && (recordType.includes('sale') || data.customer_gstin || data.buyer_gst)) {
+  if (!buyerGst && !isPurchase) {
     buyerGst = normalizeGst(data.customer_gstin || data.buyer_gst);
   }
-  if (!sellerName && (data.supplier_name || data.vendor_name)) {
-    sellerName = String(data.supplier_name || data.vendor_name).trim();
+  if (!sellerName && isPurchase) {
+    sellerName = String(data.supplier_name || data.vendor_name || data.seller_name || '').trim();
   }
-  if (!buyerName && (data.entity_name || data.customer_name)) {
+  if (!buyerName && !isPurchase && (data.entity_name || data.customer_name)) {
     buyerName = String(data.entity_name || data.customer_name).trim();
   }
 
@@ -150,7 +158,7 @@ function matchCompanyByName(companies, name) {
  *   parties: object,
  * }}
  */
-export function matchInvoiceToCompanies(row, companies = []) {
+export function matchInvoiceToCompanies(row, companies = [], docType = null) {
   const list = Array.isArray(companies) ? companies.filter(Boolean) : [];
   const parties = extractInvoiceParties(row);
 
@@ -165,6 +173,7 @@ export function matchInvoiceToCompanies(row, companies = []) {
     };
   }
 
+  // GST match is authoritative — upload page (procurement vs sale) must not override this.
   const buyerHit = matchCompanyByGstOrPan(list, parties.buyerGst);
   const sellerHit = matchCompanyByGstOrPan(list, parties.sellerGst);
 
@@ -179,11 +188,23 @@ export function matchInvoiceToCompanies(row, companies = []) {
     };
   }
 
+  if (buyerHit && sellerHit && buyerHit.id !== sellerHit.id) {
+    // Two registered companies on one invoice — route to buyer company as purchase.
+    return {
+      decidedType: 'purchase',
+      rejected: false,
+      reason: `Matched "${buyerHit.name}" as buyer and "${sellerHit.name}" as seller → Procurement for ${buyerHit.name}`,
+      zone: 'buyer',
+      company: buyerHit,
+      parties,
+    };
+  }
+
   if (buyerHit) {
     return {
       decidedType: 'purchase',
       rejected: false,
-      reason: `Matched company as buyer (GST ${parties.buyerGst || companyPan(buyerHit)}) → Procurement`,
+      reason: `Matched company "${buyerHit.name}" as invoice buyer (GST ${parties.buyerGst || companyPan(buyerHit)}) → Procurement`,
       zone: 'buyer',
       company: buyerHit,
       parties,
@@ -194,26 +215,22 @@ export function matchInvoiceToCompanies(row, companies = []) {
     return {
       decidedType: 'sale',
       rejected: false,
-      reason: `Matched company as seller (GST ${parties.sellerGst || companyPan(sellerHit)}) → Post Consumer`,
+      reason: `Matched company "${sellerHit.name}" as invoice seller (GST ${parties.sellerGst || companyPan(sellerHit)}) → Post Consumer`,
       zone: 'seller',
       company: sellerHit,
       parties,
     };
   }
 
-  // Name fallback when GST missing on one side
-  const buyerNameHit = !parties.buyerGst
-    ? matchCompanyByName(list, parties.buyerName)
-    : null;
-  const sellerNameHit = !parties.sellerGst
-    ? matchCompanyByName(list, parties.sellerName)
-    : null;
+  // Name fallback when GST did not match any registered company
+  const buyerNameHit = matchCompanyByName(list, parties.buyerName);
+  const sellerNameHit = matchCompanyByName(list, parties.sellerName);
 
   if (buyerNameHit && !sellerNameHit) {
     return {
       decidedType: 'purchase',
       rejected: false,
-      reason: `Matched company name as buyer ("${buyerNameHit.name}") → Procurement`,
+      reason: `Matched company name "${buyerNameHit.name}" as buyer → Procurement`,
       zone: 'buyer',
       company: buyerNameHit,
       parties,
@@ -224,26 +241,26 @@ export function matchInvoiceToCompanies(row, companies = []) {
     return {
       decidedType: 'sale',
       rejected: false,
-      reason: `Matched company name as seller ("${sellerNameHit.name}") → Post Consumer`,
+      reason: `Matched company name "${sellerNameHit.name}" as seller → Post Consumer`,
       zone: 'seller',
       company: sellerNameHit,
       parties,
     };
   }
 
-  // Own GST appeared only as counterparty field wrongly — still no role → reject
+  const partyHint = [parties.sellerGst, parties.buyerGst].filter(Boolean).join(' / ') || 'no GST on invoice';
   return {
     decidedType: null,
     rejected: true,
     reason:
-      'Invoice GST/name did not match any Company Profile. Add the company or reject this invoice.',
+      `Invoice parties (${partyHint}) did not match any Company Profile GST. Skipped — only registered company invoices are processed.`,
     zone: '',
     company: null,
     parties,
   };
 }
 
-export function applyCompanyRoutingToResults(results = [], companies = []) {
+export function applyCompanyRoutingToResults(results = [], companies = [], docType = null) {
   return (results || []).map((r) => {
     if (!r?.ok || r.skipped) return r;
     
@@ -259,7 +276,7 @@ export function applyCompanyRoutingToResults(results = [], companies = []) {
       };
     }
     
-    const match = matchInvoiceToCompanies(r, companies);
+    const match = matchInvoiceToCompanies(r, companies, docType);
     const data = {
       ...(r.data || {}),
       company_id: match.company?.id ?? null,
@@ -282,9 +299,25 @@ export function applyCompanyRoutingToResults(results = [], companies = []) {
 
     if (match.decidedType === 'purchase') {
       data.record_type = 'purchase_epr';
+      data.supplier_name = match.parties.sellerName || data.supplier_name || data.vendor_name || '';
+      data.vendor_name = data.supplier_name;
+      data.supplier_gst_number = match.parties.sellerGst || data.supplier_gst_number || data.vendor_gstin || '';
+      data.vendor_gstin = data.supplier_gst_number;
       if (match.company?.gstin) data.buyer_gst = normalizeGst(match.company.gstin);
     } else if (match.decidedType === 'sale') {
       data.record_type = 'sale_epr';
+      const buyerName = match.parties.buyerName || data.entity_name || data.customer_name || data.buyer_name || '';
+      data.entity_name = buyerName;
+      data.customer_name = buyerName;
+      data.customer_gstin = match.parties.buyerGst || data.customer_gstin || data.buyer_gst || '';
+      if (match.company?.gstin) {
+        data.seller_gst = normalizeGst(match.company.gstin);
+      }
+      const buyerFields = resolveBuyerAddressFields(data);
+      if (buyerFields.address) data.address = buyerFields.address;
+      if (buyerFields.state) data.state = buyerFields.state;
+      if (buyerFields.district) data.district = buyerFields.district;
+      if (buyerFields.pin_code) data.pin_code = buyerFields.pin_code;
     }
 
     return {

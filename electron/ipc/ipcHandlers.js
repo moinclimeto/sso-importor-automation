@@ -1,10 +1,18 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from '../ocr_captcha/ocrHandlers.js';
+import { registerGstVerifyHandlers } from '../gstVerifyHandlers.js';
 import { initDatabase, getDb, dbJsonPath, getDbFilePath } from '../db/database.js';
 import { getRegistrationDetails, saveRegistrationDetails } from '../db/registrationDb.js';
 import { createLogger } from '../utils/logger.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
+import { lineItemsToPackagingSyncRows } from '../../shared/packagingMasterSync.js';
+import { buildProductMatchKey, normalizeLineUom, syncRecordMtFromLines } from '../../shared/procurementConversionFactor.js';
+import {
+  assertNoDuplicatePurchase,
+  assertNoDuplicateSale,
+  pruneOrphanFileHashes,
+} from '../invoiceDuplicateCheck.js';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
 import { storeProcessedUpload } from '../utils/storeUploadFile.js';
 import { registrationDocFileName } from '../utils/registrationDocFileName.js';
@@ -43,23 +51,14 @@ import {
   submitLoginOtp,
   resendLoginOtp,
 } from '../automation/cpcbLogin.js';
+import { runEprExtraction } from '../automation/cpcbEprScraper.js';
+import { upsertSupplierMasterRow } from '../supplierMasterService.js';
 import { setPaymentBypassNotifier, resolvePaymentBypass } from '../automation/paymentBypassBridge.js';
 import { setPortalToastEmitter, attachPortalToastWatcherToContext } from '../automation/portalToastWatcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-
-const { extractEprDashboard } = require("../../src/extractors/epr/dashboard.extractor.cjs");
-const { extractEprProfile } = require("../../src/extractors/epr/profile.extractor.cjs");
-const { extractEprApplication } = require("../../src/extractors/epr/application.extractor.cjs");
-const { extractEprMaterial } = require("../../src/extractors/epr/material.extractor.cjs");
-const { extractEprProduction } = require("../../src/extractors/epr/production.extractor.cjs");
-const { extractEprSales } = require("../../src/extractors/epr/sales.extractor.cjs");
-const { extractEprWallet } = require("../../src/extractors/epr/wallet.extractor.cjs");
-const { extractEprAnnualFiling } = require("../../src/extractors/epr/annual_filing.extractor.cjs");
-const { extractEprPaymentHistory } = require("../../src/extractors/epr/payment.extractor.cjs");
-const { extractEprNewApplication } = require("../../src/extractors/epr/new_application.extractor.cjs");
 
 const registrationLog = createLogger('registration-ipc', 'registration.log');
 
@@ -88,6 +87,7 @@ export function registerIpcHandlers() {
     await migrateFromJsonToSqlite(dbInstance, dbJsonPath);
   }).catch(err => console.error("Failed to initialize database:", err));
   registerOcrHandlers();
+  registerGstVerifyHandlers();
   warmupQrScanner().catch(() => {});
 
   // ─── EPR SCRAPED DATA (SQLITE) ────────────────────────────────
@@ -147,6 +147,60 @@ export function registerIpcHandlers() {
       console.error("Error fetching production_details:", err);
     }
     return [];
+  });
+
+  // ─── EXTRACTOR DATA ──────────────────────────────────────────
+  ipcMain.handle('extractor:getData', async () => {
+    const db = getDb();
+    try {
+      // Just return the most recent one
+      const row = await db.get('SELECT * FROM extractor_data ORDER BY id DESC LIMIT 1');
+      return row || null;
+    } catch (err) {
+      console.error('extractor:getData error', err);
+      return null;
+    }
+  });
+
+  ipcMain.handle('extractor:saveData', async (_, data) => {
+    const db = getDb();
+    try {
+      const existing = await db.get('SELECT id FROM extractor_data ORDER BY id DESC LIMIT 1');
+
+      // Sync with companies table so invoices can be matched and saved against a valid company_id
+      if (data.companyName) {
+        let companyExists;
+        if (data.gst) {
+          companyExists = await db.get('SELECT id FROM companies WHERE gstin = ?', data.gst);
+        } else {
+          companyExists = await db.get('SELECT id FROM companies WHERE name = ?', data.companyName);
+        }
+        
+        if (!companyExists) {
+          const gstStr = data.gst || '';
+          const panStr = gstStr.length >= 15 ? gstStr.substring(2, 12) : '';
+          await db.run(
+            'INSERT INTO companies (name, gstin, pan, entity_type, created_at) VALUES (?, ?, ?, ?, ?)',
+            data.companyName,
+            gstStr,
+            panStr,
+            'Other',
+            new Date().toISOString()
+          );
+        }
+      }
+
+      if (existing) {
+        await db.run('UPDATE extractor_data SET company_name = ?, gst = ? WHERE id = ?', data.companyName, data.gst || '', existing.id);
+        return { success: true, id: existing.id };
+      } else {
+        const res = await db.run('INSERT INTO extractor_data (company_name, gst) VALUES (?, ?)', data.companyName, data.gst || '');
+        return { success: true, id: res.lastID };
+      }
+    } catch (err) {
+      console.error('extractor:saveData error', err);
+      return { success: false, error: err.message };
+    }
   });
 
   // ─── SETTINGS ──────────────────────────────────────────────────
@@ -476,6 +530,10 @@ export function registerIpcHandlers() {
       conditions.push('p.invoice_date <= ?');
       params.push(filters.to_date);
     }
+    if (filters?.doc_status) {
+      conditions.push("(COALESCE(p.doc_status, 'inbox') = ?)");
+      params.push(filters.doc_status);
+    }
 
     if (conditions.length > 0) {
       query += ` WHERE ${conditions.join(' AND ')}`;
@@ -497,11 +555,213 @@ export function registerIpcHandlers() {
     });
   });
 
+async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, supplierGst, supplierName) {
+  if (!companyId || !lineItems || !lineItems.length) return;
+  const now = new Date().toISOString();
+  const partyName = String(supplierName || '').trim();
+  for (const item of lineItems) {
+    if (!item.productDescription && !item.product && !item.item_name) continue;
+
+    const productDesc = item.productDescription || item.product || item.item_name || '';
+    const uomFields = normalizeLineUom(item);
+    const uom = uomFields.unit || item.uom || item.unit || '';
+    const hsn = String(item.hsn || item.hsn_code || '').replace(/\D/g, '') || String(item.hsn || item.hsn_code || '').trim();
+    const productMatchKey = buildProductMatchKey(productDesc, hsn);
+
+    const existing = await db.get(
+      'SELECT id FROM packaging_master WHERE company_id = ? AND list_type = ? AND product_match_key = ?',
+      [companyId, listType, productMatchKey]
+    );
+
+    if (!existing) {
+      await db.run(`
+        INSERT INTO packaging_master (
+          company_id, list_type, product_description, product_match_key, hsn, uom,
+          supplier_gst, supplier_name, plastic_category, plastic_material,
+          is_active, source, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'upload', ?, ?)
+      `, [
+        companyId, listType, productDesc, productMatchKey, hsn, uom,
+        supplierGst || '', partyName, item.plasticCategory || '', item.plasticMaterial || '',
+        now, now
+      ]);
+    } else if (partyName) {
+      await db.run(
+        `UPDATE packaging_master SET supplier_name = ?, supplier_gst = COALESCE(NULLIF(?, ''), supplier_gst), updated_at = ? WHERE id = ?`,
+        [partyName, supplierGst || '', now, existing.id]
+      );
+    }
+  }
+}
+
+/** Review save → upsert Category, Material, UOM, Manual/Auto-Master CF into packaging_master. */
+async function syncReviewLinesToPackagingMaster(db, companyId, listType, lineItems, supplierGst, supplierName) {
+  if (!companyId || !lineItems?.length) return { synced: 0 };
+
+  const rows = lineItemsToPackagingSyncRows(lineItems, {
+    companyId,
+    listType: listType || 'gpl',
+    supplierGst,
+    supplierName,
+    source: 'review',
+  });
+  if (!rows.length) return { synced: 0 };
+
+  const now = new Date().toISOString();
+  let synced = 0;
+
+  for (const row of rows) {
+    const existing = await db.get(
+      'SELECT id FROM packaging_master WHERE company_id = ? AND list_type = ? AND product_match_key = ?',
+      [row.company_id, row.list_type, row.product_match_key],
+    );
+
+    if (!existing) {
+      await db.run(
+        `INSERT INTO packaging_master (
+          company_id, list_type, product_description, product_match_key, hsn, uom,
+          supplier_gst, supplier_name, plastic_category, plastic_material,
+          other_plastic_material, recycled_percent, conversion_factor, cf_base_source,
+          value_in_mt, source, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?)`,
+        [
+          row.company_id,
+          row.list_type,
+          row.product_description,
+          row.product_match_key,
+          row.hsn,
+          row.uom,
+          row.supplier_gst,
+          row.supplier_name,
+          row.plastic_category,
+          row.plastic_material,
+          row.other_plastic_material || null,
+          row.recycled_percent,
+          row.conversion_factor,
+          row.cf_base_source,
+          row.value_in_mt,
+          row.source,
+          now,
+          now,
+        ],
+      );
+    } else {
+      await db.run(
+        `UPDATE packaging_master SET
+          product_description = COALESCE(NULLIF(?, ''), product_description),
+          hsn = COALESCE(NULLIF(?, ''), hsn),
+          uom = COALESCE(NULLIF(?, ''), uom),
+          supplier_gst = COALESCE(NULLIF(?, ''), supplier_gst),
+          supplier_name = COALESCE(NULLIF(?, ''), supplier_name),
+          plastic_category = COALESCE(NULLIF(?, ''), plastic_category),
+          plastic_material = COALESCE(NULLIF(?, ''), plastic_material),
+          other_plastic_material = COALESCE(NULLIF(?, ''), other_plastic_material),
+          recycled_percent = COALESCE(?, recycled_percent),
+          conversion_factor = CASE WHEN ? IS NOT NULL THEN ? ELSE conversion_factor END,
+          cf_base_source = COALESCE(NULLIF(?, ''), cf_base_source),
+          value_in_mt = COALESCE(?, value_in_mt),
+          source = ?,
+          updated_at = ?
+        WHERE id = ?`,
+        [
+          row.product_description,
+          row.hsn,
+          row.uom,
+          row.supplier_gst,
+          row.supplier_name,
+          row.plastic_category,
+          row.plastic_material,
+          row.other_plastic_material,
+          row.recycled_percent,
+          row.conversion_factor,
+          row.conversion_factor,
+          row.cf_base_source,
+          row.value_in_mt,
+          row.source,
+          now,
+          existing.id,
+        ],
+      );
+    }
+
+    const saved = await db.get(
+      'SELECT * FROM packaging_master WHERE company_id = ? AND list_type = ? AND product_match_key = ?',
+      [row.company_id, row.list_type, row.product_match_key],
+    );
+    if (saved) {
+      await cascadePackagingMasterUpdates(db, companyId, saved);
+      synced += 1;
+    }
+  }
+
+  return { synced };
+}
+
+async function syncSupplierMasterFromRecord(
+  db,
+  companyId,
+  gstNumber,
+  tradeName,
+  legalName,
+  address,
+  mobile,
+  entityType,
+  registrationType,
+  source = 'invoice_review',
+) {
+  if (!companyId || !gstNumber) return;
+  try {
+    await upsertSupplierMasterRow(
+      db,
+      {
+        company_id: companyId,
+        gst_number: gstNumber,
+        trade_name: tradeName || '',
+        legal_name: legalName || '',
+        address: address || '',
+        mobile: mobile || '',
+        entity_type: entityType || '',
+        registration_type: registrationType || 'Unregistered',
+        source,
+      },
+      { cascadeFn: cascadeSupplierMasterUpdates, fromImport: false },
+    );
+  } catch (e) {
+    console.warn('[supplierMaster] sync from record skipped:', e.message);
+  }
+}
+
+
   ipcMain.handle('purchases:add', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicatePurchase(db, data);
+
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+    processedData = syncRecordMtFromLines(processedData, 'purchase');
+
+    await autoPopulatePackagingMaster(
+      db,
+      processedData.company_id,
+      'gpl',
+      processedData.lineItems,
+      processedData.supplier_gst_number || processedData.vendor_gstin,
+      processedData.supplier_name || processedData.vendor_name
+    );
+
+    await syncSupplierMasterFromRecord(
+      db,
+      processedData.company_id,
+      processedData.supplier_gst_number || processedData.vendor_gstin,
+      processedData.supplier_name || processedData.vendor_name,
+      '',
+      processedData.address_line_1,
+      processedData.supplier_mobile_number,
+      processedData.entity_type,
+      processedData.registration_type,
+    );
+
     const stmt = await db.prepare(`
       INSERT INTO purchases (
         company_id, record_type, category_of_plastic, supplier_name, address_line_1,
@@ -509,8 +769,10 @@ export function registerIpcHandlers() {
         supplier_gst_number, supplier_mobile_number, procurement_date, quantity_mt,
         invoice_number, hsn_code, invoice_filename, vendor_name, vendor_gstin, invoice_no,
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
-        _source_fields, _routing, file_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        _source_fields, _routing, file_hash, created_at, registration_type, entity_type,
+        financial_year, plastic_type, recycled_plastic_percent, country, irn_no, account_number, ifsc_code,
+        conversion_factor, doc_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -540,12 +802,23 @@ export function registerIpcHandlers() {
       processedData.quantity,
       processedData.unit,
       processedData.total_amount,
-      processedData.lineItems ? JSON.stringify(processedData.lineItems) : null,
-      processedData.extraction ? JSON.stringify(processedData.extraction) : null,
-      processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
-      processedData._routing ? JSON.stringify(processedData._routing) : null,
+      JSON.stringify(processedData.lineItems || []),
+      JSON.stringify(processedData.extraction || {}),
+      JSON.stringify(processedData._source_fields || {}),
+      JSON.stringify(processedData._routing || {}),
       processedData.fileHash || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      processedData.registration_type,
+      processedData.entity_type,
+      processedData.financial_year,
+      processedData.plastic_type,
+      processedData.recycled_plastic_percent,
+      processedData.country,
+      processedData.irn_no || null,
+      processedData.account_number || null,
+      processedData.ifsc_code || null,
+      processedData.conversion_factor ?? null,
+      processedData.doc_status || 'inbox'
     );
     await stmt.finalize();
 
@@ -556,9 +829,19 @@ export function registerIpcHandlers() {
     return { id: result.lastID, ...processedData };
   });
 
+  ipcMain.handle('purchases:updateStatus', async (_, { id, doc_status }) => {
+    const db = getDb();
+    if (!id || !doc_status) return { success: false, error: 'Missing id or doc_status' };
+    await db.run('UPDATE purchases SET doc_status = ? WHERE id = ?', [doc_status, id]);
+    return { success: true };
+  });
+
   ipcMain.handle('purchases:update', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicatePurchase(db, data, { excludeId: data.id });
+
     const oldData = await db.get('SELECT file_hash FROM purchases WHERE id = ?', data.id);
+    const synced = syncRecordMtFromLines(data, 'purchase');
 
     const stmt = await db.prepare(`
       UPDATE purchases SET
@@ -567,69 +850,103 @@ export function registerIpcHandlers() {
         supplier_gst_number = ?, supplier_mobile_number = ?, procurement_date = ?, quantity_mt = ?,
         invoice_number = ?, hsn_code = ?, invoice_filename = ?, vendor_name = ?, vendor_gstin = ?, invoice_no = ?,
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
-        _source_fields = ?, _routing = ?, file_hash = ?
+        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?,
+        financial_year = ?, plastic_type = ?, recycled_plastic_percent = ?, country = ?,
+        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?, doc_status = ?
       WHERE id = ?
     `);
 
     await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.category_of_plastic,
-      data.supplier_name,
-      data.address_line_1,
-      data.address_line_2,
-      data.state,
-      data.city,
-      data.pin_code,
-      data.buyer_gst,
-      data.is_supplier_gst_available,
-      data.supplier_gst_number,
-      data.supplier_mobile_number,
-      data.procurement_date,
-      data.quantity_mt,
-      data.invoice_number,
-      data.hsn_code,
-      data.invoice_filename,
-      data.vendor_name,
-      data.vendor_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
-      data.id
+      synced.company_id,
+      synced.record_type,
+      synced.category_of_plastic,
+      synced.supplier_name,
+      synced.address_line_1,
+      synced.address_line_2,
+      synced.state,
+      synced.city,
+      synced.pin_code,
+      synced.buyer_gst,
+      synced.is_supplier_gst_available,
+      synced.supplier_gst_number,
+      synced.supplier_mobile_number,
+      synced.procurement_date,
+      synced.quantity_mt,
+      synced.invoice_number,
+      synced.hsn_code,
+      synced.invoice_filename,
+      synced.vendor_name,
+      synced.vendor_gstin,
+      synced.invoice_no,
+      synced.invoice_date,
+      synced.item_name,
+      synced.quantity,
+      synced.unit,
+      synced.total_amount,
+      synced.lineItems ? JSON.stringify(synced.lineItems) : null,
+      synced.extraction ? JSON.stringify(synced.extraction) : null,
+      synced._source_fields ? JSON.stringify(synced._source_fields) : null,
+      synced._routing ? JSON.stringify(synced._routing) : null,
+      synced.fileHash || null,
+      synced.entity_type,
+      synced.registration_type,
+      synced.financial_year,
+      synced.plastic_type,
+      synced.recycled_plastic_percent,
+      synced.country,
+      synced.irn_no || null,
+      synced.account_number || null,
+      synced.ifsc_code || null,
+      synced.conversion_factor ?? null,
+      synced.doc_status || 'inbox',
+      synced.id
     );
     await stmt.finalize();
 
     // Update fileHash in the file_hashes table if it changed
-    if (data.fileHash && oldData.file_hash !== data.fileHash) {
-      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
-      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (synced.fileHash && oldData.file_hash !== synced.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', synced.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', synced.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
       }
-    } else if (data.fileHash && !oldData.file_hash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    } else if (synced.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
     }
 
-    return { success: true };
+    const packagingResult = await syncReviewLinesToPackagingMaster(
+      db,
+      synced.company_id,
+      'gpl',
+      synced.lineItems || [],
+      synced.supplier_gst_number || synced.vendor_gstin,
+      synced.supplier_name || synced.vendor_name,
+    );
+
+    await syncSupplierMasterFromRecord(
+      db,
+      synced.company_id,
+      synced.supplier_gst_number || synced.vendor_gstin,
+      synced.supplier_name || synced.vendor_name,
+      '',
+      synced.address_line_1,
+      synced.supplier_mobile_number,
+      synced.entity_type,
+      synced.registration_type,
+    );
+
+    return {
+      success: true,
+      packagingSynced: packagingResult.synced || 0,
+      lineItems: synced.lineItems,
+      quantity_mt: synced.quantity_mt,
+      quantity: synced.quantity,
+    };
   });
 
   ipcMain.handle('purchases:delete', async (_, id) => {
     const db = getDb();
-    const record = await db.get('SELECT file_hash FROM purchases WHERE id = ?', id);
     await db.run('DELETE FROM purchases WHERE id = ?', id);
-    if (record?.file_hash) {
-      const otherUses = await db.get('SELECT 1 FROM purchases WHERE file_hash = ? UNION ALL SELECT 1 FROM sales WHERE file_hash = ?', record.file_hash, record.file_hash);
-      if (!otherUses) {
-        await db.run('DELETE FROM file_hashes WHERE hash = ?', record.file_hash);
-      }
-    }
+    await pruneOrphanFileHashes(db);
     return { success: true };
   });
 
@@ -692,6 +1009,10 @@ export function registerIpcHandlers() {
       conditions.push('s.invoice_date <= ?');
       params.push(filters.to_date);
     }
+    if (filters?.doc_status) {
+      conditions.push("(COALESCE(s.doc_status, 'inbox') = ?)");
+      params.push(filters.doc_status);
+    }
 
     if (conditions.length > 0) {
       query += ` WHERE ${conditions.join(' AND ')}`;
@@ -715,9 +1036,34 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('sales:add', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicateSale(db, data);
+
     let processedData = withLocalPdfInSourceFields(
       await storeInvoicePdfLocally({ ...data })
     );
+    processedData = syncRecordMtFromLines(processedData, 'sale');
+
+    await autoPopulatePackagingMaster(
+      db,
+      processedData.company_id,
+      'gpl',
+      processedData.lineItems,
+      processedData.customer_gstin || processedData.buyer_gst,
+      processedData.customer_name || processedData.entity_name
+    );
+
+    await syncSupplierMasterFromRecord(
+      db,
+      processedData.company_id,
+      processedData.customer_gstin || processedData.buyer_gst,
+      processedData.customer_name || processedData.entity_name,
+      '',
+      processedData.address,
+      processedData.mobile_number,
+      processedData.entity_type,
+      processedData.registration_type,
+    );
+
     const stmt = await db.prepare(`
       INSERT INTO sales (
         company_id, record_type, s_no, category_of_plastic, process_code,
@@ -726,8 +1072,8 @@ export function registerIpcHandlers() {
         address, state, district, account_number, ifsc_code, gst_other_charges,
         invoice_file_name, application_number, customer_name, customer_gstin, invoice_no,
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
-        _source_fields, _routing, file_hash, created_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        _source_fields, _routing, file_hash, created_at, entity_type, financial_year, mobile_number, doc_status
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -765,7 +1111,11 @@ export function registerIpcHandlers() {
       processedData._source_fields ? JSON.stringify(processedData._source_fields) : null,
       processedData._routing ? JSON.stringify(processedData._routing) : null,
       processedData.fileHash || null,
-      new Date().toISOString()
+      new Date().toISOString(),
+      processedData.entity_type,
+      processedData.financial_year,
+      processedData.mobile_number,
+      processedData.doc_status || 'inbox'
     );
     await stmt.finalize();
 
@@ -776,9 +1126,19 @@ export function registerIpcHandlers() {
     return { id: result.lastID, ...processedData };
   });
 
+  ipcMain.handle('sales:updateStatus', async (_, { id, doc_status }) => {
+    const db = getDb();
+    if (!id || !doc_status) return { success: false, error: 'Missing id or doc_status' };
+    await db.run('UPDATE sales SET doc_status = ? WHERE id = ?', [doc_status, id]);
+    return { success: true };
+  });
+
   ipcMain.handle('sales:update', async (_, data) => {
     const db = getDb();
+    await assertNoDuplicateSale(db, data, { excludeId: data.id });
+
     const oldData = await db.get('SELECT file_hash FROM sales WHERE id = ?', data.id);
+    const synced = syncRecordMtFromLines(data, 'sale');
 
     const stmt = await db.prepare(`
       UPDATE sales SET
@@ -788,60 +1148,91 @@ export function registerIpcHandlers() {
         address = ?, state = ?, district = ?, account_number = ?, ifsc_code = ?, gst_other_charges = ?,
         invoice_file_name = ?, application_number = ?, customer_name = ?, customer_gstin = ?, invoice_no = ?,
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
-        _source_fields = ?, _routing = ?, file_hash = ?
+        _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, financial_year = ?, mobile_number = ?, doc_status = ?
       WHERE id = ?
     `);
 
     await stmt.run(
-      data.company_id,
-      data.record_type,
-      data.s_no,
-      data.category_of_plastic,
-      data.process_code,
-      data.plastic_type,
-      data.product_type,
-      data.recycled_plastic_percent,
-      data.conversion_factor,
-      data.available_quantity_mt,
-      data.quantity_sold_mt,
-      data.registration_type,
-      data.entity_name,
-      data.address,
-      data.state,
-      data.district,
-      data.account_number,
-      data.ifsc_code,
-      data.gst_other_charges,
-      data.invoice_file_name,
-      data.application_number,
-      data.customer_name,
-      data.customer_gstin,
-      data.invoice_no,
-      data.invoice_date,
-      data.item_name,
-      data.quantity,
-      data.unit,
-      data.total_amount,
-      data.lineItems ? JSON.stringify(data.lineItems) : null,
-      data.extraction ? JSON.stringify(data.extraction) : null,
-      data._source_fields ? JSON.stringify(data._source_fields) : null,
-      data._routing ? JSON.stringify(data._routing) : null,
-      data.fileHash || null,
-      data.id
+      synced.company_id,
+      synced.record_type,
+      synced.s_no,
+      synced.category_of_plastic,
+      synced.process_code,
+      synced.plastic_type,
+      synced.product_type,
+      synced.recycled_plastic_percent,
+      synced.conversion_factor,
+      synced.available_quantity_mt,
+      synced.quantity_sold_mt,
+      synced.registration_type,
+      synced.entity_name,
+      synced.address,
+      synced.state,
+      synced.district,
+      synced.account_number,
+      synced.ifsc_code,
+      synced.gst_other_charges,
+      synced.invoice_file_name,
+      synced.application_number,
+      synced.customer_name,
+      synced.customer_gstin,
+      synced.invoice_no,
+      synced.invoice_date,
+      synced.item_name,
+      synced.quantity,
+      synced.unit,
+      synced.total_amount,
+      synced.lineItems ? JSON.stringify(synced.lineItems) : null,
+      synced.extraction ? JSON.stringify(synced.extraction) : null,
+      synced._source_fields ? JSON.stringify(synced._source_fields) : null,
+      synced._routing ? JSON.stringify(synced._routing) : null,
+      synced.fileHash || null,
+      synced.entity_type,
+      synced.financial_year,
+      synced.mobile_number,
+      synced.doc_status || 'inbox',
+      synced.id
     );
     await stmt.finalize();
 
     // Update fileHash in the file_hashes table if it changed
-    if (data.fileHash && oldData.file_hash !== data.fileHash) {
-      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', data.fileHash, oldData.file_hash);
-      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', data.fileHash))) {
-        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    if (synced.fileHash && oldData.file_hash !== synced.fileHash) {
+      await db.run('UPDATE file_hashes SET hash = ? WHERE hash = ?', synced.fileHash, oldData.file_hash);
+      if (!(await db.get('SELECT 1 FROM file_hashes WHERE hash = ?', synced.fileHash))) {
+        await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
       }
-    } else if (data.fileHash && !oldData.file_hash) {
-      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', data.fileHash);
+    } else if (synced.fileHash && !oldData.file_hash) {
+      await db.run('INSERT OR IGNORE INTO file_hashes (hash) VALUES (?)', synced.fileHash);
     }
 
-    return { success: true };
+    const packagingResult = await syncReviewLinesToPackagingMaster(
+      db,
+      synced.company_id,
+      'gpl',
+      synced.lineItems || [],
+      synced.customer_gstin || synced.buyer_gst,
+      synced.customer_name || synced.entity_name,
+    );
+
+    await syncSupplierMasterFromRecord(
+      db,
+      synced.company_id,
+      synced.customer_gstin || synced.buyer_gst,
+      synced.customer_name || synced.entity_name,
+      '',
+      synced.address,
+      synced.mobile_number,
+      synced.entity_type,
+      synced.registration_type,
+    );
+
+    return {
+      success: true,
+      packagingSynced: packagingResult.synced || 0,
+      lineItems: synced.lineItems,
+      quantity_sold_mt: synced.quantity_sold_mt,
+      quantity: synced.quantity,
+    };
   });
 
   ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {
@@ -863,14 +1254,8 @@ export function registerIpcHandlers() {
 
   ipcMain.handle('sales:delete', async (_, id) => {
     const db = getDb();
-    const record = await db.get('SELECT file_hash FROM sales WHERE id = ?', id);
     await db.run('DELETE FROM sales WHERE id = ?', id);
-    if (record?.file_hash) {
-      const otherUses = await db.get('SELECT 1 FROM purchases WHERE file_hash = ? UNION ALL SELECT 1 FROM sales WHERE file_hash = ?', record.file_hash, record.file_hash);
-      if (!otherUses) {
-        await db.run('DELETE FROM file_hashes WHERE hash = ?', record.file_hash);
-      }
-    }
+    await pruneOrphanFileHashes(db);
     return { success: true };
   });
 
@@ -1024,7 +1409,8 @@ export function registerIpcHandlers() {
   ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const otp = typeof payload === 'string' ? payload : payload?.otp;
-    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg));
+    const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
+    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg), { autoScrape });
   });
 
   ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {
@@ -1771,160 +2157,41 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:runEpr', async () => {
-    let originalWriteFileSync;
     try {
-      console.log("Starting EPR scraper...");
-      
-      const memoryDataMap = {};
-      originalWriteFileSync = fs.writeFileSync;
-      fs.writeFileSync = (filePath, data, ...args) => {
-          if (typeof filePath === 'string' && filePath.endsWith('.json') && (filePath.includes('data') || filePath.includes('\\data\\'))) {
-              const filename = path.basename(filePath);
-              console.log(`\n--- [SCRAPED DATA IN MEMORY] ${filename} ---`);
-              let parsed = data;
-              try {
-                  parsed = JSON.parse(data);
-                  console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
-              } catch(e) {}
-              memoryDataMap[filename] = parsed;
-              // Skipping originalWriteFileSync to keep data exclusively in memory
-          } else {
-              originalWriteFileSync(filePath, data, ...args);
-          }
-      };
+      console.log('Starting EPR scraper...');
 
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
-      const context = await chromium.launchPersistentContext(userDataDir, { 
-          headless: false,
-          acceptDownloads: true,
-          viewport: null,
-          args: ['--start-maximized'],
-          channel: 'chrome' // Use system Chrome to bypass AppLocker policies
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        acceptDownloads: true,
+        viewport: null,
+        args: ['--start-maximized'],
+        channel: 'chrome',
       });
       const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
       await page.bringToFront();
 
       await page.goto('https://epr.cpcb.gov.in');
-      
-      console.log("⏳ Waiting for you to login... (Please login manually. Script will continue when URL changes to dashboard)");
+
+      console.log('Waiting for manual login... (continues when URL changes to dashboard)');
       try {
-          await page.waitForURL('**/*dashboard*', { timeout: 300000 }); // 5 minutes to login
-          console.log("🔓 Login detected! Proceeding with extraction...");
-  
-          console.log("🖱️ Clicking the first 'Open' button on Waste Category card...");
-          const firstOpenBtn = page.locator('app-waste-category button').filter({ hasText: /Open/i }).first();
-          await firstOpenBtn.waitFor({ state: 'visible', timeout: 15000 });
-          await firstOpenBtn.click();
-          await page.waitForTimeout(1000);
-  
-          console.log("🔘 Selecting the 'PWP' application radio button...");
-          try {
-            // Find the radio button explicitly by XPath
-            const pwpRadioBtn = page.locator('xpath=/html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr[2]/td[1]/div/input');
-            await pwpRadioBtn.waitFor({ state: 'visible', timeout: 3000 });
-            await pwpRadioBtn.click();
-          } catch (e) {
-            console.log("⚠️ PWP radio button not found by XPath, falling back to first radio button...");
-            const firstRadioBtn = page.locator('app-modal-frame input[type="radio"]').first();
-            await firstRadioBtn.click();
-          }
-          await page.waitForTimeout(1000);
-  
-          console.log("🖱️ Clicking the 'Proceed/Open' button in the modal...");
-          // In the modal, find the button that is inside an app-button component
-          const modalOpenBtn = page.locator('app-modal-frame app-button button').first();
-          await modalOpenBtn.click();
-          await page.waitForTimeout(3000); // Give it a moment to load the next page
-  
-          console.log("🖱️ Checking if 'Select Unit' dropdown exists...");
-          // We use try/catch because if a PWP user only has 1 unit, this dropdown won't exist!
-          try {
-              const selectUnitBtn = page.locator('button[title="Select Unit"]').first();
-              // Short timeout because it might not exist
-              await selectUnitBtn.waitFor({ state: 'visible', timeout: 8000 });
-              await selectUnitBtn.click();
-              await page.waitForTimeout(1500);
-      
-              console.log("🖱️ Clicking the specific unit card...");
-              const unitCard = page.locator('button.unit-card').first();
-              await unitCard.waitFor({ state: 'visible', timeout: 5000 });
-              await unitCard.click();
-              await page.waitForTimeout(3000); // Wait for the dashboard to refresh
-          } catch (e) {
-              console.log("⏭️ No 'Select Unit' dropdown found (likely single-unit user). Skipping unit selection...");
-          }
-  
+        await page.waitForURL('**/*dashboard*', { timeout: 300000 });
+        console.log('Login detected! Proceeding with extraction...');
       } catch (e) {
-          console.error("❌ Error during login or post-login clicks:", e.message);
-          console.log("Let's try running extractors anyway...");
-      }
-      const allData = {};
-      const dataDir = path.join(__dirname, '..', 'data');
-      if (!fs.existsSync(dataDir)) {
-          fs.mkdirSync(dataDir, { recursive: true });
+        console.error('Login wait error:', e.message);
+        console.log('Trying extractors anyway...');
       }
 
-      const saveJson = (filename, data) => {
-        // Keep data in memory, do not write to disk
-        memoryDataMap[filename] = data;
-      };
+      const result = await runEprExtraction(page, {
+        onLog: (msg) => console.log(msg),
+      });
 
-      allData.dashboard = await extractEprDashboard(page);
-      saveJson('epr_dashboard.json', allData.dashboard);
-
-      allData.profile = await extractEprProfile(page);
-      saveJson('epr_profile.json', allData.profile);
-
-      allData.application = await extractEprApplication(page);
-      saveJson('epr_application.json', allData.application);
-
-      allData.material = await extractEprMaterial(page);
-      saveJson('epr_material.json', allData.material);
-
-      allData.production = await extractEprProduction(page);
-      await saveJson('epr_production.json', allData.production);
-
-      allData.sales = await extractEprSales(page);
-      saveJson('epr_sales.json', allData.sales);
-
-      allData.wallet = await extractEprWallet(page);
-      saveJson('epr_wallet.json', allData.wallet);
-
-      allData.annualFiling = await extractEprAnnualFiling(page);
-      saveJson('epr_annual_filing.json', allData.annualFiling);
-
-      allData.payment = await extractEprPaymentHistory(page);
-      saveJson('epr_payment.json', allData.payment);
-
-      allData.newApplication = await extractEprNewApplication(page);
-      saveJson('epr_new_application.json', allData.newApplication);
-
-      saveJson('scraped_data_latest.json', allData);
-
-      // Commenting out close so you can inspect the browser
-      // await browser.close();
-      console.log("EPR Scraping completed successfully.");
-      
-      // Auto-sync JSONs to SQLite
-      try {
-          const syncPath = path.join(__dirname, '..', 'sync_to_sqlite.js');
-          const syncModule = await import('file://' + syncPath.replace(/\\/g, '/'));
-          if (syncModule.default) {
-              await syncModule.default(memoryDataMap);
-          }
-      } catch (err) {
-          console.error("Failed to sync to SQLite:", err);
-          throw err;
-      }
-
-      return { success: true, data: allData };
+      return result.success
+        ? { success: true, data: result.data }
+        : { success: false, error: result.error || 'Scraper failed' };
     } catch (error) {
-      console.error("Scraper failed:", error);
+      console.error('Scraper failed:', error);
       return { success: false, error: error.message };
-    } finally {
-      if (originalWriteFileSync) {
-          fs.writeFileSync = originalWriteFileSync;
-      }
     }
   });
 
@@ -2249,27 +2516,49 @@ export function registerIpcHandlers() {
   ipcMain.handle('eprData:getNewApplicationData', async () => {
     const db = getDb();
     try {
-      // Find all tables related to new_application
-      const tables = await db.all("SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'new_app%');");
       const result = {};
-      
+
+      const appRow = await db.get(
+        'SELECT * FROM scraped_new_application ORDER BY scraped_at DESC LIMIT 1',
+      );
+      if (appRow) {
+        const { id, ...app } = appRow;
+        result.new_application_part_a = app;
+        result.new_application_part_b = app;
+      }
+
+      const plasticRows = await db.all(
+        'SELECT financial_year, rigid_plastic_cat_i_mt, flexible_plastic_cat_ii_mt, mlp_plastic_cat_iii_mt, compostable_plastic_cat_iv_mt, unit_gst, scraped_at FROM scraped_plastic_consumed ORDER BY financial_year',
+      );
+      if (plasticRows.length) {
+        result.new_app_plastic_consumed_tpa = plasticRows;
+      }
+
+      if (result.new_application_part_a) return result;
+
+      // Legacy fallback: old new_app* tables
+      const tables = await db.all(
+        "SELECT name FROM sqlite_master WHERE type='table' AND (name LIKE 'new_app%');",
+      );
       for (const t of tables) {
         const rows = await db.all(`SELECT * FROM ${t.name}`);
-        // Remove internal/sqlite fields like _internal_id and file_source
-        const cleanRows = rows.map(row => {
+        const cleanRows = rows.map((row) => {
           const { _internal_id, file_source, ...rest } = row;
           return rest;
         });
-        
-        if (t.name === 'new_application_part_a' || t.name === 'new_application_part_b' || t.name === 'new_application_part_c') {
+        if (
+          t.name === 'new_application_part_a' ||
+          t.name === 'new_application_part_b' ||
+          t.name === 'new_application_part_c'
+        ) {
           result[t.name] = cleanRows.length > 0 ? cleanRows[0] : null;
         } else {
-          result[t.name] = cleanRows; // Arrays for nested tables
+          result[t.name] = cleanRows;
         }
       }
       return result;
     } catch (e) {
-      console.error("Failed to fetch new application data:", e);
+      console.error('Failed to fetch new application data:', e);
       return {};
     }
   });
@@ -2295,6 +2584,389 @@ export function registerIpcHandlers() {
     } catch (err) {
       console.error('Error opening document:', err);
       return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('supplierMaster:getAll', async (_, filters) => {
+    const db = getDb();
+    return await db.all('SELECT * FROM supplier_master ORDER BY created_at DESC');
+  });
+
+  ipcMain.handle('supplierMaster:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    try {
+      const result = await db.run(
+        `INSERT INTO supplier_master (
+          company_id, gst_number, trade_name, address, mobile, entity_type, registration_type,
+          registration_number, state, pan, source, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.company_id,
+          data.gst_number,
+          data.trade_name,
+          data.address,
+          data.mobile,
+          data.entity_type,
+          data.registration_type,
+          data.registration_number || null,
+          data.state || null,
+          data.pan || null,
+          data.source || 'manual',
+          1,
+          created_at,
+          created_at,
+        ],
+      );
+      return { success: true, id: result.lastID };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('supplierMaster:update', async (_, { id, ...data }) => {
+    const db = getDb();
+    const updated_at = new Date().toISOString();
+    try {
+      const oldRecord = await db.get('SELECT * FROM supplier_master WHERE id = ?', [id]);
+      const oldGstNumber = oldRecord ? oldRecord.gst_number : null;
+
+      await db.run(
+        `UPDATE supplier_master SET
+           company_id = COALESCE(?, company_id),
+           gst_number = COALESCE(?, gst_number),
+           trade_name = COALESCE(?, trade_name),
+           address = COALESCE(?, address),
+           mobile = COALESCE(?, mobile),
+           entity_type = COALESCE(?, entity_type),
+           registration_type = COALESCE(?, registration_type),
+           registration_number = COALESCE(?, registration_number),
+           state = COALESCE(?, state),
+           pan = COALESCE(?, pan),
+           source = COALESCE(?, source),
+           is_active = COALESCE(?, is_active),
+           updated_at = ?
+         WHERE id = ?`,
+        [
+          data.company_id,
+          data.gst_number,
+          data.trade_name,
+          data.address,
+          data.mobile,
+          data.entity_type,
+          data.registration_type,
+          data.registration_number,
+          data.state,
+          data.pan,
+          data.source,
+          data.is_active,
+          updated_at,
+          id,
+        ],
+      );
+
+      const updatedRecord = await db.get('SELECT * FROM supplier_master WHERE id = ?', [id]);
+      if (updatedRecord && oldGstNumber) {
+        await cascadeSupplierMasterUpdates(db, updatedRecord.company_id, oldGstNumber, updatedRecord);
+      }
+
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+async function cascadeSupplierMasterUpdates(db, companyId, oldGstNumber, updatedRecord) {
+  if (!oldGstNumber) return; // Cannot cascade if we don't know the old GST
+
+  // Update purchases
+  await db.run(
+    `UPDATE purchases SET
+      supplier_name = ?,
+      vendor_name = ?,
+      address_line_1 = ?,
+      supplier_mobile_number = ?,
+      entity_type = ?,
+      registration_type = ?,
+      supplier_gst_number = ?,
+      vendor_gstin = ?
+    WHERE company_id = ? AND (supplier_gst_number = ? OR vendor_gstin = ?)`,
+    [
+      updatedRecord.trade_name, updatedRecord.trade_name, updatedRecord.address, updatedRecord.mobile, updatedRecord.entity_type, updatedRecord.registration_type, updatedRecord.gst_number, updatedRecord.gst_number,
+      companyId, oldGstNumber, oldGstNumber
+    ]
+  );
+
+  // Update sales
+  await db.run(
+    `UPDATE sales SET
+      customer_name = ?,
+      entity_name = ?,
+      address = ?,
+      mobile_number = ?,
+      entity_type = ?,
+      registration_type = ?,
+      customer_gstin = ?
+    WHERE company_id = ? AND customer_gstin = ?`,
+    [
+      updatedRecord.trade_name, updatedRecord.trade_name, updatedRecord.address, updatedRecord.mobile, updatedRecord.entity_type, updatedRecord.registration_type, updatedRecord.gst_number,
+      companyId, oldGstNumber
+    ]
+  );
+}
+
+async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
+  const matchKey = updatedRecord.product_match_key;
+  if (!matchKey) return;
+
+  const updateLineItems = (lineItemsJson) => {
+    if (!lineItemsJson) return lineItemsJson;
+    try {
+      const items = JSON.parse(lineItemsJson);
+      let changed = false;
+      for (const item of items) {
+        const productDesc = item.productDescription || item.item_name || '';
+        const desc = String(productDesc).trim().toLowerCase();
+        const hsn = String(item.hsn || item.hsn_code || '').trim().replace(/\D/g, '');
+        const itemKey = `${desc}::${hsn}`;
+        
+        if (itemKey === matchKey) {
+          item.plasticCategory = updatedRecord.plastic_category;
+          item.plasticMaterial = updatedRecord.plastic_material;
+          if (updatedRecord.hsn) {
+            item.hsn = updatedRecord.hsn;
+            item.hsn_code = updatedRecord.hsn;
+          }
+          if (updatedRecord.uom) {
+            item.uom = updatedRecord.uom;
+            item.unit = updatedRecord.uom;
+          }
+          if (updatedRecord.conversion_factor != null && Number(updatedRecord.conversion_factor) > 0) {
+            item.conversionFactor = String(updatedRecord.conversion_factor);
+            item.conversionFactorApplied = String(updatedRecord.conversion_factor);
+            item.conversion_factor = updatedRecord.conversion_factor;
+            item.conversion_factor_applied = updatedRecord.conversion_factor;
+            item.quantityDerivationType = 'conversion_factor';
+            item.quantity_derivation_type = 'conversion_factor';
+            item.conversionMethodUsed = 'auto_master';
+            item.conversion_method_used = 'auto_master';
+          }
+          if (updatedRecord.cf_base_source) {
+            item.cfBaseSource = updatedRecord.cf_base_source;
+            item.cf_base_source = updatedRecord.cf_base_source;
+          }
+          changed = true;
+        }
+      }
+      return changed ? JSON.stringify(items) : lineItemsJson;
+    } catch (e) {
+      return lineItemsJson;
+    }
+  };
+
+  // Update Purchases
+  const purchases = await db.all('SELECT id, line_items FROM purchases WHERE company_id = ?', [companyId]);
+  for (const p of purchases) {
+    const updatedItems = updateLineItems(p.line_items);
+    if (updatedItems !== p.line_items) {
+      await db.run(`
+        UPDATE purchases SET 
+          line_items = ?,
+          category_of_plastic = COALESCE(?, category_of_plastic)
+        WHERE id = ?`, 
+        [updatedItems, updatedRecord.plastic_category, p.id]
+      );
+    }
+  }
+
+  // Update Sales
+  const sales = await db.all('SELECT id, line_items FROM sales WHERE company_id = ?', [companyId]);
+  for (const s of sales) {
+    const updatedItems = updateLineItems(s.line_items);
+    if (updatedItems !== s.line_items) {
+      await db.run(`
+        UPDATE sales SET 
+          line_items = ?,
+          category_of_plastic = COALESCE(?, category_of_plastic),
+          plastic_type = COALESCE(?, plastic_type),
+          conversion_factor = COALESCE(?, conversion_factor),
+          recycled_plastic_percent = COALESCE(?, recycled_plastic_percent)
+        WHERE id = ?`, 
+        [
+          updatedItems, 
+          updatedRecord.plastic_category, 
+          updatedRecord.plastic_material, 
+          updatedRecord.conversion_factor, 
+          updatedRecord.recycled_percent, 
+          s.id
+        ]
+      );
+    }
+  }
+}
+
+  ipcMain.handle('supplierMaster:bulkUpsert', async (_, { rows }) => {
+    const db = getDb();
+    try {
+      let added = 0;
+      let updated = 0;
+      const errors = [];
+      for (let i = 0; i < (rows || []).length; i++) {
+        const row = rows[i];
+        try {
+          const result = await upsertSupplierMasterRow(db, row, {
+            cascadeFn: cascadeSupplierMasterUpdates,
+            fromImport: true,
+          });
+          if (result.action === 'added') added += 1;
+          else updated += 1;
+        } catch (e) {
+          errors.push(`Row ${i + 1}: ${e.message}`);
+        }
+      }
+      return {
+        success: errors.length === 0,
+        added,
+        updated,
+        errors,
+      };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('supplierMaster:delete', async (_, id) => {
+    const db = getDb();
+    try {
+      await db.run('DELETE FROM supplier_master WHERE id=?', [id]);
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:getAll', async (_, filters) => {
+    const db = getDb();
+    const params = [];
+    let query = 'SELECT * FROM packaging_master';
+    const conditions = [];
+    if (filters?.company_id) {
+      conditions.push('company_id = ?');
+      params.push(filters.company_id);
+    }
+    if (filters?.list_type) {
+      conditions.push('list_type = ?');
+      params.push(filters.list_type);
+    }
+    if (conditions.length) query += ` WHERE ${conditions.join(' AND ')}`;
+    query += ' ORDER BY created_at DESC';
+    return await db.all(query, ...params);
+  });
+
+  ipcMain.handle('packagingMaster:lookup', async (_, { company_id, product_description, hsn, list_type = 'gpl' }) => {
+    const db = getDb();
+    const desc = String(product_description ?? '').trim().toLowerCase();
+    const h = String(hsn ?? '').trim().replace(/\D/g, '');
+    const productMatchKey = `${desc}::${h}`;
+    const row = await db.get(
+      `SELECT * FROM packaging_master
+       WHERE company_id = ? AND list_type = ? AND product_match_key = ? AND is_active != 0
+       LIMIT 1`,
+      [company_id, list_type, productMatchKey],
+    );
+    return row || null;
+  });
+
+  ipcMain.handle('packagingMaster:add', async (_, data) => {
+    const db = getDb();
+    const created_at = new Date().toISOString();
+    try {
+      const result = await db.run(
+        `INSERT INTO packaging_master (
+          company_id, list_type, product_description, product_match_key, hsn, uom,
+          supplier_gst, supplier_name, plastic_category, plastic_material, other_plastic_material,
+          cat1, recycled_percent, conversion_factor_id, cf_base_source, conversion_factor,
+          cf_date_from, cf_date_to, total_quantity, value_in_mt, match_type, source, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
+          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
+          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
+          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type || 'exact',
+          data.source || 'manual', 1, created_at, created_at
+        ]
+      );
+      return { success: true, id: result.lastID };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:update', async (_, { id, ...data }) => {
+    const db = getDb();
+    const updated_at = new Date().toISOString();
+    try {
+      await db.run(
+        `UPDATE packaging_master SET
+          company_id = COALESCE(?, company_id),
+          list_type = COALESCE(?, list_type),
+          product_description = COALESCE(?, product_description),
+          product_match_key = COALESCE(?, product_match_key),
+          hsn = COALESCE(?, hsn),
+          uom = COALESCE(?, uom),
+          supplier_gst = COALESCE(?, supplier_gst),
+          supplier_name = COALESCE(?, supplier_name),
+          plastic_category = COALESCE(?, plastic_category),
+          plastic_material = COALESCE(?, plastic_material),
+          other_plastic_material = COALESCE(?, other_plastic_material),
+          cat1 = COALESCE(?, cat1),
+          recycled_percent = COALESCE(?, recycled_percent),
+          conversion_factor_id = COALESCE(?, conversion_factor_id),
+          cf_base_source = COALESCE(?, cf_base_source),
+          conversion_factor = COALESCE(?, conversion_factor),
+          cf_date_from = COALESCE(?, cf_date_from),
+          cf_date_to = COALESCE(?, cf_date_to),
+          total_quantity = COALESCE(?, total_quantity),
+          value_in_mt = COALESCE(?, value_in_mt),
+          match_type = COALESCE(?, match_type),
+          is_active = COALESCE(?, is_active),
+          updated_at = ?
+        WHERE id = ?`,
+        [
+          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
+          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
+          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
+          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type, data.is_active,
+          updated_at, id
+        ]
+      );
+
+      // Cascade to invoices
+      const updated = await db.get('SELECT * FROM packaging_master WHERE id = ?', [id]);
+      if (updated) {
+        await cascadePackagingMasterUpdates(db, updated.company_id, updated);
+      }
+
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:delete', async (_, id) => {
+    const db = getDb();
+    try {
+      await db.run('DELETE FROM packaging_master WHERE id=?', [id]);
+      return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
     }
   });
 

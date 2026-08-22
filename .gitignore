@@ -25,8 +25,8 @@ yarn-error.log*
 
 # Database & local data
 *.db
-*.db-wal
 *.db-shm
+*.db-wal
 *.sqlite
 *.sqlite3
 database.sqlite
@@ -35,6 +35,8 @@ pwp.db
 sso_importer.db
 sso_importer.db-wal
 sso_importer.db-shm
+electron/sso_importer.db-shm
+electron/sso_importer.db-wal
 
 # Electron / Playwright
 playwright_session/
@@ -45,7 +47,7 @@ captcha-artifacts/
 registration-screenshots/
 cpcb-browser-session/
 processed_invoices/
-
+playwright_data/
 # OCR / temp artifacts
 pwp-ocr-pages/
 pwp-captcha-artifacts/
@@ -76,3 +78,10 @@ coverage/
 
 # Vite
 *.local
+
+# Scraped Playwright Data
+playwright_data/*.json
+playwright_data/*.png
+
+# Debug screenshots
+login_stuck.png

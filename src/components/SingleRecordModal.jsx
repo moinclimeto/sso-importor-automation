@@ -1,7 +1,16 @@
 import { useEffect, useState, useRef } from 'react';
 import { X, Loader2, Plus, ArrowLeftRight, ChevronLeft, ChevronRight } from 'lucide-react';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport.js';
+import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
+import { enrichSaleRecord } from '../../shared/reviewEnrichment.js';
+import { PURCHASE_ENTITY_TYPES } from '../../shared/entityRegistrationTypes.js';
 import { getApi } from '../utils/pwpApi.js';
+import {
+  calcTotalPlasticQuantityMt,
+  enrichLineItemsWithWeightMt,
+  totalPlasticQuantityHint,
+  weightToMt,
+} from '../utils/procurementQuantity.js';
 import PdfViewer from './PdfViewer';
 
 const GST_OPTIONS = ['Yes', 'No'];
@@ -18,26 +27,30 @@ export const INDIAN_STATES = [
 
 const todayIso = () => new Date().toISOString().slice(0, 10);
 
-const emptyPurchase = (buyerGst = '') => ({
+const PLASTIC_MATERIAL_TYPES = ['PET', 'HDPE', 'PVC', 'LDPE', 'PP', 'PS', 'Multi-layer', 'Other'];
+
+const COUNTRY_OPTIONS = [
+  'India', 'Germany', 'China', 'United States', 'United Kingdom', 'France', 'Italy',
+  'Japan', 'South Korea', 'Singapore', 'United Arab Emirates', 'Other',
+];
+
+const emptyPurchase = () => ({
   invoice_file: null,
   invoice_filename: '',
-  category_of_plastic: 'Cat-II',
+  registration_type: '',
+  entity_type: '',
   supplier_name: '',
+  country: '',
   address_line_1: '',
-  address_line_2: '',
-  state: '',
-  city: '',
-  pin_code: '',
-  buyer_gst: buyerGst,
-  is_supplier_gst_available: '',
-  supplier_gst_number: '',
-  hsn_code: '',
-  invoice_number: '',
-  irn_no: '',
-  quantity_mt: '',
-  quantity_kg: '',
-  date_of_entry: todayIso(),
+  supplier_mobile_number: '',
+  plastic_type: '',
+  category_of_plastic: 'Cat-II',
+  financial_year: '',
   procurement_date: '',
+  quantity_mt: '',
+  unit: 'MT',
+  recycled_plastic_percent: '0',
+  conversion_factor: '',
 });
 
 const emptySale = () => ({
@@ -51,7 +64,11 @@ const emptySale = () => ({
   available_quantity_mt: '',
   quantity_sold_mt: '',
   registration_type: '',
+  entity_type: '',
+  financial_year: '',
+  mobile_number: '',
   entity_name: '',
+  customer_gstin: '',
   address: '',
   state: '',
   district: '',
@@ -88,17 +105,27 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
         return {
           ...emptyPurchase(),
           ...initialData,
-          category_of_plastic: 'Cat-II',
           invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
-          invoice_number: initialData.invoice_number || initialData.invoice_no || '',
           supplier_name: initialData.supplier_name || initialData.vendor_name || '',
-          supplier_gst_number: initialData.supplier_gst_number || initialData.vendor_gstin || '',
+          address_line_1: initialData.address_line_1 || initialData.address || '',
+          plastic_type: initialData.plastic_type || '',
+          country: initialData.country || '',
+          unit: initialData.unit || 'MT',
+          recycled_plastic_percent:
+            initialData.recycled_plastic_percent != null
+              ? String(initialData.recycled_plastic_percent)
+              : '0',
+          procurement_date: initialData.procurement_date || initialData.invoice_date || '',
+          conversion_factor:
+            initialData.conversion_factor != null && initialData.conversion_factor !== ''
+              ? String(initialData.conversion_factor)
+              : '',
         };
       } else {
-        return {
+        return enrichSaleRecord({
           ...emptySale(),
           ...initialData,
-        };
+        });
       }
     }
     return isPurchase ? emptyPurchase() : emptySale();
@@ -107,7 +134,60 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
   const [error, setError] = useState('');
   const [fieldErrors, setFieldErrors] = useState({});
   const [saving, setSaving] = useState(false);
-  const [lineItems, setLineItems] = useState(() => (initialData?.line_items || initialData?.lineItems || []));
+  const [fetchedConversionFactor, setFetchedConversionFactor] = useState('');
+  const [lineItems, setLineItems] = useState(() =>
+    enrichLineItemsWithWeightMt(initialData?.line_items || initialData?.lineItems || [])
+  );
+
+  const effectiveConversionFactor =
+    parseFloat(form.conversion_factor) || parseFloat(fetchedConversionFactor) || 0;
+
+  useEffect(() => {
+    if (!isPurchase || !lineItems.length) return;
+    const totalMt = calcTotalPlasticQuantityMt(lineItems, effectiveConversionFactor);
+    setForm((prev) => {
+      if (totalMt == null) {
+        return prev.quantity_mt === '' ? prev : { ...prev, quantity_mt: '', unit: 'MT' };
+      }
+      const next = String(totalMt);
+      if (prev.quantity_mt === next) return prev;
+      return { ...prev, quantity_mt: next, unit: 'MT' };
+    });
+  }, [isPurchase, lineItems, effectiveConversionFactor]);
+
+  useEffect(() => {
+    if (!isPurchase) return;
+    const fetchCF = async () => {
+      try {
+        if (window.pwp?.eprData?.getConversionFactor) {
+          const cfData = await window.pwp.eprData.getConversionFactor();
+          if (cfData?.length > 0) {
+            setFetchedConversionFactor(cfData[0].conversion_factor?.toString() || '');
+          }
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    };
+    fetchCF();
+  }, [isPurchase]);
+
+  const updateLineItem = (index, key, value) => {
+    setLineItems((prev) =>
+      prev.map((item, i) => {
+        if (i !== index) return item;
+        const next = { ...item, [key]: value };
+        if (key === 'weight' || key === 'weight_unit') {
+          const w = weightToMt(next.weight, next.weight_unit || 'kg');
+          if (w != null) next.weight_mt = w;
+        }
+        if (key === 'weight_mt') {
+          next.weight_mt = value === '' ? null : parseFloat(value) || null;
+        }
+        return next;
+      })
+    );
+  };
 
   // Sync form state when initialData changes (e.g., when navigating Next/Prev)
   useEffect(() => {
@@ -117,15 +197,27 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
           ...emptyPurchase(),
           ...initialData,
           invoice_filename: initialData.invoice_filename || initialData.invoice_file_name || '',
-          invoice_number: initialData.invoice_number || initialData.invoice_no || '',
           supplier_name: initialData.supplier_name || initialData.vendor_name || '',
-          supplier_gst_number: initialData.supplier_gst_number || initialData.vendor_gstin || '',
+          address_line_1: initialData.address_line_1 || initialData.address || '',
+          plastic_type: initialData.plastic_type || '',
+          country: initialData.country || '',
+          unit: initialData.unit || 'MT',
+          recycled_plastic_percent:
+            initialData.recycled_plastic_percent != null
+              ? String(initialData.recycled_plastic_percent)
+              : '0',
+          procurement_date: initialData.procurement_date || initialData.invoice_date || '',
+          conversion_factor:
+            initialData.conversion_factor != null && initialData.conversion_factor !== ''
+              ? String(initialData.conversion_factor)
+              : '',
         });
+        setLineItems(enrichLineItemsWithWeightMt(initialData.line_items || initialData.lineItems || []));
       } else {
-        setForm({
+        setForm(enrichSaleRecord({
           ...emptySale(),
           ...initialData,
-        });
+        }));
       }
       setError('');
       setFieldErrors({});
@@ -211,26 +303,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
     }
   }, [form.invoice_file, isEdit, initialData]);
 
-  useEffect(() => {
-    if (!isPurchase || isEdit) return;
-    (async () => {
-      try {
-        const companies = await getApi().companies.getAll();
-        const gst = companies?.[0]?.gstin || '';
-        if (gst) setForm((prev) => ({ ...prev, buyer_gst: gst }));
-      } catch {
-        /* ignore */
-      }
-    })();
-  }, [isPurchase, isEdit]);
-
   const set = (key, value) => {
     setForm((prev) => {
       const next = { ...prev, [key]: value };
-      if (key === 'quantity_mt') {
-        const mt = parseFloat(value);
-        next.quantity_kg = Number.isFinite(mt) ? String(Number((mt * 1000).toFixed(3))) : '';
-      }
       if (key === 'invoice_file' && value?.name) {
         next.invoice_filename = value.name;
       }
@@ -256,26 +331,22 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
       if (!isEdit && !(form.invoice_filename || '').trim() && !form.invoice_file) {
         fe.invoice_filename = 'Please upload invoice / GST e-invoice';
       }
-      if (!form.category_of_plastic) fe.category_of_plastic = 'Please Select Categories of Plastic';
-      if (!(form.supplier_name || '').trim()) fe.supplier_name = 'Please Enter Name of Supplier';
-      if (!(form.address_line_1 || '').trim()) fe.address_line_1 = 'Please Enter Address Line 1';
-      if (!form.state) fe.state = 'Please Select State';
-      if (!(form.city || '').trim()) fe.city = 'Please Select City';
-      if (!(form.pin_code || '').trim()) fe.pin_code = 'Please Enter PIN Code';
-      if (!isEdit && !form.is_supplier_gst_available) {
-        fe.is_supplier_gst_available = 'Please Select Is Supplier GST Available?';
-      }
-      if (!isEdit && form.is_supplier_gst_available === 'Yes' && !(form.supplier_gst_number || '').trim()) {
-        fe.supplier_gst_number = 'Please Enter Supplier GST';
-      }
-      if (!(form.hsn_code || '').trim()) fe.hsn_code = 'Please Enter HSN Code';
-      if (!(form.invoice_number || '').trim()) {
-        fe.invoice_number = 'Please Enter Invoice No./GST E-Invoice Number';
-      }
+      if (!form.registration_type) fe.registration_type = 'Please select Registration Type';
+      if (!form.entity_type) fe.entity_type = 'Please select Entity Type';
+      if (!(form.supplier_name || '').trim()) fe.supplier_name = 'Please enter Name of the Entity';
+      if (!form.country) fe.country = 'Please select Country';
+      if (!(form.address_line_1 || '').trim()) fe.address_line_1 = 'Please enter Address';
+      if (!(form.supplier_mobile_number || '').trim()) fe.supplier_mobile_number = 'Please enter Mobile Number';
+      if (!form.plastic_type) fe.plastic_type = 'Please select Plastic Material Type';
+      if (!form.category_of_plastic) fe.category_of_plastic = 'Please select Category of Plastic';
+      if (!form.financial_year) fe.financial_year = 'Please select Financial Year';
+      if (!form.procurement_date) fe.procurement_date = 'Please select Date';
       if (form.quantity_mt === '' || form.quantity_mt === null) {
-        fe.quantity_mt = 'Please Enter quantity';
+        fe.quantity_mt = 'Please enter Total Plastic Quantity';
       }
-      if (!form.procurement_date) fe.procurement_date = 'Please Select Procurement date';
+      if (form.recycled_plastic_percent === '' || form.recycled_plastic_percent === null) {
+        fe.recycled_plastic_percent = 'Please enter Recycled Plastic %';
+      }
 
       setFieldErrors(fe);
       if (Object.keys(fe).length) {
@@ -284,45 +355,47 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
       }
 
       const qty = parseFloat(form.quantity_mt) || 0;
-      const qtyKg = parseFloat(form.quantity_kg) || Number((qty * 1000).toFixed(3));
       const payload = {
-        company_id: null,
+        company_id: initialData?.company_id ?? null,
         record_type: 'purchase_epr',
-        category_of_plastic: form.category_of_plastic,
+        registration_type: (form.registration_type || '').trim(),
+        entity_type: (form.entity_type || '').trim(),
         supplier_name: (form.supplier_name || '').trim(),
-        address_line_1: (form.address_line_1 || '').trim(),
-        address_line_2: (form.address_line_2 || '').trim(),
-        state: form.state,
-        city: (form.city || '').trim(),
-        pin_code: (form.pin_code || '').trim(),
-        buyer_gst: (form.buyer_gst || '').trim().toUpperCase(),
-        is_supplier_gst_available: form.is_supplier_gst_available,
-        supplier_gst_number: (form.supplier_gst_number || '').trim().toUpperCase(),
-        hsn_code: (form.hsn_code || '').trim(),
-        invoice_number: (form.invoice_number || '').trim(),
-        irn_no: (form.irn_no || '').trim(),
-        quantity_mt: qty,
-        quantity_kg: qtyKg,
-        date_of_entry: form.date_of_entry || todayIso(),
-        procurement_date: form.procurement_date,
-        invoice_filename: (form.invoice_filename || '').trim(),
-        // compat
         vendor_name: (form.supplier_name || '').trim(),
-        vendor_gstin: (form.supplier_gst_number || '').trim().toUpperCase(),
-        invoice_no: (form.invoice_number || '').trim(),
+        country: (form.country || '').trim(),
+        address_line_1: (form.address_line_1 || '').trim(),
+        supplier_mobile_number: (form.supplier_mobile_number || '').trim(),
+        plastic_type: (form.plastic_type || '').trim(),
+        category_of_plastic: form.category_of_plastic,
+        financial_year: (form.financial_year || '').trim(),
+        procurement_date: form.procurement_date,
         invoice_date: form.procurement_date,
-        item_name: form.category_of_plastic,
+        quantity_mt: qty,
         quantity: qty,
         unit: 'MT',
-        total_amount: 0,
+        recycled_plastic_percent: parseFloat(form.recycled_plastic_percent) || 0,
+        conversion_factor:
+          parseFloat(form.conversion_factor) || parseFloat(fetchedConversionFactor) || 0,
+        invoice_filename: (form.invoice_filename || '').trim(),
+        item_name: (form.plastic_type || form.category_of_plastic || '').trim(),
+        lineItems,
       };
 
       if (isEdit && initialData) {
-        payload.lineItems = lineItems;
         payload.extraction = initialData.extraction;
         payload._source_fields = initialData._source_fields;
         payload._routing = initialData._routing;
         payload.fileHash = initialData.file_hash || initialData.fileHash;
+        payload.buyer_gst = initialData.buyer_gst || null;
+        payload.company_name = initialData.company_name || null;
+        payload.invoice_number = initialData.invoice_number || initialData.invoice_no || null;
+        payload.invoice_no = initialData.invoice_no || initialData.invoice_number || null;
+        payload.irn_no = initialData.irn_no || null;
+        payload.supplier_gst_number = initialData.supplier_gst_number || initialData.vendor_gstin || null;
+        payload.vendor_gstin = initialData.vendor_gstin || initialData.supplier_gst_number || null;
+        payload.is_supplier_gst_available = initialData.is_supplier_gst_available || null;
+        payload.account_number = initialData.account_number || null;
+        payload.ifsc_code = initialData.ifsc_code || null;
       }
 
       setSaving(true);
@@ -368,8 +441,12 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
       ifsc_code: (form.ifsc_code || '').trim().toUpperCase(),
       gst_other_charges: parseFloat(form.gst_other_charges) || 0,
       invoice_file_name: (form.invoice_file_name || '').trim(),
+      entity_type: (form.entity_type || '').trim(),
+      financial_year: (form.financial_year || '').trim(),
+      mobile_number: (form.mobile_number || '').trim(),
       application_number: (form.application_number || '').trim(),
       customer_name: (form.entity_name || '').trim(),
+      customer_gstin: (form.customer_gstin || '').trim().toUpperCase(),
       invoice_no: (form.application_number || '').trim() || (form.invoice_file_name || '').trim(),
       item_name: (form.product_type || '').trim() || (form.plastic_type || '').trim() || form.category_of_plastic,
       quantity: sold,
@@ -379,7 +456,19 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
 
     if (isEdit && initialData) {
       payload.lineItems = initialData.line_items || initialData.lineItems;
-      payload.extraction = initialData.extraction;
+      const baseExtraction =
+        initialData.extraction && typeof initialData.extraction === 'object'
+          ? { ...initialData.extraction }
+          : {};
+      const gstNum = parseFloat(form.gst_other_charges);
+      payload.extraction = {
+        ...baseExtraction,
+        district: (form.district || '').trim() || baseExtraction.district,
+        dist: (form.district || '').trim() || baseExtraction.dist,
+        ...(Number.isFinite(gstNum) && gstNum !== 0
+          ? { totalInvoiceAmount: gstNum, tot: gstNum, gst_other_charges: gstNum }
+          : {}),
+      };
       payload._source_fields = initialData._source_fields;
       payload._routing = initialData._routing;
       payload.fileHash = initialData.file_hash || initialData.fileHash;
@@ -413,7 +502,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
             <div>
               <h3 className="font-semibold text-slate-900">{title}</h3>
               {isPurchase && (
-                <p className="text-xs text-slate-500">Single Entry — match CPCB procurement form</p>
+                <p className="text-xs text-slate-500">
+                  Plastic Raw Material/Packaging Procured — supplier party fields from document
+                </p>
               )}
             </div>
           </div>
@@ -473,12 +564,11 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
 
           {isPurchase ? (
             <div className="space-y-4">
-              {/* Full width: Upload Invoice (Hidden in edit mode) */}
               {!isEdit && (
                 <Field
                   label="Upload Invoice / GST E-Invoice"
                   required
-                  hint="# As Applicable As Per GST Act 2017 (As Amended)"
+                  hint="Please upload a scanned copy of invoice (max 1MB)"
                 >
                   <input
                     type="file"
@@ -496,13 +586,112 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               )}
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                <Field label="Categories of Plastic" required>
+                <Field label="Registration Type" required>
                   <select
-                    className={errCls('category_of_plastic') + ' bg-slate-100 text-slate-600'}
-                    value={form.category_of_plastic || 'Cat-II'}
-                    disabled
+                    className={errCls('registration_type') + ' bg-white'}
+                    value={form.registration_type || ''}
+                    onChange={(e) => set('registration_type', e.target.value)}
                   >
                     <option value="">Select</option>
+                    <option value="Registered">Registered</option>
+                    <option value="Unregistered">Unregistered</option>
+                  </select>
+                  {fieldErrors.registration_type && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.registration_type}</p>
+                  )}
+                </Field>
+
+                <Field label="Entity Type" required>
+                  <select
+                    className={errCls('entity_type') + ' bg-white'}
+                    value={form.entity_type || ''}
+                    onChange={(e) => set('entity_type', e.target.value)}
+                  >
+                    <option value="">Select Entity Type</option>
+                    {PURCHASE_ENTITY_TYPES.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
+                  </select>
+                  {fieldErrors.entity_type && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.entity_type}</p>
+                  )}
+                </Field>
+
+                <Field label="Name Of The Entity" required>
+                  <input
+                    className={errCls('supplier_name')}
+                    placeholder="Enter Name of the Entity"
+                    value={form.supplier_name}
+                    onChange={(e) => set('supplier_name', e.target.value)}
+                  />
+                  {fieldErrors.supplier_name && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.supplier_name}</p>
+                  )}
+                </Field>
+
+                <Field label="Country" required>
+                  <select
+                    className={errCls('country') + ' bg-white'}
+                    value={form.country || ''}
+                    onChange={(e) => set('country', e.target.value)}
+                  >
+                    <option value="">Select Country</option>
+                    {COUNTRY_OPTIONS.map((c) => (
+                      <option key={c} value={c}>{c}</option>
+                    ))}
+                  </select>
+                  {fieldErrors.country && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.country}</p>
+                  )}
+                </Field>
+
+                <Field label="Address" required className="sm:col-span-2">
+                  <input
+                    className={errCls('address_line_1')}
+                    placeholder="Address"
+                    value={form.address_line_1}
+                    onChange={(e) => set('address_line_1', e.target.value)}
+                  />
+                  {fieldErrors.address_line_1 && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.address_line_1}</p>
+                  )}
+                </Field>
+
+                <Field label="Mobile Number" required>
+                  <input
+                    className={errCls('supplier_mobile_number')}
+                    placeholder="Mobile Number"
+                    value={form.supplier_mobile_number || ''}
+                    onChange={(e) => set('supplier_mobile_number', e.target.value)}
+                  />
+                  {fieldErrors.supplier_mobile_number && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.supplier_mobile_number}</p>
+                  )}
+                </Field>
+
+                <Field label="Plastic Material Type" required>
+                  <select
+                    className={errCls('plastic_type') + ' bg-white'}
+                    value={form.plastic_type || ''}
+                    onChange={(e) => set('plastic_type', e.target.value)}
+                  >
+                    <option value="">Select Plastic Material Type</option>
+                    {PLASTIC_MATERIAL_TYPES.map((t) => (
+                      <option key={t} value={t}>{t}</option>
+                    ))}
+                  </select>
+                  {fieldErrors.plastic_type && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.plastic_type}</p>
+                  )}
+                </Field>
+
+                <Field label="Category Of Plastic" required>
+                  <select
+                    className={errCls('category_of_plastic') + ' bg-white'}
+                    value={form.category_of_plastic || ''}
+                    onChange={(e) => set('category_of_plastic', e.target.value)}
+                  >
+                    <option value="">Select Category Of Plastic</option>
                     {PLASTIC_CATEGORIES.map((c) => (
                       <option key={c} value={c}>{c}</option>
                     ))}
@@ -512,217 +701,204 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
                   )}
                 </Field>
 
-                <Field label="Name of Supplier" required>
-                  <input
-                    className={errCls('supplier_name')}
-                    placeholder="Enter name of supplier"
-                    value={form.supplier_name}
-                    onChange={(e) => set('supplier_name', e.target.value)}
-                  />
-                  {fieldErrors.supplier_name && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.supplier_name}</p>
-                  )}
-                </Field>
-
-                <Field label="Address Line 1" required>
-                  <input
-                    className={errCls('address_line_1')}
-                    placeholder="Enter address"
-                    value={form.address_line_1}
-                    onChange={(e) => set('address_line_1', e.target.value)}
-                  />
-                  {fieldErrors.address_line_1 && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.address_line_1}</p>
-                  )}
-                </Field>
-
-                <Field label="Address Line 2">
-                  <input
-                    className="input"
-                    placeholder="Enter address"
-                    value={form.address_line_2}
-                    onChange={(e) => set('address_line_2', e.target.value)}
-                  />
-                </Field>
-
-                <Field label="State" required>
+                <Field label="Financial Year" required>
                   <select
-                    className={errCls('state')}
-                    value={form.state}
-                    onChange={(e) => set('state', e.target.value)}
+                    className={errCls('financial_year') + ' bg-white'}
+                    value={form.financial_year || ''}
+                    onChange={(e) => set('financial_year', e.target.value)}
                   >
-                    <option value="">Select</option>
-                    {INDIAN_STATES.map((s) => (
-                      <option key={s} value={s}>{s}</option>
+                    <option value="">Financial Year</option>
+                    {FINANCIAL_YEAR_OPTIONS.map((fy) => (
+                      <option key={fy} value={fy}>{fy}</option>
                     ))}
                   </select>
-                  {fieldErrors.state && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.state}</p>
+                  {fieldErrors.financial_year && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.financial_year}</p>
                   )}
                 </Field>
 
-                <Field label="City" required>
-                  <input
-                    className={errCls('city')}
-                    placeholder="Enter city"
-                    value={form.city}
-                    onChange={(e) => set('city', e.target.value)}
-                  />
-                  {fieldErrors.city && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.city}</p>
-                  )}
-                </Field>
-
-                <Field label="PIN Code" required>
-                  <input
-                    className={errCls('pin_code')}
-                    placeholder="Enter PIN Code"
-                    value={form.pin_code}
-                    onChange={(e) => set('pin_code', e.target.value.replace(/\D/g, '').slice(0, 6))}
-                    maxLength={6}
-                  />
-                  {fieldErrors.pin_code && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.pin_code}</p>
-                  )}
-                </Field>
-
-                <Field label="Buyer GST">
-                  <input
-                    className="input bg-slate-100 text-slate-600"
-                    placeholder="Enter Buyer GST"
-                    value={form.buyer_gst}
-                    readOnly
-                    disabled
-                  />
-                </Field>
-
-                {!isEdit && (
-                  <Field label="Is Supplier GST Available?" required>
-                    <select
-                      className={errCls('is_supplier_gst_available')}
-                      value={form.is_supplier_gst_available}
-                      onChange={(e) => set('is_supplier_gst_available', e.target.value)}
-                    >
-                      <option value="">Select</option>
-                      {GST_OPTIONS.map((o) => (
-                        <option key={o} value={o}>{o}</option>
-                      ))}
-                    </select>
-                    {fieldErrors.is_supplier_gst_available && (
-                      <p className="text-xs text-red-500 mt-1">{fieldErrors.is_supplier_gst_available}</p>
-                    )}
-                  </Field>
-                )}
-
-                <Field label="HSN Code" required>
-                  <input
-                    className={errCls('hsn_code')}
-                    placeholder="Enter HSN Code"
-                    value={form.hsn_code}
-                    onChange={(e) => set('hsn_code', e.target.value)}
-                  />
-                  {fieldErrors.hsn_code && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.hsn_code}</p>
-                  )}
-                </Field>
-
-                {(isEdit || form.is_supplier_gst_available === 'Yes') && (
-                  <Field label="Supplier GST" className="sm:col-span-2">
-                    <input
-                      className={errCls('supplier_gst_number')}
-                      placeholder="Enter Supplier GST"
-                      value={form.supplier_gst_number}
-                      onChange={(e) => set('supplier_gst_number', e.target.value.toUpperCase())}
-                      maxLength={15}
-                    />
-                    {fieldErrors.supplier_gst_number && (
-                      <p className="text-xs text-red-500 mt-1">{fieldErrors.supplier_gst_number}</p>
-                    )}
-                  </Field>
-                )}
-
-                <Field label="Invoice No./GST E-Invoice Number" required>
-                  <input
-                    className={errCls('invoice_number')}
-                    placeholder="Enter Invoice No./GST E-Invoice Number"
-                    value={form.invoice_number}
-                    onChange={(e) => set('invoice_number', e.target.value)}
-                  />
-                  {fieldErrors.invoice_number && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.invoice_number}</p>
-                  )}
-                </Field>
-
-                <Field label="Qty. of Waste Plastic (MT)" required>
-                  <input
-                    type="number"
-                    step="any"
-                    min="0"
-                    className={errCls('quantity_mt')}
-                    placeholder="Enter quantity"
-                    value={form.quantity_mt}
-                    onChange={(e) => set('quantity_mt', e.target.value)}
-                  />
-                  {fieldErrors.quantity_mt && (
-                    <p className="text-xs text-red-500 mt-1">{fieldErrors.quantity_mt}</p>
-                  )}
-                </Field>
-
-                <Field label="Qty. of Waste Plastic (Kg)" required>
-                  <input
-                    className="input bg-slate-100 text-slate-600"
-                    placeholder="Auto from MT"
-                    value={form.quantity_kg}
-                    readOnly
-                    disabled
-                  />
-                </Field>
-
-                <Field label="Date of Entry" required>
-                  <input
-                    type="date"
-                    className="input bg-slate-100 text-slate-600"
-                    value={form.date_of_entry}
-                    readOnly
-                    disabled
-                  />
-                </Field>
-
-                <Field label="Procurement date" required>
+                <Field label="Date" required>
                   <input
                     type="date"
                     className={errCls('procurement_date')}
-                    value={form.procurement_date}
+                    value={form.procurement_date || ''}
                     onChange={(e) => set('procurement_date', e.target.value)}
                   />
                   {fieldErrors.procurement_date && (
                     <p className="text-xs text-red-500 mt-1">{fieldErrors.procurement_date}</p>
                   )}
                 </Field>
+
+                <Field
+                  label="Total Plastic Quantity"
+                  required
+                  hint={totalPlasticQuantityHint(
+                    lineItems,
+                    effectiveConversionFactor,
+                    form.quantity_mt
+                  )}
+                >
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="any"
+                      min="0"
+                      className={errCls('quantity_mt') + ' flex-1'}
+                      placeholder="Enter Total Plastic Quantity"
+                      value={form.quantity_mt}
+                      onChange={(e) => set('quantity_mt', e.target.value)}
+                    />
+                    <select
+                      className="input bg-white w-24"
+                      value={form.unit || 'MT'}
+                      onChange={(e) => set('unit', e.target.value)}
+                    >
+                      <option value="MT">MT</option>
+                      <option value="Ton">Ton</option>
+                      <option value="Kg">Kg</option>
+                    </select>
+                  </div>
+                  {fieldErrors.quantity_mt && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.quantity_mt}</p>
+                  )}
+                </Field>
+
+                <Field label="Recycled Plastic % (0 for virgin material)" required>
+                  <input
+                    type="number"
+                    step="any"
+                    min="0"
+                    className={errCls('recycled_plastic_percent')}
+                    placeholder="0"
+                    value={form.recycled_plastic_percent ?? '0'}
+                    onChange={(e) => set('recycled_plastic_percent', e.target.value)}
+                  />
+                  {fieldErrors.recycled_plastic_percent && (
+                    <p className="text-xs text-red-500 mt-1">{fieldErrors.recycled_plastic_percent}</p>
+                  )}
+                </Field>
+
+                <Field
+                  label="Conversion Factor"
+                  hint={
+                    fetchedConversionFactor && !form.conversion_factor
+                      ? `Default from scraped data: ${fetchedConversionFactor}`
+                      : undefined
+                  }
+                >
+                  <input
+                    type="number"
+                    step="any"
+                    className="input"
+                    placeholder={fetchedConversionFactor || '0'}
+                    value={form.conversion_factor ?? ''}
+                    onChange={(e) => set('conversion_factor', e.target.value)}
+                  />
+                </Field>
               </div>
+
+              {lineItems.length > 0 && (
+                <div className="space-y-2">
+                  <h4 className="text-sm font-semibold text-slate-800">Line Items</h4>
+                  <div className="overflow-x-auto rounded-xl border border-slate-200">
+                    <table className="min-w-full text-sm">
+                      <thead className="bg-slate-50 border-b border-slate-200">
+                        <tr>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">#</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Product</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Description</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Qty</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Unit</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Weight (MT)</th>
+                          <th className="px-3 py-2 text-left font-medium text-slate-600">Rate</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {lineItems.map((item, index) => (
+                          <tr key={item.lineNo || index} className="border-b border-slate-100">
+                            <td className="px-3 py-2">{item.lineNo || index + 1}</td>
+                            <td className="px-3 py-2">
+                              <input
+                                className="input py-1.5 text-xs"
+                                value={item.product || ''}
+                                onChange={(e) => updateLineItem(index, 'product', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-3 py-2 min-w-[12rem]">
+                              <input
+                                className="input py-1.5 text-xs"
+                                value={item.productDescription || ''}
+                                onChange={(e) => updateLineItem(index, 'productDescription', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                className="input py-1.5 text-xs w-20"
+                                value={item.quantity || ''}
+                                onChange={(e) => updateLineItem(index, 'quantity', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                className="input py-1.5 text-xs w-16"
+                                value={item.unit || ''}
+                                onChange={(e) => updateLineItem(index, 'unit', e.target.value)}
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                type="number"
+                                step="any"
+                                className="input py-1.5 text-xs w-24"
+                                value={item.weight_mt ?? ''}
+                                onChange={(e) => updateLineItem(index, 'weight_mt', e.target.value)}
+                                title={
+                                  item.weight
+                                    ? `Raw: ${item.weight} ${item.weight_unit || 'kg'}`
+                                    : 'Line weight in MT'
+                                }
+                              />
+                            </td>
+                            <td className="px-3 py-2">
+                              <input
+                                className="input py-1.5 text-xs w-24"
+                                value={item.rate ?? ''}
+                                onChange={(e) => updateLineItem(index, 'rate', e.target.value)}
+                              />
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              )}
             </div>
           ) : (
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <Field label="Category of Plastic" required>
-                <select className="input bg-slate-100 text-slate-600" value={form.category_of_plastic || 'Cat-II'} disabled>
-                  <option value="">Select Category</option>
-                  {PLASTIC_CATEGORIES.map((c) => (
-                    <option key={c} value={c}>
-                      {c}
-                    </option>
-                  ))}
-                </select>
-              </Field>
+                <Field label="Category of Plastic" required>
+                  <select className="input" value={form.category_of_plastic || 'Cat-II'} onChange={(e) => set('category_of_plastic', e.target.value)}>
+                    <option value="">Select Category</option>
+                    {PLASTIC_CATEGORIES.map((c) => (
+                      <option key={c} value={c}>
+                        {c}
+                      </option>
+                    ))}
+                  </select>
+                </Field>
               <Field label="Plastic Type">
-                <input className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)} />
-              </Field>
-              <Field label="Product Type">
-                <select className="input" value={form.product_type} onChange={(e) => set('product_type', e.target.value)}>
-                  <option value="">Select Product Type</option>
-                  <option value="Cement">Cement</option>
-                  <option value="Clinker">Clinker</option>
+                <select className="input" value={form.plastic_type} onChange={(e) => set('plastic_type', e.target.value)}>
+                  <option value="">Select Plastic Type</option>
+                  <option value="PET">PET</option>
+                  <option value="HDPE">HDPE</option>
+                  <option value="PVC">PVC</option>
+                  <option value="LDPE">LDPE</option>
+                  <option value="PP">PP</option>
+                  <option value="PS">PS</option>
+                  <option value="Other">Other</option>
                 </select>
               </Field>
+
               <Field label="(%) of Recycled Plastic">
                 <input type="number" step="any" className="input" value={form.recycled_plastic_percent} onChange={(e) => set('recycled_plastic_percent', e.target.value)} />
               </Field>
@@ -738,6 +914,42 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="Name of the Entity" required>
                 <input className="input" value={form.entity_name} onChange={(e) => set('entity_name', e.target.value)} />
               </Field>
+              <Field label="GST Number">
+                <input className="input uppercase" value={form.customer_gstin || ''} onChange={(e) => set('customer_gstin', e.target.value.toUpperCase())} maxLength={15} />
+              </Field>
+              <Field label="District">
+                <input className="input" value={form.district || ''} onChange={(e) => set('district', e.target.value)} />
+              </Field>
+              <Field label="GST & Other Charges">
+                <input type="number" step="any" className="input" value={form.gst_other_charges ?? ''} onChange={(e) => set('gst_other_charges', e.target.value)} />
+              </Field>
+
+              <Field label="Entity Type">
+                <select className="input bg-white" value={form.entity_type || ''} onChange={(e) => set('entity_type', e.target.value)}>
+                  <option value="">Select Entity Type</option>
+                  {PURCHASE_ENTITY_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Registration Type">
+                <select className="input bg-white" value={form.registration_type || ''} onChange={(e) => set('registration_type', e.target.value)}>
+                  <option value="">Select</option>
+                  <option value="Registered">Registered</option>
+                  <option value="Unregistered">Unregistered</option>
+                </select>
+              </Field>
+              <Field label="Mobile Number">
+                <input className="input" value={form.mobile_number || ''} onChange={(e) => set('mobile_number', e.target.value)} />
+              </Field>
+              <Field label="Financial Year">
+                <select className="input bg-white" value={form.financial_year || ''} onChange={(e) => set('financial_year', e.target.value)}>
+                  <option value="">Select Financial Year</option>
+                  {FINANCIAL_YEAR_OPTIONS.map((fy) => (
+                    <option key={fy} value={fy}>{fy}</option>
+                  ))}
+                </select>
+              </Field>
 
               <Field label="Address" className="sm:col-span-2">
                 <input className="input" value={form.address} onChange={(e) => set('address', e.target.value)} />
@@ -745,17 +957,11 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="State">
                 <input className="input" value={form.state} onChange={(e) => set('state', e.target.value)} />
               </Field>
-              <Field label="District">
-                <input className="input" value={form.district} onChange={(e) => set('district', e.target.value)} />
-              </Field>
               <Field label="Account Number">
                 <input className="input" value={form.account_number} onChange={(e) => set('account_number', e.target.value)} />
               </Field>
               <Field label="IFSC Code">
                 <input className="input uppercase" value={form.ifsc_code} onChange={(e) => set('ifsc_code', e.target.value.toUpperCase())} />
-              </Field>
-              <Field label="GST & Other Charges">
-                <input type="number" step="any" className="input" value={form.gst_other_charges} onChange={(e) => set('gst_other_charges', e.target.value)} />
               </Field>
               <Field label="Application Number">
                 <input className="input" value={form.application_number} onChange={(e) => set('application_number', e.target.value)} />

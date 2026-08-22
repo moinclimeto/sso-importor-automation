@@ -51,6 +51,7 @@ export async function initDatabase(onDbReadyCallback) {
     CREATE TABLE IF NOT EXISTS conversion_factor (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
     CREATE TABLE IF NOT EXISTS new_application (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT);
     CREATE TABLE IF NOT EXISTS registration_details (_internal_id INTEGER PRIMARY KEY AUTOINCREMENT, applicant_type TEXT, sub_applicant_type TEXT, cepr_id TEXT, success_screenshot_path TEXT);
+    CREATE TABLE IF NOT EXISTS extractor_data (id INTEGER PRIMARY KEY AUTOINCREMENT, company_name TEXT, gst TEXT, created_at DATETIME DEFAULT CURRENT_TIMESTAMP);
   `);
 }
 
@@ -95,10 +96,12 @@ async function runMigrations() {
 
   for (const file of migrationFiles) {
     if (!appliedMigrations.has(file)) {
-      const migration = await import('file:///' + path.join(migrationsDir, file)); // Use file:/// for dynamic import
+      const migration = await import('file:///' + path.join(migrationsDir, file));
       console.log(`Applying migration: ${file}`);
-      if (migration.up) {
-        await db.exec(migration.up); // Each migration file should export an 'up' string
+      if (typeof migration.up === 'function') {
+        await migration.up(db);
+      } else if (typeof migration.up === 'string') {
+        await db.exec(migration.up);
       } else {
         console.warn(`Migration ${file} has no 'up' export. Skipping execution.`);
       }

@@ -6,7 +6,8 @@ import pLimit from 'p-limit'; // From dev
 import { createLogger, createTrackId } from '../utils/logger.js';
 import { getDb } from '../db/database.js';
 import { expandFilesToPageJobs } from '../utils/pdfPages.js';
-import { getFileSha256 } from '../utils/hashUtils.js'; // From HEAD
+import { getFileSha256 } from '../utils/hashUtils.js';
+import { getAllProcessedFileHashes } from '../invoiceDuplicateCheck.js';
 
 function normName(name) {
   return String(name || '')
@@ -18,8 +19,7 @@ function normName(name) {
 // Modified to use file_hashes table from SQLite
 export async function getExistingInvoiceHashes() {
   const db = getDb();
-  const hashes = await db.all('SELECT hash FROM file_hashes');
-  return new Set(hashes.map(row => row.hash));
+  return getAllProcessedFileHashes(db);
 }
 
 /**
@@ -48,29 +48,31 @@ export async function filterPageJobs(jobs, log, { type = '' } = {}) {
       continue;
     }
 
-    if (existingFileHashes.has(fileHash)) {
-      skipped.push({
-        ...job,
-        reason: 'already_extracted',
-        fileHash,
-      });
-      log.warn('Skip already extracted page (by hash)', {
-        invoiceFileName: job.invoiceFileName,
-        fileHash,
-      });
-      continue;
-    }
-    if (seenBatch.has(fileHash)) {
-      skipped.push({
-        ...job,
-        reason: 'duplicate_in_batch',
-        fileHash,
-      });
-      log.warn('Skip duplicate page in batch (by hash)', {
-        invoiceFileName: job.invoiceFileName,
-        fileHash,
-      });
-      continue;
+    if (type !== 'company_document') {
+      if (existingFileHashes.has(fileHash)) {
+        skipped.push({
+          ...job,
+          reason: 'already_extracted',
+          fileHash,
+        });
+        log.warn('Skip already extracted page (by hash)', {
+          invoiceFileName: job.invoiceFileName,
+          fileHash,
+        });
+        continue;
+      }
+      if (seenBatch.has(fileHash)) {
+        skipped.push({
+          ...job,
+          reason: 'duplicate_in_batch',
+          fileHash,
+        });
+        log.warn('Skip duplicate page in batch (by hash)', {
+          invoiceFileName: job.invoiceFileName,
+          fileHash,
+        });
+        continue;
+      }
     }
     seenBatch.add(fileHash);
     accepted.push({ ...job, fileHash }); // Add fileHash to the job
