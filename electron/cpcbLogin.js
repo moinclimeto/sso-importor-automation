@@ -8,6 +8,7 @@ import {
   fillCaptchaField,
   refreshCaptcha,
 } from './captchaPortal.js';
+import { runEprExtraction } from './cpcbEprScraper.js';
 
 const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
 const DASHBOARD_URL = 'https://epr.cpcb.gov.in/dashboard';
@@ -933,7 +934,8 @@ export async function submitLoginCaptcha(captchaText, onLog) {
   }
 }
 
-export async function submitLoginOtp(otp, onLog) {
+export async function submitLoginOtp(otp, onLog, options = {}) {
+  const { autoScrape = false } = options;
   try {
     const { page } = getLoginSession();
     if (!page) throw new Error('Browser session not active');
@@ -986,13 +988,20 @@ export async function submitLoginOtp(otp, onLog) {
       );
     }
 
+    let scrapeResult = null;
+    if (autoScrape) {
+      if (onLog) onLog('Registration complete — starting automatic portal scrape...');
+      scrapeResult = await runEprExtraction(page, { onLog });
+    }
+
     return {
       success: true,
-      step: 'APPLICATION_ONBOARDING_COMPLETE',
+      step: autoScrape ? 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' : 'APPLICATION_ONBOARDING_COMPLETE',
       url,
       authenticated: isAuthenticatedUrl(url),
       applicantType: onboardingResult.applicantType,
       subApplicantType: onboardingResult.subApplicantType,
+      scrape: scrapeResult,
     };
   } catch (err) {
     if (onLog) onLog('Login OTP error: ' + err.message);

@@ -43,21 +43,11 @@ import {
   submitLoginOtp,
   resendLoginOtp,
 } from './cpcbLogin.js';
+import { runEprExtraction } from './cpcbEprScraper.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-
-const { extractEprDashboard } = require("../src/extractors/epr/dashboard.extractor.cjs");
-const { extractEprProfile } = require("../src/extractors/epr/profile.extractor.cjs");
-const { extractEprApplication } = require("../src/extractors/epr/application.extractor.cjs");
-const { extractEprMaterial } = require("../src/extractors/epr/material.extractor.cjs");
-const { extractEprProduction } = require("../src/extractors/epr/production.extractor.cjs");
-const { extractEprSales } = require("../src/extractors/epr/sales.extractor.cjs");
-const { extractEprWallet } = require("../src/extractors/epr/wallet.extractor.cjs");
-const { extractEprAnnualFiling } = require("../src/extractors/epr/annual_filing.extractor.cjs");
-const { extractEprPaymentHistory } = require("../src/extractors/epr/payment.extractor.cjs");
-const { extractEprNewApplication } = require("../src/extractors/epr/new_application.extractor.cjs");
 
 export function registerIpcHandlers() {
   initDatabase(async (dbInstance) => {
@@ -1257,7 +1247,8 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
 
   ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
     const otp = typeof payload === 'string' ? payload : payload?.otp;
-    return await submitLoginOtp(otp, (msg) => event.sender.send('scraper:log', msg));
+    const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
+    return await submitLoginOtp(otp, (msg) => event.sender.send('scraper:log', msg), { autoScrape });
   });
 
   ipcMain.handle('scraper:resendLoginOtp', async (event) => {
@@ -1999,163 +1990,41 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
   });
 
   ipcMain.handle('scraper:runEpr', async () => {
-    let originalWriteFileSync;
     try {
-      console.log("Starting EPR scraper...");
-      
-      const memoryDataMap = {};
-      originalWriteFileSync = fs.writeFileSync;
-      fs.writeFileSync = (filePath, data, ...args) => {
-          if (typeof filePath === 'string' && filePath.endsWith('.json') && (filePath.includes('data') || filePath.includes('\\data\\'))) {
-              const filename = path.basename(filePath);
-              console.log(`\n--- [SCRAPED DATA IN MEMORY] ${filename} ---`);
-              let parsed = data;
-              try {
-                  parsed = JSON.parse(data);
-                  console.log(JSON.stringify(parsed, null, 2).substring(0, 300) + '... (truncated)');
-              } catch(e) {}
-              memoryDataMap[filename] = parsed;
-              // Skipping originalWriteFileSync to keep data exclusively in memory
-          } else {
-              originalWriteFileSync(filePath, data, ...args);
-          }
-      };
+      console.log('Starting EPR scraper...');
 
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
-      const context = await chromium.launchPersistentContext(userDataDir, { 
-          headless: false,
-          acceptDownloads: true,
-          viewport: null,
-          args: ['--start-maximized'],
-          channel: 'chrome' // Use system Chrome to bypass AppLocker policies
+      const context = await chromium.launchPersistentContext(userDataDir, {
+        headless: false,
+        acceptDownloads: true,
+        viewport: null,
+        args: ['--start-maximized'],
+        channel: 'chrome',
       });
       const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
       await page.bringToFront();
 
       await page.goto('https://epr.cpcb.gov.in');
-      
-      console.log("⏳ Waiting for you to login... (Please login manually. Script will continue when URL changes to dashboard)");
+
+      console.log('Waiting for manual login... (continues when URL changes to dashboard)');
       try {
-          await page.waitForURL('**/*dashboard*', { timeout: 300000 }); // 5 minutes to login
-          console.log("🔓 Login detected! Proceeding with extraction...");
-  
-          console.log("🖱️ Clicking the first 'Open' button on Waste Category card...");
-          const firstOpenBtn = page.locator('app-waste-category button').filter({ hasText: /Open/i }).first();
-          await firstOpenBtn.waitFor({ state: 'visible', timeout: 15000 });
-          await firstOpenBtn.click();
-          await page.waitForTimeout(1000);
-  
-          console.log("🔘 Selecting the 'PWP' application radio button...");
-          try {
-            // Find the radio button explicitly by XPath
-            const pwpRadioBtn = page.locator('xpath=/html/body/app-root/div/app-dashboard/div/div/main/app-waste-category/app-modal-frame[1]/div/div[2]/div/div/form/div[1]/table/tbody/tr[2]/td[1]/div/input');
-            await pwpRadioBtn.waitFor({ state: 'visible', timeout: 3000 });
-            await pwpRadioBtn.click();
-          } catch (e) {
-            console.log("⚠️ PWP radio button not found by XPath, falling back to first radio button...");
-            const firstRadioBtn = page.locator('app-modal-frame input[type="radio"]').first();
-            await firstRadioBtn.click();
-          }
-          await page.waitForTimeout(1000);
-  
-          console.log("🖱️ Clicking the 'Proceed/Open' button in the modal...");
-          // In the modal, find the button that is inside an app-button component
-          const modalOpenBtn = page.locator('app-modal-frame app-button button').first();
-          await modalOpenBtn.click();
-          await page.waitForTimeout(3000); // Give it a moment to load the next page
-  
-          console.log("🖱️ Checking if 'Select Unit' dropdown exists...");
-          // We use try/catch because if a PWP user only has 1 unit, this dropdown won't exist!
-          try {
-              const selectUnitBtn = page.locator('button[title="Select Unit"]').first();
-              // Short timeout because it might not exist
-              await selectUnitBtn.waitFor({ state: 'visible', timeout: 8000 });
-              await selectUnitBtn.click();
-              await page.waitForTimeout(1500);
-      
-              console.log("🖱️ Clicking the specific unit card...");
-              const unitCard = page.locator('button.unit-card').first();
-              await unitCard.waitFor({ state: 'visible', timeout: 5000 });
-              await unitCard.click();
-              await page.waitForTimeout(3000); // Wait for the dashboard to refresh
-          } catch (e) {
-              console.log("⏭️ No 'Select Unit' dropdown found (likely single-unit user). Skipping unit selection...");
-          }
-  
+        await page.waitForURL('**/*dashboard*', { timeout: 300000 });
+        console.log('Login detected! Proceeding with extraction...');
       } catch (e) {
-          console.error("❌ Error during login or post-login clicks:", e.message);
-          console.log("Let's try running extractors anyway...");
-      }
-      const allData = {};
-      const dataDir = path.join(__dirname, '..', 'data');
-      if (!fs.existsSync(dataDir)) {
-          fs.mkdirSync(dataDir, { recursive: true });
+        console.error('Login wait error:', e.message);
+        console.log('Trying extractors anyway...');
       }
 
-      const saveJson = (filename, data) => {
-        // Keep data in memory, do not write to disk
-        memoryDataMap[filename] = data;
-      };
+      const result = await runEprExtraction(page, {
+        onLog: (msg) => console.log(msg),
+      });
 
-      allData.dashboard = await extractEprDashboard(page);
-      saveJson('epr_dashboard.json', allData.dashboard);
-
-      allData.profile = await extractEprProfile(page);
-      saveJson('epr_profile.json', allData.profile);
-
-      allData.application = await extractEprApplication(page);
-      saveJson('epr_application.json', allData.application);
-
-      allData.material = await extractEprMaterial(page);
-      saveJson('epr_material.json', allData.material);
-
-      allData.production = await extractEprProduction(page);
-      await saveJson('epr_production.json', allData.production);
-
-      allData.sales = await extractEprSales(page);
-      saveJson('epr_sales.json', allData.sales);
-
-      allData.wallet = await extractEprWallet(page);
-      saveJson('epr_wallet.json', allData.wallet);
-
-      allData.annualFiling = await extractEprAnnualFiling(page);
-      saveJson('epr_annual_filing.json', allData.annualFiling);
-
-      allData.payment = await extractEprPaymentHistory(page);
-      saveJson('epr_payment.json', allData.payment);
-
-      allData.newApplication = await extractEprNewApplication(page);
-      saveJson('epr_new_application.json', allData.newApplication);
-
-      saveJson('scraped_data_latest.json', allData);
-
-      // Commenting out close so you can inspect the browser
-      // await browser.close();
-      console.log("EPR Scraping completed successfully.");
-      
-      // Persist scraped data directly to SQLite (no JSON files on disk)
-      try {
-          const { createRequire } = await import('module');
-          const require = createRequire(import.meta.url);
-          const { persistScrapedData } = require('../src/extractors/epr/scrapedDataPersist.cjs');
-          await persistScrapedData({
-            rootDir: path.join(__dirname, '..'),
-            data: {
-              new_application_data: allData.newApplication,
-            },
-          });
-      } catch (err) {
-          console.error('Failed to save scraped data to SQLite:', err);
-      }
-
-      return { success: true, data: allData };
+      return result.success
+        ? { success: true, data: result.data }
+        : { success: false, error: result.error || 'Scraper failed' };
     } catch (error) {
-      console.error("Scraper failed:", error);
+      console.error('Scraper failed:', error);
       return { success: false, error: error.message };
-    } finally {
-      if (originalWriteFileSync) {
-          fs.writeFileSync = originalWriteFileSync;
-      }
     }
   });
 
