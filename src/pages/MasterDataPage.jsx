@@ -29,7 +29,7 @@ const TAB_HEADERS = {
   },
   reports: {
     title: 'MT Reports',
-    subtitle: 'Category-wise MT by FY and State (Cat-I to Cat-IV)',
+    subtitle: 'Category-wise MT by FY, State, and CPCB section 3c (packaging consumed)',
   },
 };
 

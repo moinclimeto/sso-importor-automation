@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
@@ -32,6 +32,11 @@ import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import PlasticConsumed3cTable from '../components/PlasticConsumed3cTable.jsx';
+import {
+  buildPlasticConsumed3cFromPurchases,
+  plasticConsumed3cHasData,
+} from '../../shared/plasticConsumed3c.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -135,6 +140,8 @@ export default function NewApplicationPage() {
   const [savedCeprId, setSavedCeprId] = useState('');
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [loadingSavedRegistration, setLoadingSavedRegistration] = useState(true);
+  const [purchases, setPurchases] = useState([]);
+  const [plastic3cLoading, setPlastic3cLoading] = useState(false);
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
@@ -359,6 +366,35 @@ export default function NewApplicationPage() {
     const { name, value } = e.target;
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
+
+  const refreshPlasticConsumed3c = useCallback(async (applyToForm = false) => {
+    if (!window.pwp?.purchases?.getAll) return null;
+    setPlastic3cLoading(true);
+    try {
+      const rows = await window.pwp.purchases.getAll();
+      setPurchases(rows || []);
+      const built = buildPlasticConsumed3cFromPurchases(rows || [], { docStatus: 'published' });
+      if (applyToForm) {
+        setGeneralInfo((prev) => ({
+          ...prev,
+          plasticConsumed: built.plasticConsumed,
+        }));
+      }
+      return built;
+    } finally {
+      setPlastic3cLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (loadingSavedRegistration) return;
+    refreshPlasticConsumed3c(true);
+  }, [loadingSavedRegistration, refreshPlasticConsumed3c]);
+
+  const plasticConsumed3cPreview = useMemo(
+    () => buildPlasticConsumed3cFromPurchases(purchases, { docStatus: 'published' }),
+    [purchases],
+  );
 
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
@@ -719,6 +755,13 @@ export default function NewApplicationPage() {
     }
 
     const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
+    const built3c = buildPlasticConsumed3cFromPurchases(purchases, { docStatus: 'published' });
+    const plasticConsumed = plasticConsumed3cHasData(built3c.plasticConsumed)
+      ? built3c.plasticConsumed
+      : (generalInfo.plasticConsumed || {
+        '2024-25': { ...zeroCats },
+        '2025-26': { ...zeroCats },
+      });
     const derivedState =
       generalInfo.stateUt ||
       stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
@@ -740,10 +783,7 @@ export default function NewApplicationPage() {
       hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
       capitalInvested: generalInfo.capitalInvested || generalInfo.capitalInvested || '0',
       operatingStates,
-      plasticConsumed: {
-        '2024-25': { ...zeroCats },
-        '2025-26': { ...zeroCats },
-      },
+      plasticConsumed,
     };
 
     setGeneralInfo(applicationDefaults);
@@ -1431,52 +1471,35 @@ export default function NewApplicationPage() {
                   </div>
                   
                   <div className="md:col-span-2 mt-4">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mb-2">
-                      For now, New Application automation submits this table as <strong>0</strong> on the CPCB portal.
-                    </p>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-[#0b6c7a] text-white">
-                          <tr>
-                            <th className="px-4 py-3 font-medium">Year</th>
-                            <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 bg-white">
-                          {['2024-25', '2025-26'].map((year) => (
-                            <tr key={year}>
-                              <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
-                              {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
-                                <td key={cat} className="px-4 py-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                                    value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
-                                    onChange={(e) => {
-                                      setGeneralInfo(prev => ({
-                                        ...prev,
-                                        plasticConsumed: {
-                                          ...(prev.plasticConsumed || {}),
-                                          [year]: {
-                                            ...(prev.plasticConsumed?.[year] || {}),
-                                            [cat]: e.target.value
-                                          }
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
+                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
+                      <label className="block text-sm font-medium text-slate-700">
+                        3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *
+                      </label>
+                      <button
+                        type="button"
+                        onClick={() => refreshPlasticConsumed3c(true)}
+                        disabled={plastic3cLoading}
+                        className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-white px-2.5 py-1 text-xs font-medium text-teal-800 hover:bg-teal-50 disabled:opacity-50"
+                      >
+                        <RefreshCw size={13} className={plastic3cLoading ? 'animate-spin' : ''} />
+                        Refresh from Procurement
+                      </button>
                     </div>
+                    <p className="text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-md px-2 py-1.5 mb-2">
+                      Auto-calculated from <strong>published procurement</strong> invoices (packaging category + MT on review).
+                      Confirm values below — these are submitted to CPCB on New Application.
+                    </p>
+                    <PlasticConsumed3cTable
+                      years={plasticConsumed3cPreview.years}
+                      plasticConsumed={generalInfo.plasticConsumed || plasticConsumed3cPreview.plasticConsumed}
+                      readOnly
+                      compact
+                    />
+                    {!plasticConsumed3cHasData(generalInfo.plasticConsumed || plasticConsumed3cPreview.plasticConsumed) ? (
+                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mt-2">
+                        No packaging MT in published procurement yet. Review & publish purchase invoices with plastic packaging, then click Refresh.
+                      </p>
+                    ) : null}
                   </div>
 
                   <div className="md:col-span-2">
