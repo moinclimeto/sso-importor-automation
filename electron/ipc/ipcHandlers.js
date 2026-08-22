@@ -44,6 +44,7 @@ import {
   resendLoginOtp,
 } from '../automation/cpcbLogin.js';
 import { setPaymentBypassNotifier, resolvePaymentBypass } from '../automation/paymentBypassBridge.js';
+import { setPortalToastEmitter, attachPortalToastWatcherToContext } from '../automation/portalToastWatcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -62,7 +63,20 @@ const { extractEprNewApplication } = require("../../src/extractors/epr/new_appli
 
 const registrationLog = createLogger('registration-ipc', 'registration.log');
 
+function bindPortalToastSender(event) {
+  const sender = event?.sender;
+  if (!sender) return;
+  setPortalToastEmitter((payload) => {
+    try {
+      if (!sender.isDestroyed()) sender.send('cpcb:portal-toast', payload);
+    } catch {
+      /* renderer gone */
+    }
+  });
+}
+
 function sendScraperLog(event, msg) {
+  bindPortalToastSender(event);
   const text = typeof msg === 'string' ? msg : (msg?.text || msg?.message || String(msg));
   registrationLog.info(text);
   console.log('[scraper]', text);
@@ -213,13 +227,61 @@ export function registerIpcHandlers() {
   });
 
   // ─── FILE SYSTEM ───────────────────────────────────────────────
-  ipcMain.handle('fs:readFileBase64', async (_, filePath) => {
+  const uploadsDir = () => {
+    const destDir = path.join(app.getPath('userData'), 'registration_uploads');
+    fs.mkdirSync(destDir, { recursive: true });
+    return destDir;
+  };
+
+  const resolveLocalFile = (filePath) => {
+    if (!filePath || typeof filePath !== 'string') return null;
+    const base = path.basename(filePath);
+    const candidates = [];
+    if (path.isAbsolute(filePath)) candidates.push(filePath);
+    candidates.push(
+      path.join(uploadsDir(), base),
+      path.join(app.getPath('downloads'), base),
+      path.join(app.getPath('desktop'), base),
+      path.join(app.getPath('documents'), base)
+    );
+    return candidates.find((candidate) => candidate && fs.existsSync(candidate)) || null;
+  };
+
+  const readFileAsBase64 = async (_, filePath) => {
     try {
-      if (!filePath || !fs.existsSync(filePath)) return null;
-      const data = fs.readFileSync(filePath);
-      return data.toString('base64');
+      const resolved = resolveLocalFile(filePath);
+      if (!resolved) return null;
+      return fs.readFileSync(resolved).toString('base64');
     } catch (e) {
       console.error('Failed to read file as base64', e);
+      return null;
+    }
+  };
+  ipcMain.handle('fs:readFileBase64', readFileAsBase64);
+  ipcMain.handle('fs:readLocalFileBase64', readFileAsBase64);
+
+  ipcMain.handle('fs:copyRegistrationFile', async (_, srcPath) => {
+    try {
+      const resolved = resolveLocalFile(srcPath);
+      if (!resolved) return null;
+      const dest = path.join(uploadsDir(), path.basename(resolved));
+      fs.copyFileSync(resolved, dest);
+      return dest;
+    } catch (e) {
+      console.error('Failed to copy registration file', e);
+      return srcPath || null;
+    }
+  });
+
+  ipcMain.handle('fs:saveRegistrationFile', async (_, fileName, base64) => {
+    try {
+      if (!base64) return null;
+      const safeName = path.basename(String(fileName || 'document.bin')).replace(/[<>:"/\\|?*]/g, '_');
+      const dest = path.join(uploadsDir(), safeName);
+      fs.writeFileSync(dest, Buffer.from(base64, 'base64'));
+      return dest;
+    } catch (e) {
+      console.error('Failed to save registration file', e);
       return null;
     }
   });
@@ -913,6 +975,7 @@ export function registerIpcHandlers() {
 
   // ─── REGISTRATION SCRAPER ────────────────────────────────────
   ipcMain.handle('scraper:startRegistrationFlow', async (event, data) => {
+    bindPortalToastSender(event);
     return await startRegistrationFlow(data, (msg) => sendScraperLog(event, msg));
   });
   
@@ -944,6 +1007,7 @@ export function registerIpcHandlers() {
   });
 
   ipcMain.handle('scraper:startLoginFlow', async (event, payload) => {
+    bindPortalToastSender(event);
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     return await startLoginFlow(payload, (msg) => sendScraperLog(event, msg));
   });
@@ -1203,6 +1267,7 @@ export function registerIpcHandlers() {
       // Prefer an existing page; never open extras
       const existing = context.pages();
       cpcbPage = existing.length > 0 ? existing[0] : await context.newPage();
+      await attachPortalToastWatcherToContext(context).catch(() => {});
       await pruneExtraTabs(cpcbPage);
 
       context.on('close', () => {

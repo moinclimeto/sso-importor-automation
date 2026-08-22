@@ -5,6 +5,7 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import LocalFilePreview from '../components/LocalFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
@@ -30,6 +31,8 @@ import {
 } from '../utils/registrationFormPersistence.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
+import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -91,6 +94,7 @@ export default function CpcbRegistrationPage() {
   const { setPageHeader } = usePageHeader();
   const navigate = useNavigate();
   const { toast, showToast, hideToast } = useToast();
+  const { portalToasts, clearPortalToasts } = useCpcbPortalToasts(showToast);
 
   const [autoData, setAutoData] = useState(EMPTY_AUTO);
   const [email, setEmail] = useState('');
@@ -152,7 +156,7 @@ export default function CpcbRegistrationPage() {
     : selectClass;
 
   const applySavedRegistration = useCallback(async (saved) => {
-    if (!saved?.cepr_id) return;
+    if (!saved) return;
 
     const form = saved.formData || {};
     const loginCreds = resolveRegistrationLoginCredentials({
@@ -161,10 +165,15 @@ export default function CpcbRegistrationPage() {
       password: saved.password || form.generalInfo?.password,
     });
 
-    setRegistrationComplete(true);
-    setSavedCeprId(saved.cepr_id);
+    if (saved.cepr_id) {
+      setRegistrationComplete(true);
+      setSavedCeprId(saved.cepr_id);
+      setWizardStep('partA');
+    }
 
-    setWizardStep('partA');
+    if (form.autoData && typeof form.autoData === 'object') {
+      setAutoData({ ...EMPTY_AUTO, ...form.autoData });
+    }
 
     if (form.autoData) {
       setAutoData((prev) => ({ ...EMPTY_AUTO, ...pickNonEmpty(form.autoData), ...pickNonEmpty(prev) }));
@@ -387,6 +396,33 @@ export default function CpcbRegistrationPage() {
     );
   };
 
+  const persistPartCFile = async (file, field) => {
+    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+    if (!stored.success || !stored.filePath) {
+      showToast(stored.message || 'Could not save this file for preview. Please upload it again from the desktop app.', 'error');
+      return;
+    }
+    setAutoData((prev) => {
+      const next = { ...prev, [field]: stored.filePath };
+      if (window.pwp?.registration?.save) {
+        const updatedFormData = {
+          ...(savedRegistration?.formData || {}),
+          email,
+          mobile,
+          autoData: next,
+          generalInfo,
+        };
+        window.pwp.registration.save({
+          ...(savedRegistration || {}),
+          email,
+          mobile,
+          form_data_json: JSON.stringify(updatedFormData),
+        }).catch(console.error);
+      }
+      return next;
+    });
+  };
+
   const handleSaveAndNext = async () => {
     if (wizardStep === 'partA') {
       if (!generalInfo.operatingStates?.length) {
@@ -519,6 +555,8 @@ export default function CpcbRegistrationPage() {
       ctoValidity: autoData.ctoValidity,
       dateOfCommencement: autoData.dateOfCommencement,
       panDocumentPath: autoData.panDocumentPath,
+      companyPanDocumentPath: autoData.companyPanDocumentPath,
+      personPanDocumentPath: autoData.personPanDocumentPath,
       gstDocumentPath: autoData.gstDocumentPath,
       cinDocumentPath: autoData.cinDocumentPath,
       iecDocumentPath: autoData.iecDocumentPath,
@@ -529,6 +567,7 @@ export default function CpcbRegistrationPage() {
 
     setLoading(true);
     setLoadingMsg('Starting automation process...');
+    clearPortalToasts();
 
     try {
       if (window.pwp?.registration?.save) {
@@ -552,7 +591,7 @@ export default function CpcbRegistrationPage() {
         showRegistrationAutomationError(showToast, setAutomationLogs, errMsg);
       }
     } catch (err) {
-      showToast('System error: ' + err.message, 'error');
+      showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
     } finally {
       setLoading(false);
     }
@@ -846,6 +885,7 @@ export default function CpcbRegistrationPage() {
     }
 
     setAutomationLogs([]);
+    clearPortalToasts();
     setLoading(true);
     await beginLoginFlow(savedCeprId);
     setLoading(false);
@@ -1055,6 +1095,7 @@ export default function CpcbRegistrationPage() {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
       <Toast toast={toast} onClose={hideToast} />
+      <CpcbPortalToastFeed items={portalToasts} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
       <p className="text-sm text-slate-500 mb-6">
@@ -1280,35 +1321,28 @@ export default function CpcbRegistrationPage() {
                     className={`${inputClass} uppercase`}
                     required
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
                   {autoData.unitGstDoc ? (
-                    <p className="text-xs text-green-600 mt-1 truncate px-3 py-2 border border-green-200 bg-green-50 rounded-lg" title={autoData.unitGstDoc}>
-                      Uploaded: {autoData.unitGstDoc.split(/[/\\]/).pop()}
+                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
+                      Certificate from documents: {autoData.unitGstDoc.split(/[/\\]/).pop()} — uploaded automatically in Part A
                     </p>
-                  ) : (
-                    <>
-                      <input
-                        type="file"
-                        accept=".pdf,.png,.jpg,.jpeg"
-                        onChange={async (e) => {
-                          const file = e.target.files[0];
-                          if (file) {
-                            const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                            if (!stored.success || !stored.filePath) {
-                              showToast(stored.message || 'Could not save Unit GST document.', 'error');
-                              return;
-                            }
-                            setAutoData(prev => ({ ...prev, unitGstDoc: stored.filePath }));
-                          }
-                        }}
-                        className={inputClass}
-                        required
-                      />
-                    </>
-                  )}
+                  ) : null}
                 </div>
+                {/* Already captured by the document extractor — no manual upload needed. */}
+                {!autoData.unitGstDoc && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
+                    <input
+                      type="file"
+                      accept=".pdf,.png,.jpg,.jpeg"
+                      onChange={async (e) => {
+                        const file = e.target.files[0];
+                        if (file) await persistPartCFile(file, 'unitGstDoc');
+                      }}
+                      className={inputClass}
+                      required
+                    />
+                  </div>
+                )}
               </>
             )}
             <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -1611,32 +1645,16 @@ export default function CpcbRegistrationPage() {
                     accept=".pdf,.png,.jpg,.jpeg"
                     onChange={async (e) => {
                       const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, detailsOfProductsPath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
+                      if (file) await persistPartCFile(file, 'detailsOfProductsPath');
                     }}
                     className={inputClass}
                   />
-                  {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
+                  {autoData.detailsOfProductsPath && (
+                    <div className="mt-1 flex items-center gap-3">
+                      <p className="text-xs text-green-600 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>
+                      <LocalFilePreview filePath={autoData.detailsOfProductsPath} />
+                    </div>
+                  )}
                 </div>
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
@@ -1645,32 +1663,16 @@ export default function CpcbRegistrationPage() {
                     accept=".pdf,.png,.jpg,.jpeg"
                     onChange={async (e) => {
                       const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, representativePicturePath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
+                      if (file) await persistPartCFile(file, 'representativePicturePath');
                     }}
                     className={inputClass}
                   />
-                  {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
+                  {autoData.representativePicturePath && (
+                    <div className="mt-1 flex items-center gap-3">
+                      <p className="text-xs text-green-600 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>
+                      <LocalFilePreview filePath={autoData.representativePicturePath} />
+                    </div>
+                  )}
                 </div>
                 <div className="md:col-span-2">
                   <label className="block text-sm font-medium text-slate-700 mb-1">
@@ -1683,34 +1685,17 @@ export default function CpcbRegistrationPage() {
                     accept=".pdf"
                     onChange={async (e) => {
                       const file = e.target.files[0];
-                      if (!file) return;
-                      const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                      if (!stored.success || !stored.filePath) {
-                        showToast(stored.message || 'Could not save document.', 'error');
-                        return;
-                      }
-                      setAutoData((prev) => {
-                        const next = { ...prev, typeOfCompanyDoc: stored.filePath };
-                        if (window.pwp?.registration?.save) {
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData: next, generalInfo
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                        return next;
-                      });
+                      if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
                     }}
                     className={inputClass}
                   />
                   {autoData.typeOfCompanyDoc && (
-                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.typeOfCompanyDoc}>
-                      Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                    </p>
+                    <div className="mt-1 flex items-center gap-3">
+                      <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
+                        Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
+                      </p>
+                      <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
+                    </div>
                   )}
                 </div>
               </div>
@@ -1890,6 +1875,7 @@ export default function CpcbRegistrationPage() {
           <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-800 font-semibold">Please wait</p>
           <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
+          <p className="text-xs text-slate-400 mt-2">CPCB portal messages appear live in the chat at the bottom-right</p>
         </div>
       )}
 

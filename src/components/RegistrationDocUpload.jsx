@@ -135,7 +135,9 @@ function ProgressPanel({ progress }) {
       ? progress.remaining
       : total - processed
   );
-  const percent = total > 0 ? Math.min(100, Math.round((processed / total) * 100)) : 0;
+  const currentFile = progress.currentFile || progress.currentFile || '';
+  const displayCount = progress.stage === 'complete' ? total || processed : processed;
+  const percent = total > 0 ? Math.min(100, Math.round((displayCount / total) * 100)) : 0;
   const done = progress.stage === 'complete';
 
   return (
@@ -158,8 +160,8 @@ function ProgressPanel({ progress }) {
           style={{ width: `${percent}%` }}
         />
       </div>
-      {progress.currentFile && (
-        <p className="text-xs text-slate-500 truncate">{progress.currentFile}</p>
+      {currentFile && (
+        <p className="text-xs text-slate-500 truncate">{currentFile}</p>
       )}
     </div>
   );
@@ -232,6 +234,47 @@ function DocListRow({ item, onRemove, removing }) {
   );
 }
 
+/** Same physical upload — the row keeps its identity across processing → done/failed. */
+function isSameUpload(a, b) {
+  const pathA = String(a.filePath || '').toLowerCase();
+  const pathB = String(b.filePath || '').toLowerCase();
+  if (pathA && pathB) return pathA === pathB;
+  const nameA = String(a.fileName || '').toLowerCase();
+  const nameB = String(b.fileName || '').toLowerCase();
+  return Boolean(nameA) && nameA === nameB;
+}
+
+function mergeDocItem(existing, incoming) {
+  const merged = { ...existing };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === undefined || value === null || value === '') continue;
+    merged[key] = value;
+  }
+  if (incoming.status) merged.status = incoming.status;
+  merged.error = merged.status === 'done' ? '' : incoming.error || existing.error || '';
+  if (existing.dbId && !incoming.dbId) merged.id = existing.id;
+  return merged;
+}
+
+function dedupeDocList(list) {
+  const out = [];
+  for (const item of list) {
+    const idx = out.findIndex((d) => {
+      if (d.dbId && item.dbId) return d.dbId === item.dbId;
+      if (isSameUpload(d, item)) return true;
+      return (
+        item.status === 'done' &&
+        d.status === 'done' &&
+        Boolean(item.docType) &&
+        d.docType === item.docType
+      );
+    });
+    if (idx >= 0) out[idx] = mergeDocItem(out[idx], item);
+    else out.push(item);
+  }
+  return out;
+}
+
 export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
@@ -274,7 +317,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             error: '',
           };
         });
-        setDocList(items);
+        setDocList(dedupeDocList(items));
         await notifyExtracted(onExtracted);
       } catch {
         /* ignore */
@@ -284,39 +327,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   }, [onExtracted]);
 
   const upsertDocInList = (item) => {
-    setDocList((prev) => {
-      let next = [...prev];
-
-      if (item.filePath) {
-        const procIdx = next.findIndex(
-          (d) => d.filePath === item.filePath && d.status === 'processing'
-        );
-        if (procIdx >= 0) {
-          next[procIdx] = item;
-        } else {
-          next.push(item);
-        }
-      } else {
-        next.push(item);
-      }
-
-      if (item.status === 'done' && item.docType) {
-        let found = false;
-        next = next.filter((d) => {
-          if (d.docType === item.docType && d.status === 'done') {
-            if (!found && d.id === item.id) {
-              found = true;
-              return true;
-            }
-            if (d.id === item.id) return true;
-            return false;
-          }
-          return true;
-        });
-      }
-
-      return next;
-    });
+    setDocList((prev) => dedupeDocList([...prev, item]));
   };
 
   const saveDocument = async (data, filePath) => {
@@ -340,7 +351,14 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   };
 
   const processBatch = async (fileEntries) => {
-    const targets = fileEntries.filter((f) => f.path);
+    const seenPaths = new Set();
+    const targets = fileEntries.filter((f) => {
+      if (!f.path) return false;
+      const key = String(f.path).toLowerCase();
+      if (seenPaths.has(key)) return false;
+      seenPaths.add(key);
+      return true;
+    });
     if (!targets.length) {
       showToast?.('No valid file paths found. Use Browse inside the Electron app.', 'error');
       return;
@@ -396,9 +414,27 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
           successCount: success,
           failedCount: failed,
           remaining,
-          message:
-            p.message ||
-            `${success} extracted · ${remaining} remaining`,
+          message: p.message || `${success} extracted · ${remaining} remaining`,
+        });
+        const fs = p.fileStatus;
+        if (!fs) return;
+        const name = fs.sourceFileName || fs.fileName;
+        if (!name) return;
+        const status =
+          fs.status === 'success' || fs.status === 'ok'
+            ? 'done'
+            : fs.status === 'failed' || fs.status === 'fail'
+              ? 'failed'
+              : fs.status === 'skipped'
+                ? 'failed'
+                : 'processing';
+        upsertDocInList({
+          id: `proc-${name}`,
+          fileName: name,
+          filePath: '',
+          docType: null,
+          status,
+          error: status === 'failed' ? fs.label || '' : '',
         });
       });
     }
@@ -643,7 +679,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     setDocList((prev) => prev.filter((d) => d.id !== item.id));
   };
 
-  const savedDocs = docList.filter((d) => d.status === 'done');
+  const savedDocs = docList.filter((d) => d.status === 'done' && (d.dbId || d.docType));
   const totalUploaded = savedDocs.length;
   const countLabel = resolving
     ? 'Reading files…'
@@ -751,7 +787,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       {docList.length > 0 && (
         <div className="space-y-2">
           <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Documents · {totalUploaded}
+            Documents · {docList.length}
           </p>
           <div className="max-h-[40vh] overflow-y-auto space-y-2 pr-1">
             {docList.map((item) => (

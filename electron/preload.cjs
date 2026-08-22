@@ -8,6 +8,9 @@ contextBridge.exposeInMainWorld('pwp', {
   // FS
   fs: {
     readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+    readLocalFileBase64: (filePath) => ipcRenderer.invoke('fs:readLocalFileBase64', filePath),
+    copyRegistrationFile: (filePath) => ipcRenderer.invoke('fs:copyRegistrationFile', filePath),
+    saveRegistrationFile: (fileName, base64) => ipcRenderer.invoke('fs:saveRegistrationFile', fileName, base64),
   },
   files: {
     storeUpload: (payload) => ipcRenderer.invoke('files:store-upload', payload),
@@ -129,6 +132,11 @@ contextBridge.exposeInMainWorld('pwp', {
       const handler = (_event, payload) => callback?.(payload);
       ipcRenderer.on('scraper:log', handler);
       return () => ipcRenderer.removeListener('scraper:log', handler);
+    },
+    onPortalToast: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('cpcb:portal-toast', handler);
+      return () => ipcRenderer.removeListener('cpcb:portal-toast', handler);
     },
   },
   // EPR Scraped Data (SQLite)

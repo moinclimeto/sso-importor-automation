@@ -43,7 +43,7 @@ const worker = new Worker(
     const defaultModels = [
       'gemini-flash-lite-latest',
       'gemini-flash-latest',
-      'gemini-2.0-flash',
+      'gemini-3.6-flash',
     ];
     
     const envModel = process.env.GEMINI_MODEL?.trim();

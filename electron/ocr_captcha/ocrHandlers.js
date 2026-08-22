@@ -32,6 +32,11 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+function isNetworkError(err) {
+  const msg = `${err?.message || ''} ${err?.cause?.message || ''} ${err?.cause?.code || ''}`;
+  return /fetch failed|ECONNRESET|ETIMEDOUT|ENOTFOUND|EAI_AGAIN|UND_ERR|socket|network|ECONNREFUSED/i.test(msg);
+}
+
 async function runGeminiJsonExtraction({
   genAI,
   modelNames,
@@ -42,29 +47,41 @@ async function runGeminiJsonExtraction({
 }) {
   let lastError = null;
   for (const modelName of modelNames) {
-    try {
-      const model = genAI.getGenerativeModel({
-        model: modelName,
-        generationConfig: {
-          responseMimeType: 'application/json',
-          temperature: 0.1,
-          maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
-        },
-      });
-      const result = await model.generateContent([
-        { text: prompt },
-        { inlineData: { mimeType, data: base64 } },
-      ]);
-      const text = result.response
-        .text()
-        .trim()
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
-        .trim();
-      return { parsed: JSON.parse(text), usedModel: modelName, lastError: null };
-    } catch (err) {
-      lastError = err;
-      log.warn('Gemini model failed', { modelName, message: err?.message });
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const model = genAI.getGenerativeModel({
+          model: modelName,
+          generationConfig: {
+            responseMimeType: 'application/json',
+            temperature: 0.1,
+            maxOutputTokens: Number(process.env.GEMINI_MAX_OUTPUT_TOKENS || 4096),
+          },
+        });
+        const result = await model.generateContent([
+          { text: prompt },
+          { inlineData: { mimeType, data: base64 } },
+        ]);
+        const text = result.response
+          .text()
+          .trim()
+          .replace(/```json\n?/g, '')
+          .replace(/```\n?/g, '')
+          .trim();
+        return { parsed: JSON.parse(text), usedModel: modelName, lastError: null };
+      } catch (err) {
+        lastError = err;
+        log.warn('Gemini model failed', {
+          modelName,
+          attempt,
+          message: err?.message,
+          cause: err?.cause?.code || err?.cause?.message,
+        });
+        if (isNetworkError(err) && attempt < 3) {
+          await new Promise((r) => setTimeout(r, 700 * attempt));
+          continue;
+        }
+        break;
+      }
     }
   }
   return { parsed: null, usedModel: null, lastError };
@@ -202,9 +219,10 @@ async function extractOneInvoice({
       .map((m) => m.trim())
       .filter(Boolean);
     const defaultModels = [
-      'gemini-3.6-flash',
-      'gemini-3.5-flash-lite',
       'gemini-2.0-flash',
+      'gemini-flash-latest',
+      'gemini-2.5-flash',
+      'gemini-3.6-flash',
     ];
     const modelNames = [
       ...new Set([...(envModel ? [envModel] : []), ...envCandidates, ...defaultModels]),
@@ -246,13 +264,18 @@ async function extractOneInvoice({
     }
 
     if (!parsed) {
+      const cause = lastError?.cause?.code || lastError?.cause?.message || '';
+      const networkHint = isNetworkError(lastError)
+        ? ' Cannot reach Google Gemini. Check internet, VPN, or firewall (generativelanguage.googleapis.com).'
+        : '';
       log.error('Gemini extraction failed for all models', {
         fileName: outFileName,
         message: lastError?.message,
+        cause,
       });
       return {
         success: false,
-        message: lastError?.message || 'Gemini extraction failed for all models.',
+        message: (lastError?.message || 'Gemini extraction failed for all models.') + networkHint,
         fileName: outFileName,
         trackId: log.trackId,
       };

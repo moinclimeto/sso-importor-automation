@@ -25,7 +25,10 @@ import {
   TYPE_OF_COMPANY_OPTIONS,
   INDIAN_STATES,
   GENERAL_INFO_EMPTY,
+  stateFromGstin,
 } from '../utils/registrationGeneralInfo.js';
+import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
+import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
@@ -87,6 +90,7 @@ export default function NewApplicationPage() {
   const { setPageHeader } = usePageHeader();
   const navigate = useNavigate();
   const { toast, showToast, hideToast } = useToast();
+  const { portalToasts, clearPortalToasts } = useCpcbPortalToasts(showToast);
 
   const [autoData, setAutoData] = useState(EMPTY_AUTO);
   const [email, setEmail] = useState('');
@@ -451,6 +455,8 @@ export default function NewApplicationPage() {
       ctoValidity: autoData.ctoValidity,
       dateOfCommencement: autoData.dateOfCommencement,
       panDocumentPath: autoData.panDocumentPath,
+      companyPanDocumentPath: autoData.companyPanDocumentPath,
+      personPanDocumentPath: autoData.personPanDocumentPath,
       gstDocumentPath: autoData.gstDocumentPath,
       cinDocumentPath: autoData.cinDocumentPath,
       plasticConsumed: generalInfo.plasticConsumed,
@@ -460,6 +466,7 @@ export default function NewApplicationPage() {
 
     setLoading(true);
     setLoadingMsg('Starting automation process...');
+    clearPortalToasts();
 
     try {
       if (window.pwp?.registration?.save) {
@@ -712,9 +719,18 @@ export default function NewApplicationPage() {
     }
 
     const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
+    const derivedState =
+      generalInfo.stateUt ||
+      stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
+      stateFromGstin(autoData.gstin);
     const operatingStates = (generalInfo.operatingStates || []).length
       ? generalInfo.operatingStates
-      : (generalInfo.stateUt ? [generalInfo.stateUt] : ['MADHYA PRADESH']);
+      : (derivedState ? [derivedState] : []);
+
+    if (!operatingStates.length) {
+      showToast('Select the State/UT — it could not be detected from the GST documents.', 'error');
+      return;
+    }
 
     const applicationDefaults = {
       ...generalInfo,
@@ -766,6 +782,7 @@ export default function NewApplicationPage() {
     }
 
     setAutomationLogs(saveLogs);
+    clearPortalToasts();
     setLoading(true);
     await beginLoginFlow(savedCeprId);
     setLoading(false);
@@ -975,6 +992,7 @@ export default function NewApplicationPage() {
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative pb-32">
       <Toast toast={toast} onClose={hideToast} />
+      <CpcbPortalToastFeed items={portalToasts} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
       <p className="text-sm text-slate-500 mb-4">
@@ -1180,14 +1198,16 @@ export default function NewApplicationPage() {
                     className={`${inputClass} uppercase`}
                     required
                   />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
                   {autoData.unitGstDoc ? (
-                    <p className="text-xs text-green-600 mt-1 truncate px-3 py-2 border border-green-200 bg-green-50 rounded-lg" title={autoData.unitGstDoc}>
-                      Uploaded: {autoData.unitGstDoc.split(/[/\\]/).pop()}
+                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
+                      Certificate from documents: {autoData.unitGstDoc.split(/[/\\]/).pop()} — uploaded automatically in Part A
                     </p>
-                  ) : (
+                  ) : null}
+                </div>
+                {/* Already captured by the document extractor — no manual upload needed. */}
+                {!autoData.unitGstDoc && (
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
                     <input
                       type="file"
                       accept=".pdf,.png,.jpg,.jpeg"
@@ -1205,8 +1225,8 @@ export default function NewApplicationPage() {
                       className={inputClass}
                       required
                     />
-                  )}
-                </div>
+                  </div>
+                )}
               </>
             )}
             <div>
@@ -1723,6 +1743,7 @@ export default function NewApplicationPage() {
           <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-800 font-semibold">Please wait</p>
           <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
+          <p className="text-xs text-slate-400 mt-2">CPCB portal messages appear live in the chat at the bottom-right</p>
         </div>
       )}
 

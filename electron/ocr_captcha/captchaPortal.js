@@ -302,7 +302,7 @@ async function solveCaptchaWithGemini(imageBuffer) {
     'This image is a CAPTCHA. Return ONLY the captcha characters (letters/digits), no spaces or explanation. Preserve case.';
 
   const genAI = new GoogleGenerativeAI(apiKeys[0]);
-  for (const modelName of ['gemini-2.0-flash', 'gemini-flash-latest']) {
+  for (const modelName of ['gemini-3.6-flash', 'gemini-flash-latest']) {
     try {
       const model = genAI.getGenerativeModel({
         model: modelName,

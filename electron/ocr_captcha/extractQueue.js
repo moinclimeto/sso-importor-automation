@@ -235,9 +235,9 @@ export async function runExtractQueue({
 
     emit({
       stage: 'processing',
-      processed: processedCount, // Use processedCount from outside closure
-      current,
-      message: `Extracting ${current}/${total}`,
+      processed: processedCount,
+      current: processedCount,
+      message: `Extracting ${processedCount}/${total}`,
       currentFile: label,
       fileStatus: {
         fileName: label,
@@ -295,9 +295,9 @@ export async function runExtractQueue({
         });
         emit({
           stage: 'processing',
-          processed: processedCount, // Use processedCount
-          current,
-          message: `Extracting ${current}/${total}`,
+          processed: processedCount,
+          current: processedCount,
+          message: `Extracting ${processedCount}/${total}`,
           currentFile: label,
           fileStatus: {
             fileName: label,
@@ -334,8 +334,8 @@ export async function runExtractQueue({
         emit({
           stage: 'processing',
           processed: processedCount,
-          current,
-          message: `Extracting ${current}/${total}`,
+          current: processedCount,
+          message: `Extracting ${processedCount}/${total}`,
           currentFile: label,
           fileStatus: {
             fileName: label,
@@ -369,9 +369,9 @@ export async function runExtractQueue({
         });
         emit({
           stage: 'processing',
-          processed: processedCount, // Use processedCount
-          current,
-          message: `Extracting ${current}/${total}`,
+          processed: processedCount,
+          current: processedCount,
+          message: `Extracting ${processedCount}/${total}`,
           currentFile: label,
           fileStatus: {
             fileName: label,
@@ -406,9 +406,9 @@ export async function runExtractQueue({
       });
       emit({
         stage: 'processing',
-        processed: processedCount, // Use processedCount
-        current,
-        message: `Extracting ${current}/${total}`,
+        processed: processedCount,
+        current: processedCount,
+        message: `Extracting ${processedCount}/${total}`,
         currentFile: label,
         fileStatus: {
           fileName: label,

@@ -24,34 +24,85 @@ function escapeRegex(value) {
 let loginBrowser = null;
 let loginPage = null;
 
+function isPageAlive(page) {
+  try {
+    return Boolean(page) && !page.isClosed();
+  } catch {
+    return false;
+  }
+}
+
+function isBrowserAlive(browser) {
+  try {
+    if (!browser) return false;
+    if (typeof browser.isConnected === 'function') return browser.isConnected();
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function getLoginSession() {
   const reg = getRegSession();
-  if (reg.page) {
+  if (isPageAlive(reg.page) && isBrowserAlive(reg.browser)) {
     return { browser: reg.browser, page: reg.page, reusedRegistrationBrowser: true };
   }
-  if (loginPage && !loginPage.isClosed()) {
+  if (isPageAlive(loginPage) && isBrowserAlive(loginBrowser)) {
     return { browser: loginBrowser, page: loginPage, reusedRegistrationBrowser: false };
   }
   return { browser: null, page: null, reusedRegistrationBrowser: false };
 }
 
+async function discardLoginBrowser() {
+  try {
+    if (loginPage && !loginPage.isClosed()) await loginPage.close();
+  } catch { /* ignore */ }
+  try {
+    if (loginBrowser) await loginBrowser.close();
+  } catch { /* ignore */ }
+  loginPage = null;
+  loginBrowser = null;
+}
+
 async function ensureLoginPage(onLog) {
   const existing = getLoginSession();
-  if (existing.page) return existing;
-
-  if (onLog) onLog('Opening CPCB browser for login (Persistent Session)...');
-  const userDataDir = path.join(os.tmpdir(), 'playwright_cpcb_login_session');
-  
-  // Launch persistent context which keeps session cookies across restarts
-  loginBrowser = await chromium.launchPersistentContext(userDataDir, { headless: false, args: ['--start-maximized'] });
-  
-  const pages = loginBrowser.pages();
-  if (pages.length > 0) {
-    loginPage = pages[0];
-  } else {
-    loginPage = await loginBrowser.newPage();
+  if (existing.page && isPageAlive(existing.page) && isBrowserAlive(existing.browser)) {
+    try {
+      existing.page.url();
+      return existing;
+    } catch {
+      /* window was closed */
+    }
   }
-  
+
+  await discardLoginBrowser();
+
+  if (onLog) onLog('Opening CPCB browser for login...');
+  const userDataDir = path.join(os.tmpdir(), 'playwright_cpcb_login_session');
+
+  try {
+    loginBrowser = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      args: ['--start-maximized'],
+    });
+  } catch (err) {
+    if (onLog) onLog('Previous browser lock found — relaunching...');
+    await discardLoginBrowser();
+    loginBrowser = await chromium.launchPersistentContext(userDataDir, {
+      headless: false,
+      args: ['--start-maximized'],
+    });
+  }
+
+  const pages = loginBrowser.pages();
+  loginPage = pages.length > 0 ? pages[0] : await loginBrowser.newPage();
+  const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
+  await attachPortalToastWatcherToContext(loginBrowser).catch(() => {});
+  loginBrowser.on('close', () => {
+    loginBrowser = null;
+    loginPage = null;
+  });
+
   return { browser: loginBrowser, page: loginPage, reusedRegistrationBrowser: false };
 }
 
@@ -680,41 +731,65 @@ async function startApplicationOnboarding(page, onLog) {
       const companyPanDoc = docs.find(d => d.doc_type === 'company_pan');
       const personPanDoc = docs.find(d => d.doc_type === 'person_pan');
       const gstDoc = docs.find(d => d.doc_type === 'gst');
+      const unitGstDoc = docs.find(d => d.doc_type === 'unit_gst');
       const cinDoc = docs.find(d => d.doc_type === 'cin');
       const udyamDoc = docs.find(d => d.doc_type === 'udyam');
+
+      // A slot missing on this dashboard variant must not skip the remaining uploads.
+      const tryUpload = async (label, filePath) => {
+        try {
+          return await uploadDocumentByLabel(page, label, filePath, onLog, { optional: true });
+        } catch (err) {
+          if (onLog) onLog(`Upload skipped for ${label}: ${err.message}`);
+          return false;
+        }
+      };
+
+      const tryUploadWithRetries = async (label, filePath) => {
+        try {
+          return await uploadDocumentByLabel(page, label, filePath, onLog);
+        } catch (err) {
+          if (onLog) onLog(`Upload failed for ${label}: ${err.message}. Continuing with next step.`);
+          return false;
+        }
+      };
 
       // Upload Company PAN
       if (companyPanDoc && companyPanDoc.file_path) {
         if (onLog) onLog('Attempting to upload Company PAN on dashboard...');
-        await uploadDocumentByLabel(page, 'Company PAN', companyPanDoc.file_path, onLog);
+        await tryUpload('Company PAN', companyPanDoc.file_path);
         // If there's no separate Person PAN, try uploading Company PAN to the generic 'PAN *' field as well
         if (!personPanDoc) {
-          await uploadDocumentByLabel(page, '^\\s*PAN\\s*\\*?\\s*$', companyPanDoc.file_path, onLog);
+          await tryUpload('^\\s*PAN\\s*\\*?\\s*$', companyPanDoc.file_path);
         }
       }
 
       // Upload Person PAN
       if (personPanDoc && personPanDoc.file_path) {
         if (onLog) onLog('Attempting to upload Person PAN on dashboard...');
-        await uploadDocumentByLabel(page, '^\\s*PAN\\s*\\*?\\s*$', personPanDoc.file_path, onLog);
+        await tryUpload('^\\s*PAN\\s*\\*?\\s*$', personPanDoc.file_path);
         // If there's no Company PAN, also try uploading the Person PAN to the 'Company PAN' field
         if (!companyPanDoc) {
-          await uploadDocumentByLabel(page, 'Company PAN', personPanDoc.file_path, onLog);
+          await tryUpload('Company PAN', personPanDoc.file_path);
         }
       }
       if (gstDoc && gstDoc.file_path) {
         if (onLog) onLog('Attempting to upload GST on dashboard...');
-        await uploadDocumentByLabel(page, 'Unit GST', gstDoc.file_path, onLog);
+        // The Unit GST slot needs the unit/plant certificate when the extractor found one.
+        const unitGstFile = unitGstDoc?.file_path || gstDoc.file_path;
+        const unitGstDone = await tryUpload('Unit GST', unitGstFile);
         // Safely match "GST *" ignoring leading/trailing spaces
-        await uploadDocumentByLabel(page, '^\\s*GST\\s*\\*?\\s*$', gstDoc.file_path, onLog);
+        if (!unitGstDone) {
+          await tryUpload('^\\s*GST\\s*\\*?\\s*$', gstDoc.file_path);
+        }
       }
       if (cinDoc && cinDoc.file_path) {
         if (onLog) onLog('Attempting to upload CIN on dashboard...');
-        await uploadDocumentByLabel(page, 'CIN', cinDoc.file_path, onLog);
+        await tryUpload('CIN', cinDoc.file_path);
       }
       if (udyamDoc && udyamDoc.file_path) {
         if (onLog) onLog('Attempting to upload Udyam/MSME on dashboard...');
-        await uploadDocumentByLabel(page, 'Supporting document for company category', udyamDoc.file_path, onLog);
+        await tryUpload('Supporting document for company category', udyamDoc.file_path);
       }
 
       let mergedGeneralInfo = {};
@@ -725,10 +800,10 @@ async function startApplicationOnboarding(page, onLog) {
         if (regDetails && regDetails.form_data_json) {
           const parsed = JSON.parse(regDetails.form_data_json);
           
-          // The UI saves generalInfo and autoData merged into the root of the JSON object
-          // So 'parsed' contains all our fields directly.
-          mergedGeneralInfo = parsed || {};
-          mergedAutoData = parsed || {};
+          // Older saves keep the fields at the root, newer ones nest them under
+          // generalInfo / autoData — support both shapes.
+          mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
+          mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
           
           if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
              mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
@@ -757,17 +832,26 @@ async function startApplicationOnboarding(page, onLog) {
       // Upload newly added files
       if (detailsOfProducts) {
         if (onLog) onLog('Attempting to upload Details of products produced/marketed...');
-        await uploadDocumentByLabel(page, 'Details \\( Type & Quantity \\) of products produced/marketed', detailsOfProducts, onLog);
+        await tryUploadWithRetries(
+          'Details \\( Type & Quantity \\) of products produced/marketed',
+          detailsOfProducts
+        );
       }
 
       if (representativePicture) {
         if (onLog) onLog('Attempting to upload Representative picture...');
-        await uploadDocumentByLabel(page, 'Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories', representativePicture, onLog);
+        await tryUploadWithRetries(
+          'Representative picture of Plastic Packaging / Plastic packaging for commodities covering different EPR categories',
+          representativePicture
+        );
       }
 
       if (mergedAutoData.typeOfCompanyDoc) {
         if (onLog) onLog('Uploading company-category supporting document...');
-        await uploadDocumentByLabel(page, 'Supporting document for company category', mergedAutoData.typeOfCompanyDoc, onLog);
+        await tryUploadWithRetries(
+          'Supporting document for company category',
+          mergedAutoData.typeOfCompanyDoc
+        );
       }
 
       if (false && operatingStates.length > 0) {
@@ -920,7 +1004,14 @@ export async function startLoginFlow(payload, onLog) {
       return { success: false, error: 'CEPR User ID and Password are required' };
     }
 
-    const { page } = await ensureLoginPage(onLog);
+    let { page } = await ensureLoginPage(onLog);
+    try {
+      page.url();
+    } catch {
+      if (onLog) onLog('Browser was closed. Opening a new window...');
+      await discardLoginBrowser();
+      ({ page } = await ensureLoginPage(onLog));
+    }
     
     // Check if we are already logged in before navigating to login
     try {
@@ -989,8 +1080,25 @@ export async function startLoginFlow(payload, onLog) {
       captchaImage: captchaData.captchaImage,
     };
   } catch (err) {
-    if (onLog) onLog('Login start error: ' + err.message);
-    return { success: false, error: err.message };
+    const msg = String(err.message || err);
+    if (/closed|Target page|browser has been closed|Session closed/i.test(msg)) {
+      if (onLog) onLog('Browser was closed. Opening again...');
+      await discardLoginBrowser();
+      try {
+        const { page } = await ensureLoginPage(onLog);
+        await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+        const captchaData = await getCaptchaImageDataUrl(page, onLog);
+        return {
+          success: true,
+          step: 'WAITING_LOGIN_CAPTCHA',
+          captchaImage: captchaData.captchaImage,
+        };
+      } catch (err2) {
+        return { success: false, error: err2.message };
+      }
+    }
+    if (onLog) onLog('Login start error: ' + msg);
+    return { success: false, error: msg };
   }
 }
 
@@ -1011,8 +1119,19 @@ export async function refreshLoginCaptcha(onLog) {
 
 export async function submitLoginCaptcha(captchaText, onLog) {
   try {
-    const { page } = getLoginSession();
-    if (!page) throw new Error('Browser session not active');
+    let { page } = getLoginSession();
+    if (!page) {
+      if (onLog) onLog('Browser was closed. Opening again...');
+      ({ page } = await ensureLoginPage(onLog));
+      await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const captchaData = await getCaptchaImageDataUrl(page, onLog);
+      return {
+        success: false,
+        error: 'Browser was closed and reopened. Enter the new captcha.',
+        captchaImage: captchaData.captchaImage,
+        step: 'WAITING_LOGIN_CAPTCHA',
+      };
+    }
 
     const text = String(captchaText || '').trim();
     if (!text) {
@@ -1073,8 +1192,19 @@ export async function submitLoginCaptcha(captchaText, onLog) {
 
 export async function submitLoginOtp(otp, onLog) {
   try {
-    const { page } = getLoginSession();
-    if (!page) throw new Error('Browser session not active');
+    let { page } = getLoginSession();
+    if (!page) {
+      if (onLog) onLog('Browser was closed. Opening again...');
+      ({ page } = await ensureLoginPage(onLog));
+      await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
+      const captchaData = await getCaptchaImageDataUrl(page, onLog);
+      return {
+        success: false,
+        error: 'Browser was closed and reopened. Please login again.',
+        captchaImage: captchaData.captchaImage,
+        step: 'WAITING_LOGIN_CAPTCHA',
+      };
+    }
 
     await fillLoginOtp(page, otp, onLog);
 

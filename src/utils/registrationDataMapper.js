@@ -245,6 +245,8 @@ export function buildRegistrationDataFromDocuments(docs = []) {
 
     // File paths for automation auto-upload
     panDocumentPath: firstNonEmpty(companyPanDoc?.file_path, personPanDoc?.file_path),
+    companyPanDocumentPath: firstNonEmpty(companyPanDoc?.file_path),
+    personPanDocumentPath: firstNonEmpty(personPanDoc?.file_path),
     gstDocumentPath: firstNonEmpty(gst?.file_path),
     unitGstDoc: firstNonEmpty(unitGstDoc?.file_path),
     cinDocumentPath: firstNonEmpty(cin?.file_path),

@@ -5,6 +5,7 @@ import path from 'path';
 import { withRegistrationDummyFallback, resolveRegistrationLoginCredentials } from '../db/registrationDummyData.js';
 import { saveRegistrationDetails } from '../db/registrationDb.js';
 import { ensurePdfUnderMaxSize } from '../utils/pdfCompressor.js';
+import { getDb } from '../db/database.js';
 import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
@@ -16,6 +17,13 @@ import {
   formatInvalidGstError,
   isDuplicateAuthPersonMessage,
 } from '../utils/cpcbGstVerify.js';
+import {
+  collectPortalAlerts,
+  dismissPortalAlerts,
+  isBlockingPortalError,
+  waitForPortalBusy,
+} from './portalErrorGuard.js';
+import { harvestPortalToasts } from './portalToastWatcher.js';
 
 let regBrowser = null;
 let regContext = null;
@@ -282,8 +290,9 @@ async function fillInputByLabel(page, labelPattern, value, onLog) {
   await page.waitForTimeout(300);
 }
 
-export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
-  if (!filePath) return;
+export async function uploadDocumentByLabel(page, labelText, filePath, onLog, options = {}) {
+  const { optional = false } = options;
+  if (!filePath) return false;
 
   const tempDir = os.tmpdir();
   const originalName = path.basename(String(filePath)).replace(/[<>:"/\\|?*]/g, '_') || 'upload.pdf';
@@ -292,6 +301,7 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
 
   if (!fs.existsSync(filePath)) {
     if (onLog) onLog(`File not found for ${labelText}: ${filePath}. Will not upload a dummy PDF.`);
+    if (optional) return false;
     throw new Error(`File not found for ${labelText}: ${filePath}`);
   } else {
     const isPdf = filePath.toLowerCase().endsWith('.pdf');
@@ -318,10 +328,15 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
 
   if (onLog) onLog(`Uploading ${labelText} from ${originalName}...`);
 
+  const labelRegex = new RegExp(labelText, 'i');
+  const maxAttempts = optional ? 1 : 3;
+  let lastErr = null;
+  let controlMissing = false;
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
   try {
-    const labelRegex = new RegExp(labelText, 'i');
+    controlMissing = false;
     const labelEl = page.getByText(labelRegex).first();
-    await labelEl.waitFor({ state: 'visible', timeout: 5000 });
+    await labelEl.waitFor({ state: 'visible', timeout: optional ? 3000 : attempt === 1 ? 8000 : 12000 });
 
     let button = null;
     let fileInput = null;
@@ -374,11 +389,85 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog) {
       await page.waitForTimeout(2000);
       if (onLog) onLog(`${labelText} uploaded successfully (clicked button).`);
     } else {
-      if (onLog) onLog(`Could not find Upload button or file input near ${labelText}.`);
+      controlMissing = true;
+      throw new Error(`Could not find Upload button or file input near ${labelText}`);
     }
+    const uploadAlerts = await collectPortalAlerts(page);
+    if (uploadAlerts.length) {
+      await dismissPortalAlerts(page, onLog);
+      throw new Error(uploadAlerts[0]);
+    }
+    return true;
   } catch (err) {
-    if (onLog) onLog(`Failed to upload ${labelText}: ${err.message}`);
+    lastErr = err;
+    if (optional) break;
+    if (onLog) onLog(`Failed to upload ${labelText} (try ${attempt}/${maxAttempts}): ${err.message}`);
+    if (attempt < maxAttempts) await page.waitForTimeout(1500);
   }
+  }
+
+  // On steps without an upload control for this label (e.g. General Information),
+  // uploading is handled later on the Supporting Documents step.
+  if (optional) {
+    if (onLog) {
+      onLog(
+        controlMissing
+          ? `No upload control for ${labelText} on this step — will upload on Supporting Documents.`
+          : `Skipping ${labelText} upload on this step: ${lastErr?.message || 'not available'}`
+      );
+    }
+    return false;
+  }
+
+  throw lastErr || new Error(`Failed to upload ${labelText}`);
+}
+
+async function readPortalValue(locator) {
+  try {
+    if ((await locator.count()) === 0) return '';
+    return String((await locator.inputValue()) || '').trim();
+  } catch {
+    return '';
+  }
+}
+
+/** Selected option text, ignoring the "Select" placeholder option. */
+async function readPortalSelection(locator) {
+  try {
+    if ((await locator.count()) === 0) return '';
+    return await locator.evaluate((el) => {
+      const option = el.selectedOptions?.[0] || el.options?.[el.selectedIndex];
+      const text = (option?.textContent || '').trim();
+      return /^select\b/i.test(text) ? '' : text;
+    });
+  } catch {
+    return '';
+  }
+}
+
+/** Required General Information fields that are still empty on the portal. */
+async function findEmptyGeneralInfoFields(page, data) {
+  const addressLine1 = data.registeredAddressLine1 || data.registeredAddress;
+  const checks = [
+    ['Type of Business', 'select', 'typeOfBusiness', data.typeOfBusiness],
+    ['Type of Company', 'select', 'typeOfCompany', data.typeOfCompany],
+    ['Registered Address Line 1', 'input', 'registeredAddressLine1', addressLine1],
+    ['District', 'select', 'district', data.district],
+    ['Designation', 'input', 'designation', data.authDesignation],
+    ['Password', 'input', 'password', data.password],
+    ['Confirm Password', 'input', 'confirmPassword', data.password],
+  ];
+
+  const empty = [];
+  for (const [label, kind, controlName, expected] of checks) {
+    if (!String(expected || '').trim()) continue;
+    const value =
+      kind === 'select'
+        ? await readPortalSelection(portalSelect(page, controlName))
+        : await readPortalValue(portalInput(page, controlName));
+    if (!value) empty.push(label);
+  }
+  return empty;
 }
 
 /** Fill Step 2 — General Information on CPCB portal after User Verification. */
@@ -390,62 +479,83 @@ async function fillGeneralInformation(page, data, onLog) {
 
   const addressLine1 = data.registeredAddressLine1 || data.registeredAddress;
 
-  if (data.panDocumentPath) {
-    await uploadDocumentByLabel(page, 'Company PAN', data.panDocumentPath, onLog);
-  }
-  if (data.gstDocumentPath) {
-    await uploadDocumentByLabel(page, 'Unit GST', data.gstDocumentPath, onLog);
-    await uploadDocumentByLabel(page, 'GST', data.gstDocumentPath, onLog);
-  }
-  if (data.cinDocumentPath) {
-    await uploadDocumentByLabel(page, 'CIN', data.cinDocumentPath, onLog);
-  }
-
-  await selectPortalDropdown(page, 'typeOfBusiness', data.typeOfBusiness, onLog, 'Type of Business');
-  await selectPortalDropdown(page, 'typeOfCompany', data.typeOfCompany, onLog, 'Type of Company');
-  await fillPortalInput(
-    page,
-    'registeredAddressLine1',
-    addressLine1,
-    onLog,
-    'Registered Address Line 1'
-  );
-
-  if (data.registeredAddressLine2?.trim()) {
-    await fillPortalInput(
-      page,
-      'registeredAddressLine2',
-      data.registeredAddressLine2,
-      onLog,
-      'Registered Address Line 2'
-    );
-  }
-
-  if (data.cin?.trim()) {
-    await fillPortalInput(page, 'companyCinCardNumber', data.cin, onLog, 'Company CIN Number');
-  }
-
-  if (data.stateUt?.trim()) {
-    const stateSelect = portalSelect(page, 'stateOrUT');
-    const stateDisabled = await stateSelect.isDisabled().catch(() => true);
-    if (!stateDisabled) {
-      await selectPortalDropdown(page, 'stateOrUT', data.stateUt, onLog, 'State/UT');
-      await page.waitForTimeout(1500);
-    } else if (onLog) {
-      onLog('State/UT pre-filled from GST — skipping');
+  // One field failing must not abort the whole step — the verification pass below
+  // re-fills whatever is still empty.
+  const fieldErrors = [];
+  const fillStep = async (label, fn) => {
+    try {
+      await fn();
+    } catch (err) {
+      fieldErrors.push(`${label}: ${err.message}`);
+      if (onLog) onLog(`Could not set ${label}: ${err.message}. Continuing with other fields.`);
     }
-  }
+  };
 
-  if (data.district?.trim()) {
-    await selectPortalDropdown(page, 'district', data.district, onLog, 'District');
-  }
+  const fillCoreFields = async () => {
+    await fillStep('Type of Business', () =>
+      selectPortalDropdown(page, 'typeOfBusiness', data.typeOfBusiness, onLog, 'Type of Business')
+    );
+    await fillStep('Type of Company', () =>
+      selectPortalDropdown(page, 'typeOfCompany', data.typeOfCompany, onLog, 'Type of Company')
+    );
+    await fillStep('Registered Address Line 1', () =>
+      fillPortalInput(page, 'registeredAddressLine1', addressLine1, onLog, 'Registered Address Line 1')
+    );
 
-  await fillPortalInput(page, 'designation', data.authDesignation, onLog, 'Designation');
+    if (data.registeredAddressLine2?.trim()) {
+      await fillStep('Registered Address Line 2', () =>
+        fillPortalInput(
+          page,
+          'registeredAddressLine2',
+          data.registeredAddressLine2,
+          onLog,
+          'Registered Address Line 2'
+        )
+      );
+    }
 
-  if (data.password?.trim()) {
-    await fillPortalInput(page, 'password', data.password, onLog, 'Password');
-    await fillPortalInput(page, 'confirmPassword', data.password, onLog, 'Confirm Password');
-  }
+    if (data.cin?.trim()) {
+      await fillStep('Company CIN Number', () =>
+        fillPortalInput(page, 'companyCinCardNumber', data.cin, onLog, 'Company CIN Number')
+      );
+    }
+
+    if (data.stateUt?.trim()) {
+      const stateSelect = portalSelect(page, 'stateOrUT');
+      const stateDisabled = await stateSelect.isDisabled().catch(() => true);
+      if (!stateDisabled) {
+        await fillStep('State/UT', async () => {
+          await selectPortalDropdown(page, 'stateOrUT', data.stateUt, onLog, 'State/UT');
+          await page.waitForTimeout(1500);
+        });
+      } else if (onLog) {
+        onLog('State/UT pre-filled from GST — skipping');
+      }
+    }
+
+    if (data.district?.trim()) {
+      // District options load after State/UT resolves.
+      await fillStep('District', async () => {
+        await page.waitForTimeout(800);
+        await selectPortalDropdown(page, 'district', data.district, onLog, 'District');
+      });
+    }
+
+    await fillStep('Designation', () =>
+      fillPortalInput(page, 'designation', data.authDesignation, onLog, 'Designation')
+    );
+
+    if (data.password?.trim()) {
+      await fillStep('Password', () =>
+        fillPortalInput(page, 'password', data.password, onLog, 'Password')
+      );
+      await fillStep('Confirm Password', () =>
+        fillPortalInput(page, 'confirmPassword', data.password, onLog, 'Confirm Password')
+      );
+    }
+  };
+
+  await fillCoreFields();
 
   if (onLog) {
     onLog(`[DEBUG] plasticConsumed: ${JSON.stringify(data.plasticConsumed)}`);
@@ -560,10 +670,95 @@ async function fillGeneralInformation(page, data, onLog) {
     }
   }
 
+  // Some portal variants expose document slots here; when they are absent the
+  // Supporting Documents step handles them, so a miss must not fail this step.
+  const companyPanPath = data.companyPanDocumentPath || data.panDocumentPath;
+  if (companyPanPath) {
+    await uploadDocumentByLabel(page, 'Company PAN', companyPanPath, onLog, {
+      optional: true,
+    });
+  }
+  if (data.gstDocumentPath) {
+    const unitGstDone = await uploadDocumentByLabel(page, 'Unit GST', data.gstDocumentPath, onLog, {
+      optional: true,
+    });
+    if (!unitGstDone) {
+      await uploadDocumentByLabel(page, 'GST', data.gstDocumentPath, onLog, { optional: true });
+    }
+  }
+  if (data.cinDocumentPath) {
+    await uploadDocumentByLabel(page, 'CIN', data.cinDocumentPath, onLog, { optional: true });
+  }
+
+  let empty = await findEmptyGeneralInfoFields(page, data);
+  if (empty.length) {
+    if (onLog) onLog(`Fields still empty: ${empty.join(', ')}. Re-filling before Continue...`);
+    await dismissPortalAlerts(page, onLog);
+    await fillCoreFields();
+    empty = await findEmptyGeneralInfoFields(page, data);
+  }
+
+  if (empty.length) {
+    throw new Error(
+      `General Information not filled: ${empty.join(', ')}${
+        fieldErrors.length ? ` (${fieldErrors.join(' | ')})` : ''
+      }`
+    );
+  }
+
   const portalErr = await checkPortalError(page);
   if (portalErr) throw new Error(portalErr);
 
   if (onLog) onLog('General Information filled on portal');
+}
+
+const PAN_RE = /\b[A-Z]{5}[0-9]{4}[A-Z]\b/;
+
+/** PAN the Supporting Doc step asks the document for ("...following Company PAN XXXXX1234X"). */
+async function readRequestedPanFromPortal(page) {
+  try {
+    const text = await page.evaluate(() => {
+      const inputValues = Array.from(document.querySelectorAll('input'))
+        .map((el) => el.value || '')
+        .join(' ');
+      return `${document.body?.innerText || ''} ${inputValues}`;
+    });
+    const upper = String(text).toUpperCase();
+    const labelled = upper.match(/COMPANY PAN[^A-Z0-9]{0,40}([A-Z]{5}[0-9]{4}[A-Z])/);
+    if (labelled) return labelled[1];
+    const match = upper.match(PAN_RE);
+    return match ? match[0] : '';
+  } catch {
+    return '';
+  }
+}
+
+/** Company PAN document from the DB — never the authorised person's PAN. */
+async function findCompanyPanDocument(requestedPan) {
+  try {
+    const db = getDb();
+    const rows = await db.all(
+      'SELECT doc_type, file_path, document_number FROM company_documents ORDER BY created_at DESC'
+    );
+    const usable = (rows || []).filter((r) => r.file_path && fs.existsSync(r.file_path));
+    if (!usable.length) return null;
+
+    // An IEC number is the company PAN, so matching on the number alone can pick
+    // the IEC certificate — only PAN cards qualify here.
+    const panDocs = usable.filter((r) => r.doc_type === 'company_pan' || r.doc_type === 'pan');
+    if (!panDocs.length) return null;
+
+    const wanted = String(requestedPan || '').toUpperCase();
+    if (wanted) {
+      const exact = panDocs.find(
+        (r) => String(r.document_number || '').toUpperCase() === wanted
+      );
+      if (exact) return exact;
+    }
+    return panDocs.find((r) => r.doc_type === 'company_pan') || panDocs[0] || null;
+  } catch {
+    return null;
+  }
 }
 
 function resolvePanDocumentPath(customPath) {
@@ -665,10 +860,17 @@ async function clickGeneralInfoContinue(page, onLog) {
       ).catch(() => null);
 
       await btn.click({ timeout: 10000 });
+      await waitForPortalBusy(page);
 
       const companiesResponse = await companiesResponsePromise;
       const submitFailure = await resolveCompaniesSubmitFailure(page, companiesResponse);
       if (submitFailure) throw new Error(submitFailure);
+
+      const continueAlerts = await collectPortalAlerts(page);
+      if (continueAlerts.length) {
+        await dismissPortalAlerts(page, onLog);
+        throw new Error(continueAlerts[0]);
+      }
 
       await page.waitForTimeout(1000);
 
@@ -704,7 +906,8 @@ async function clickGeneralInfoContinue(page, onLog) {
         await waitForSupportingDocStep(page, onLog);
         return;
       }
-    } catch {
+    } catch (err) {
+      if (isBlockingPortalError(err?.message)) throw err;
       /* try next selector */
     }
   }
@@ -830,17 +1033,41 @@ async function captureRegistrationSuccess(page, onLog, { alreadyVisible = false 
 }
 
 async function uploadPanAndGetCaptcha(page, data, onLog) {
-  const panPath = resolvePanDocumentPath(data.panDocumentPath);
-  if (!fs.existsSync(panPath)) {
-    throw new Error(`PAN document not found at ${panPath}`);
-  }
-
-  if (onLog) onLog(`Uploading Company PAN document (${path.basename(panPath)})...`);
-
   await page
     .getByText(/Supporting Doc|Additional Document|Company PAN/i)
     .first()
     .waitFor({ state: 'visible', timeout: 15000 });
+
+  const requestedPan = await readRequestedPanFromPortal(page);
+  if (onLog && requestedPan) onLog(`Portal is asking for the document of PAN ${requestedPan}`);
+
+  const companyPanDoc = await findCompanyPanDocument(requestedPan);
+  const panPath = resolvePanDocumentPath(
+    companyPanDoc?.file_path || data.companyPanDocumentPath || data.panDocumentPath
+  );
+
+  if (!fs.existsSync(panPath)) {
+    throw new Error(`PAN document not found at ${panPath}`);
+  }
+
+  if (onLog) {
+    if (!companyPanDoc) {
+      onLog(
+        `Warning: no Company PAN document found in the app${
+          requestedPan ? ` for ${requestedPan}` : ''
+        } — using ${path.basename(panPath)}`
+      );
+    } else if (
+      requestedPan &&
+      String(companyPanDoc.document_number || '').toUpperCase() !== requestedPan
+    ) {
+      onLog(
+        `Warning: uploading ${companyPanDoc.doc_type} (${companyPanDoc.document_number || 'no number'}) — no document matches ${requestedPan}`
+      );
+    }
+  }
+
+  if (onLog) onLog(`Uploading Company PAN document (${path.basename(panPath)})...`);
 
   await page.waitForTimeout(1000);
 
@@ -911,7 +1138,7 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
     if (await byLabel.isVisible().catch(() => false)) {
       await assertDateFieldEnabled(byLabel, label);
       const inputType = await byLabel.getAttribute('type').catch(() => '');
-      await byLabel.fill(inputType === 'date' ? isoValue : portalValue);
+      await byLabel.fill(inputType === 'date' ? isoValue : portalValue, { timeout: 5000 });
       await byLabel.blur();
       return;
     }
@@ -920,12 +1147,13 @@ async function fillDateField(page, value, { index = 0, label = null } = {}) {
   const dateInput = page.locator('input[type="date"]').nth(index);
   if (await dateInput.isVisible().catch(() => false)) {
     await assertDateFieldEnabled(dateInput, 'Date of Establishment');
-    await dateInput.fill(isoValue);
+    await dateInput.fill(isoValue, { timeout: 5000 });
     return;
   }
 
   const textDate = page.getByPlaceholder(/dd-mm-yyyy/i).nth(index);
   if (await textDate.isVisible().catch(() => false)) {
+    await assertDateFieldEnabled(textDate, 'Date of Establishment');
     await textDate.fill('');
     await textDate.pressSequentially(portalValue, { delay: 30 });
     await textDate.blur();
@@ -956,17 +1184,16 @@ async function readPortalToastText(page) {
 }
 
 async function readAllPortalToastTexts(page) {
+  await harvestPortalToasts(page).catch(() => {});
   const texts = [];
   const seen = new Set();
   const selectors = [
     '.toast-error',
     '.toast-success',
     '.toast-message',
-    '#toast-container',
+    '#toast-container .toast',
     '.ngx-toastr',
-    '.toast-container',
-    '.overlay-container',
-    '.cdk-overlay-container',
+    '.toast-container .toast',
     '[role="alert"]',
     '.alert-danger',
     '.mat-mdc-snack-bar-label',
@@ -1005,6 +1232,58 @@ async function readAllPortalToastTexts(page) {
     /* ignore */
   }
   return texts;
+}
+
+async function isGstVerifiedOnPortal(page) {
+  const verifiedChip = page.getByText(/^Verified$/i).first();
+  if (await verifiedChip.isVisible({ timeout: 1500 }).catch(() => false)) return true;
+
+  const dateInput = page.locator('input[type="date"]').first();
+  if (await dateInput.isVisible().catch(() => false)) {
+    const locked = await dateInput.isDisabled().catch(() => true);
+    if (!locked) return true;
+  }
+
+  const companyName = page.getByPlaceholder(/Enter Company Name/i).first();
+  if (await companyName.isVisible().catch(() => false)) {
+    const val = await companyName.inputValue().catch(() => '');
+    if (String(val).trim().length > 2 && await companyName.isEnabled().catch(() => false)) return true;
+  }
+  return false;
+}
+
+/**
+ * The portal drops a full-screen app-loader over the form while it talks to the
+ * GST API; clicking through it just burns Playwright's actionability timeout.
+ */
+async function clickPortalVerify(page, onLog) {
+  await waitForPortalBusy(page);
+
+  const btn = page.getByRole('button', { name: /Verify/i }).first();
+  await btn.waitFor({ state: 'visible', timeout: 15000 });
+
+  for (let i = 0; i < 30; i += 1) {
+    if (await btn.isEnabled().catch(() => false)) break;
+    await page.waitForTimeout(500);
+  }
+  if (!(await btn.isEnabled().catch(() => false))) {
+    throw new Error('Verify button stayed disabled — portal is still busy.');
+  }
+
+  try {
+    await btn.click({ timeout: 8000 });
+    return;
+  } catch {
+    if (onLog) onLog('Verify click blocked by portal loader — waiting and retrying.');
+  }
+
+  await waitForPortalBusy(page);
+  try {
+    await btn.click({ timeout: 8000 });
+  } catch {
+    // Dispatching straight on the element ignores the overlay hit-test.
+    await btn.dispatchEvent('click');
+  }
 }
 
 async function checkPortalError(page) {
@@ -1337,6 +1616,8 @@ export async function startRegistrationFlow(data, onLog) {
     regBrowser = await chromium.launch({ headless: false, args: ['--start-maximized'] }); // Visible to user for transparency if needed
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
+    const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
+    await attachPortalToastWatcherToContext(regContext).catch(() => {});
     
     if (onLog) onLog('Navigating to CPCB portal...');
     await gotoCpcb(regPage, REGISTRATION_URL, onLog);
@@ -1581,35 +1862,37 @@ export async function submitMobileOtp(payload, onLog) {
     let ceprId = null;
     let screenshotPath = null;
 
-    try {
-      await fillGeneralInformation(regPage, data, onLog);
-      filledGeneral = true;
-    } catch (err) {
-      if (isDuplicateAuthPersonMessage(err.message)) throw err;
-      generalInfoError = err.message;
-      if (onLog) onLog('General Information warning: ' + err.message);
-    }
-
-    if (filledGeneral && !generalInfoError) {
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
       try {
+        await waitForPortalBusy(regPage);
+        await dismissPortalAlerts(regPage, onLog);
+        await fillGeneralInformation(regPage, data, onLog);
+        filledGeneral = true;
         await clickGeneralInfoContinue(regPage, onLog);
         submittedGeneral = true;
-        try {
-          const captchaData = await uploadPanAndGetCaptcha(regPage, data, onLog);
-          return {
-            success: true,
-            step: 'WAITING_CAPTCHA',
-            captchaImage: captchaData.captchaImage,
-            warning: generalInfoError || undefined,
-          };
-        } catch (err) {
-          supportingDocError = err.message;
-          if (onLog) onLog('Supporting Documents warning: ' + err.message);
-        }
+        generalInfoError = null;
+        break;
       } catch (err) {
         if (isDuplicateAuthPersonMessage(err.message)) throw err;
         generalInfoError = err.message;
-        if (onLog) onLog('General Information submit warning: ' + err.message);
+        if (onLog) onLog(`General Information attempt ${attempt}/3 failed: ${err.message}. Re-filling required fields.`);
+        await dismissPortalAlerts(regPage, onLog);
+        await regPage.waitForTimeout(1500);
+      }
+    }
+
+    if (filledGeneral && submittedGeneral && !generalInfoError) {
+      try {
+        const captchaData = await uploadPanAndGetCaptcha(regPage, data, onLog);
+        return {
+          success: true,
+          step: 'WAITING_CAPTCHA',
+          captchaImage: captchaData.captchaImage,
+          warning: generalInfoError || undefined,
+        };
+      } catch (err) {
+        supportingDocError = err.message;
+        if (onLog) onLog('Supporting Documents warning: ' + err.message);
       }
     }
 
@@ -1668,6 +1951,17 @@ export async function resendMobileOtp(onLog) {
 }
 
 export function getRegSession() {
+  try {
+    if (regPage?.isClosed?.()) {
+      regPage = null;
+      regContext = null;
+      regBrowser = null;
+    }
+  } catch {
+    regPage = null;
+    regContext = null;
+    regBrowser = null;
+  }
   return { browser: regBrowser, page: regPage, context: regContext };
 }
 

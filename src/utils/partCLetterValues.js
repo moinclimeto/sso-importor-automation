@@ -285,14 +285,49 @@ export function missingLetterFields(values = {}) {
 export function getLocalFilePath(file) {
   if (!file) return '';
   try {
-    const fromElectron =
-      window.pwp?.webUtils?.getPathForFile?.(file) ||
-      window.pwp?.webUtils?.getPathForFile?.(file);
+    const fromElectron = window.pwp?.webUtils?.getPathForFile?.(file);
     if (fromElectron) return fromElectron;
   } catch {
     /* browser / older Electron */
   }
   return file.path || '';
+}
+
+function fileToBase64(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      const result = String(reader.result || '');
+      const comma = result.indexOf(',');
+      resolve(comma >= 0 ? result.slice(comma + 1) : result);
+    };
+    reader.onerror = () => reject(reader.error);
+    reader.readAsDataURL(file);
+  });
+}
+
+export async function persistLocalUpload(file) {
+  if (!file) return '';
+  const src = getLocalFilePath(file);
+  if (src && window.pwp?.fs?.copyRegistrationFile) {
+    try {
+      const copied = await window.pwp.fs.copyRegistrationFile(src);
+      if (copied) return copied;
+    } catch {
+      /* fall through to in-memory save */
+    }
+    if (src.includes('\\') || src.includes('/')) return src;
+  }
+  if (window.pwp?.fs?.saveRegistrationFile) {
+    try {
+      const base64 = await fileToBase64(file);
+      const saved = await window.pwp.fs.saveRegistrationFile(file.name, base64);
+      if (saved) return saved;
+    } catch {
+      /* ignore */
+    }
+  }
+  return src || '';
 }
 
 export function fileLabel(filePath) {

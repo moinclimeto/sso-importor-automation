@@ -5,6 +5,13 @@ import { spawn } from 'child_process';
 import { uploadDocumentByLabel } from './cpcbRegistration.js';
 import { getDb } from '../db/database.js';
 import { notifyPaymentBypassPrompt, waitForPaymentBypassAnswer } from './paymentBypassBridge.js';
+import {
+  collectPortalAlerts,
+  countInvalidControls,
+  dismissPortalAlerts,
+  fillUntilPortalAccepts,
+  waitForPortalBusy,
+} from './portalErrorGuard.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMMY_PDF = path.resolve(__dirname, '../../data/dummy_pan.pdf');
@@ -104,8 +111,13 @@ async function loadCompanyDocs() {
       companyPan: pick('company_pan'),
       personPan: pick('person_pan'),
       gst: pick('gst'),
+      unitGst: pick('unit_gst'),
       cin: pick('cin'),
       udyam: pick('udyam'),
+      supportingCategory:
+        pick('supporting_category_doc')
+        || docs.find((d) => /msme|udyam|udyam|category/i.test(`${d.doc_type || ''} ${d.file_path || ''}`))
+        || null,
       iec: pick('iec'),
     };
   } catch {
@@ -130,23 +142,34 @@ async function clickSaveAndNext(page, onLog, stepName) {
     }
   }
 
+  await waitForPortalBusy(page);
+  await dismissPortalAlerts(page, onLog);
+
   if (onLog) onLog(`Clicking Save & Next (${stepName})...`);
   const btn = page.getByRole('button', { name: /Save\s*&\s*Next/i }).first();
   await btn.waitFor({ state: 'visible', timeout: 15000 });
   await btn.scrollIntoViewIfNeeded().catch(() => {});
   await btn.click({ timeout: 10000 }).catch(() => btn.click({ force: true }));
-  await page.waitForTimeout(3000);
+  await waitForPortalBusy(page);
+  await page.waitForTimeout(1500);
 
-  const portalErr = await page.getByText(/Please select at least one state|Please fill all required/i).first().isVisible({ timeout: 1200 }).catch(() => false);
-  if (portalErr) {
-    if (onLog) onLog('Portal validation error after Save & Next — staying on this part.');
+  const alerts = await collectPortalAlerts(page);
+  if (alerts.length) {
+    if (onLog) onLog(`Portal error after Save & Next: ${alerts.join(' | ')}`);
+    await dismissPortalAlerts(page, onLog);
+    return false;
+  }
+
+  const invalidCount = await countInvalidControls(page);
+  if (invalidCount > 0) {
+    if (onLog) onLog(`Portal still has ${invalidCount} invalid required field(s) after Save & Next.`);
     return false;
   }
 
   if (stepName === 'Part A') {
     const moved = await isPartBVisible(page);
     if (!moved) {
-      if (onLog) onLog('Still on Part A after Save & Next. Will not fill Part B/C.');
+      if (onLog) onLog('Still on Part A after Save & Next. Will re-fill missing fields.');
       return false;
     }
     if (onLog) onLog('Moved to Part B.');
@@ -154,7 +177,7 @@ async function clickSaveAndNext(page, onLog, stepName) {
   if (stepName === 'Part B') {
     const moved = await isPartCVisible(page);
     if (!moved) {
-      if (onLog) onLog('Still on Part B after Save & Next. Will not fill Part C.');
+      if (onLog) onLog('Still on Part B after Save & Next. Will re-fill missing fields.');
       return false;
     }
     if (onLog) onLog('Moved to Part C.');
@@ -162,7 +185,28 @@ async function clickSaveAndNext(page, onLog, stepName) {
   return true;
 }
 
-async function uploadNearLabel(page, labelPattern, filePath, onLog) {
+/** Portal already shows a file for this slot (View link / file name next to the label). */
+async function isAlreadyUploadedNearLabel(page, labelPattern) {
+  try {
+    const label = page.getByText(new RegExp(labelPattern, 'i')).first();
+    if (!(await label.isVisible({ timeout: 1200 }).catch(() => false))) return false;
+
+    const box = label.locator(
+      'xpath=ancestor::div[contains(@class,"col") or contains(@class,"form") or contains(@class,"row")][1]'
+    );
+    if (!(await box.count().catch(() => 0))) return false;
+
+    const viewLink = box.getByText(/^\s*View\s*$/i).first();
+    if (await viewLink.isVisible({ timeout: 800 }).catch(() => false)) return true;
+
+    const text = String((await box.innerText().catch(() => '')) || '');
+    return /\.(pdf|png|jpe?g)\b/i.test(text);
+  } catch {
+    return false;
+  }
+}
+
+async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3) {
   if (!filePath) return false;
   const file = existingFile(filePath);
   if (!file) {
@@ -170,11 +214,40 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog) {
     return false;
   }
 
-  try {
-    await uploadDocumentByLabel(page, labelPattern, file, onLog);
+  // Re-fill passes must only retry the slots that are still empty.
+  if (await isAlreadyUploadedNearLabel(page, labelPattern)) {
+    if (onLog) onLog(`${labelPattern} already has a document on the portal — skipping.`);
     return true;
-  } catch (err) {
-    if (onLog) onLog(`uploadDocumentByLabel "${labelPattern}" failed: ${err.message}`);
+  }
+
+  const labelPresent = await page
+    .getByText(new RegExp(labelPattern, 'i'))
+    .first()
+    .isVisible({ timeout: 4000 })
+    .catch(() => false);
+  if (!labelPresent) {
+    if (onLog) onLog(`No "${labelPattern}" upload field on this page — skipping.`);
+    return false;
+  }
+
+  for (let attempt = 1; attempt <= retries; attempt += 1) {
+    try {
+      await uploadDocumentByLabel(page, labelPattern, file, onLog);
+      await page.waitForTimeout(700);
+      const alerts = await collectPortalAlerts(page);
+      if (alerts.length) {
+        await dismissPortalAlerts(page, onLog);
+        throw new Error(alerts[0]);
+      }
+      return true;
+    } catch (err) {
+      if (onLog) onLog(`uploadDocumentByLabel "${labelPattern}" failed (try ${attempt}/${retries}): ${err.message}`);
+      if (await isAlreadyUploadedNearLabel(page, labelPattern)) {
+        if (onLog) onLog(`${labelPattern} is already on the portal — no retry needed.`);
+        return true;
+      }
+      if (attempt < retries) await page.waitForTimeout(1200);
+    }
   }
 
   try {
@@ -208,18 +281,25 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog) {
 
 async function fillVisibleInput(page, selectors, value, onLog, name) {
   if (value === undefined || value === null || value === '') return false;
+  const wanted = String(value);
   for (const sel of selectors) {
     const loc = page.locator(sel).first();
-    if (await loc.isVisible({ timeout: 1500 }).catch(() => false)) {
-      if (onLog) onLog(`Filling ${name}: ${value}`);
+    if (!(await loc.isVisible({ timeout: 1500 }).catch(() => false))) continue;
+    if (onLog) onLog(`Filling ${name}: ${wanted}`);
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
       await loc.scrollIntoViewIfNeeded().catch(() => {});
       await loc.click({ force: true }).catch(() => {});
-      await loc.fill(String(value)).catch(() => {});
+      await loc.fill('').catch(() => {});
+      await loc.fill(wanted).catch(() => {});
       await loc.dispatchEvent('input').catch(() => {});
       await loc.dispatchEvent('change').catch(() => {});
       await loc.blur().catch(() => {});
-      return true;
+      const actual = String(await loc.inputValue().catch(() => '')).trim();
+      if (actual === wanted.trim()) return true;
+      if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${actual}"). Retrying.`);
+      await page.waitForTimeout(400);
     }
+    return true;
   }
   return false;
 }
@@ -701,8 +781,16 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   const companyPanFile = dummyPdfOr(docs.companyPan?.file_path);
   const personPanFile = dummyPdfOr(docs.personPan?.file_path || companyPanFile);
   const gstFile = dummyPdfOr(docs.gst?.file_path);
+  // Unit GST certificate comes from the extractor (doc_type unit_gst) or the form upload.
+  const unitGstFile =
+    pickUserFile(data.unitGstDoc, docs.unitGst?.file_path) || gstFile;
+  const unitGstNumber = data.unitGst || docs.unitGst?.document_number || '';
   const cinFile = dummyPdfOr(docs.cin?.file_path);
-  const categoryFile = dummyPdfOr(docs.udyam?.file_path || data.typeOfCompanyDoc);
+  const categoryFile = pickUserFile(
+    data.typeOfCompanyDoc,
+    docs.udyam?.file_path,
+    docs.supportingCategory?.file_path
+  );
   const productsFile = existingFile(data.detailsOfProductsPath);
   const pictureFile = existingFile(data.representativePicturePath);
   if (!productsFile) {
@@ -716,10 +804,15 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   const iecNumber = docs.iec?.document_number || data.iec;
 
   await uploadNearLabel(page, 'Company PAN', companyPanFile, onLog);
-  await uploadNearLabel(page, 'Unit GST', gstFile, onLog);
+  await uploadNearLabel(page, 'Unit GST', unitGstFile, onLog);
   await uploadNearLabel(page, '^\\s*GST\\s*\\*?', gstFile, onLog);
   await uploadNearLabel(page, 'CIN', cinFile, onLog);
-  await uploadNearLabel(page, 'Supporting document for company category', categoryFile, onLog);
+  if (categoryFile) {
+    if (onLog) onLog(`Using MSME/company-category file: ${categoryFile}`);
+    await uploadNearLabel(page, 'Supporting document for company category', categoryFile, onLog);
+  } else if (onLog) {
+    onLog('No MSME/Udyam file found — dummy PAN will not be uploaded for company category.');
+  }
   await uploadNearLabel(page, 'Authorized person PAN', personPanFile, onLog);
   const authPanLabel = page.getByText(/1\s*b\)\s*Authorized Person Details/i).first();
   if (await authPanLabel.isVisible({ timeout: 1500 }).catch(() => false)) {
@@ -732,6 +825,18 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
     iecNumber,
     onLog,
     'IEC'
+  );
+
+  await fillVisibleInput(
+    page,
+    [
+      'input[formcontrolname="unit_gst"]',
+      'input[formcontrolname="unitGst"]',
+      'input[placeholder*="Unit GST"]',
+    ],
+    unitGstNumber,
+    onLog,
+    'Unit GST Number'
   );
 
   if (onLog) onLog('Filling Part A section 2 states (2a) only...');
@@ -823,23 +928,7 @@ export async function fillPartBSection5(page, _transactions, onLog) {
   if (onLog) onLog('Skipping Part B Section 5 — leaving transaction tables empty.');
 }
 
-export async function fillPartC(page, generalInfo, onLog) {
-  const data = normalizeApplicationData(generalInfo);
-  if (onLog) {
-    onLog('Filling Part C with uploaded covering letter, signature and self-declaration...');
-    onLog(`Covering Letter: ${data.partCCoveringLetter}`);
-    onLog(`Signature: ${data.partCSignature}`);
-    onLog(`Self declaration: ${data.partCAuditedStatement}`);
-  }
-
-  const missingPartC = [];
-  if (!data.partCCoveringLetter) missingPartC.push('Covering Letter');
-  if (!data.partCSignature) missingPartC.push('Signature');
-  if (!data.partCAuditedStatement) missingPartC.push('Self declaration');
-  if (missingPartC.length) {
-    throw new Error(`Part C real documents missing: ${missingPartC.join(', ')}. Dummy PDFs will not be used.`);
-  }
-
+async function fillPartCDocuments(page, data, onLog) {
   await page.getByText(/EPR Action Plan|Covering Letter/i).first().waitFor({ timeout: 20000 }).catch(() => {});
 
   await uploadNearLabel(page, 'Please attach Covering Letter', data.partCCoveringLetter, onLog);
@@ -864,15 +953,52 @@ export async function fillPartC(page, generalInfo, onLog) {
   } else if (onLog) {
     onLog('I agree checkbox not found on Part C.');
   }
+}
 
+async function clickPartCSubmitAndPay(page, onLog) {
   const submit = page.getByRole('button', { name: /Submit\s*&\s*Pay/i }).first();
   if (await submit.isVisible({ timeout: 8000 }).catch(() => false)) {
     await submit.scrollIntoViewIfNeeded();
     await submit.click({ timeout: 10000 }).catch(() => submit.click({ force: true }));
     if (onLog) onLog('Clicked Submit & Pay.');
-  } else if (onLog) {
-    onLog('Submit & Pay button not found.');
+    return true;
   }
+  if (onLog) onLog('Submit & Pay button not found.');
+  return false;
+}
+
+export async function fillPartC(page, generalInfo, onLog) {
+  const data = normalizeApplicationData(generalInfo);
+  if (onLog) {
+    onLog('Filling Part C with uploaded covering letter, signature and self-declaration...');
+    onLog(`Covering Letter: ${data.partCCoveringLetter}`);
+    onLog(`Signature: ${data.partCSignature}`);
+    onLog(`Self declaration: ${data.partCAuditedStatement}`);
+  }
+
+  const missingPartC = [];
+  if (!data.partCCoveringLetter) missingPartC.push('Covering Letter');
+  if (!data.partCSignature) missingPartC.push('Signature');
+  if (!data.partCAuditedStatement) missingPartC.push('Self declaration');
+  if (missingPartC.length) {
+    throw new Error(`Part C real documents missing: ${missingPartC.join(', ')}. Dummy PDFs will not be used.`);
+  }
+
+  await fillUntilPortalAccepts(page, {
+    stepName: 'Part C',
+    onLog,
+    fillFn: () => fillPartCDocuments(page, data, onLog),
+    saveFn: async () => {
+      await clickPartCSubmitAndPay(page, onLog);
+      await waitForPortalBusy(page);
+      const alerts = await collectPortalAlerts(page);
+      if (alerts.length) {
+        await dismissPortalAlerts(page, onLog);
+        return false;
+      }
+      return true;
+    },
+  });
 
   try {
     await handlePaymentPopupsAndOpenPayu(page, onLog);
@@ -919,7 +1045,8 @@ async function clickModalButton(page, titleRe, buttonName, onLog, timeout = 1200
   return true;
 }
 
-async function capturePayuAndOpenChrome(page, onLog) {
+/** Clicks the pay button once and captures the PayU link it generates. */
+async function capturePayuAndOpenChrome(page, payBtn, onLog) {
   const captured = [];
   const onReq = (req) => {
     const url = req.url();
@@ -927,17 +1054,18 @@ async function capturePayuAndOpenChrome(page, onLog) {
   };
   page.on('request', onReq);
 
-  const payBtn = page.getByRole('button', { name: /Click to Pay|Submit\s*&\s*Pay|Pay Now/i }).first()
-    .or(page.locator('button').filter({ hasText: /Click to Pay|Submit\s*&\s*Pay|Pay Now/i }).first());
-  if (!(await payBtn.isVisible({ timeout: 15000 }).catch(() => false))) {
-    page.off('request', onReq);
-    if (onLog) onLog('Click to Pay / Submit & Pay button not found on payment-breakdown.');
-    return '';
-  }
-
   if (onLog) onLog('Clicking Click to Pay / Submit & Pay to generate payment link...');
   const popupPromise = page.context().waitForEvent('page', { timeout: 25000 }).catch(() => null);
-  await payBtn.click({ timeout: 8000 }).catch(() => payBtn.click({ force: true }));
+
+  await payBtn.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await payBtn.click({ timeout: 10000 });
+  } catch {
+    // The button often navigates or detaches on the first click — never let the
+    // retry hang on Playwright's 30s default.
+    await payBtn.click({ force: true, timeout: 5000 }).catch(() => {});
+  }
+
   const popup = await popupPromise;
   if (popup) {
     await popup.waitForLoadState('domcontentloaded').catch(() => {});
@@ -945,14 +1073,30 @@ async function capturePayuAndOpenChrome(page, onLog) {
   }
 
   try {
-    await page.waitForURL(/payu|webcheckoutpro/i, { timeout: 8000 });
+    await page.waitForURL(/payu|webcheckoutpro/i, { timeout: 15000 });
     captured.unshift(page.url());
   } catch { /* stay on breakdown */ }
 
   page.off('request', onReq);
 
+  const scanDomForPayu = async (target) =>
+    target
+      .evaluate(() => {
+        const form = Array.from(document.querySelectorAll('form')).find((f) =>
+          /payu|webcheckoutpro/i.test(f.action || '')
+        );
+        if (form?.action) return form.action;
+        const link = Array.from(document.querySelectorAll('a[href]')).find((a) =>
+          /payu|webcheckoutpro/i.test(a.href || '')
+        );
+        return link?.href || '';
+      })
+      .catch(() => '');
+
   const payuUrl = captured.find((u) => /payu|webcheckoutpro/i.test(u))
     || page.context().pages().reverse().find((p) => /payu|webcheckoutpro/i.test(p.url()))?.url()
+    || (popup ? await scanDomForPayu(popup) : '')
+    || (await scanDomForPayu(page))
     || '';
 
   if (payuUrl) {
@@ -961,6 +1105,7 @@ async function capturePayuAndOpenChrome(page, onLog) {
     await trackPaymentActivity(page, onLog);
   } else if (onLog) {
     onLog(`PayU URL not detected. Current URL: ${page.url()}`);
+    if (captured.length) onLog(`Payment URLs seen: ${captured.slice(0, 5).join(' | ')}`);
   }
   return payuUrl;
 }
@@ -982,26 +1127,80 @@ async function trackPaymentActivity(page, onLog) {
   return false;
 }
 
-async function clickPaymentBypassNo(page, onLog) {
-  const bypass = page.locator('.modal, .p-dialog, .cdk-overlay-pane, [role="dialog"], .overlay').filter({
-    hasText: /Payment Bypass|already completed the payment/i,
-  }).first().or(page.getByText(/Payment Bypass/i).first());
+const BYPASS_TEXT_RE = /Payment Bypass|already completed the payment/i;
 
-  const visible = await page.getByText(/Payment Bypass/i).first().isVisible({ timeout: 18000 }).catch(() => false)
-    || await page.getByText(/already completed the payment/i).first().isVisible({ timeout: 2000 }).catch(() => false);
-  if (!visible) return false;
-
-  if (onLog) onLog('Payment Bypass popup found — clicking No.');
-  const noBtn = page.locator('.modal, .p-dialog, [role="dialog"]').filter({ hasText: /Payment Bypass|already completed the payment/i })
-    .getByRole('button', { name: /^No$/i }).first()
-    .or(page.getByRole('button', { name: /^No$/i }).first());
-  await noBtn.click({ timeout: 8000 }).catch(() => noBtn.click({ force: true }));
-  await page.waitForTimeout(1500);
-  await page.getByText(/Payment Bypass/i).first().waitFor({ state: 'hidden', timeout: 8000 }).catch(() => {});
-  return true;
+function paymentBypassDialog(page) {
+  return page
+    .locator(
+      '.modal:visible, .modal-content:visible, .modal-dialog:visible, .p-dialog:visible, .cdk-overlay-pane:visible, [role="dialog"]:visible, .swal2-popup:visible, .overlay:visible'
+    )
+    .filter({ hasText: BYPASS_TEXT_RE })
+    .first();
 }
 
-async function clickPayOnBreakdown(page, onLog) {
+/**
+ * "Have you already completed the payment...?" must be answered No, otherwise the
+ * Click to Pay button never renders. The popup can appear a few seconds after the
+ * payment-breakdown page loads, so poll instead of waiting on one locator.
+ */
+async function clickPaymentBypassNo(page, onLog, timeoutMs = 30000) {
+  const deadline = Date.now() + timeoutMs;
+
+  while (Date.now() < deadline) {
+    const dialog = paymentBypassDialog(page);
+    const dialogVisible = await dialog.isVisible({ timeout: 1000 }).catch(() => false);
+    const textVisible =
+      dialogVisible ||
+      (await page
+        .getByText(BYPASS_TEXT_RE)
+        .filter({ visible: true })
+        .first()
+        .isVisible({ timeout: 500 })
+        .catch(() => false));
+
+    if (textVisible) {
+      if (onLog) onLog('Payment Bypass popup found — clicking No.');
+
+      const scoped = dialogVisible
+        ? dialog.locator('button:visible, a:visible, .btn:visible')
+        : page.locator('button:visible, a:visible, .btn:visible');
+      const noBtn = scoped.filter({ hasText: /^\s*No\s*$/i }).first();
+
+      const clickable = await noBtn.isVisible({ timeout: 2000 }).catch(() => false);
+      const target = clickable
+        ? noBtn
+        : page.locator('button:visible').filter({ hasText: /^\s*No\s*$/i }).first();
+
+      await target.scrollIntoViewIfNeeded().catch(() => {});
+      await target.click({ timeout: 5000 }).catch(() => target.click({ force: true }).catch(() => {}));
+      await page.waitForTimeout(1500);
+
+      const stillOpen =
+        (await paymentBypassDialog(page).isVisible({ timeout: 1500 }).catch(() => false)) ||
+        (await page
+          .getByText(BYPASS_TEXT_RE)
+          .filter({ visible: true })
+          .first()
+          .isVisible({ timeout: 500 })
+          .catch(() => false));
+      if (!stillOpen) {
+        if (onLog) onLog('Payment Bypass popup dismissed with No.');
+        return true;
+      }
+      if (onLog) onLog('Payment Bypass popup still open — trying No again.');
+    }
+
+    await page.waitForTimeout(1000);
+  }
+
+  return false;
+}
+
+/**
+ * Locates the pay button without clicking it — the click happens once inside
+ * capturePayuAndOpenChrome so the PayU link can be captured.
+ */
+async function findPayButton(page, onLog, timeoutMs = 4000) {
   const names = [
     /Click to Pay/i,
     /Submit\s*&\s*Pay/i,
@@ -1009,16 +1208,14 @@ async function clickPayOnBreakdown(page, onLog) {
     /Pay Now/i,
   ];
   for (const name of names) {
-    const btn = page.getByRole('button', { name }).first()
-      .or(page.locator('button').filter({ hasText: name }).first());
-    if (await btn.isVisible({ timeout: 4000 }).catch(() => false)) {
-      if (onLog) onLog(`Clicking payment button: ${name}`);
-      await btn.scrollIntoViewIfNeeded().catch(() => {});
-      await btn.click({ timeout: 8000 }).catch(() => btn.click({ force: true }));
-      return true;
+    const btn = page.locator('button:visible, a:visible, .btn:visible').filter({ hasText: name }).first()
+      .or(page.getByRole('button', { name }).first());
+    if (await btn.isVisible({ timeout: timeoutMs }).catch(() => false)) {
+      if (onLog) onLog(`Payment button found: ${name}`);
+      return btn;
     }
   }
-  return false;
+  return null;
 }
 
 async function handlePaymentPopupsAndOpenPayu(page, onLog) {
@@ -1045,38 +1242,44 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
   if (!clickedNo && onLog) onLog('Payment Bypass popup not visible — continuing.');
 
   await page.waitForTimeout(1200);
-  const clickedPay = await clickPayOnBreakdown(page, onLog);
-  if (!clickedPay && onLog) {
-    onLog('Click to Pay / Submit & Pay not found yet, retrying...');
+  let payBtn = await findPayButton(page, onLog, 8000);
+
+  // The popup can also open on top of the breakdown after it renders.
+  for (let attempt = 1; attempt <= 3 && !payBtn; attempt += 1) {
+    if (onLog) onLog(`Click to Pay not found yet — retry ${attempt}/3.`);
+    await clickPaymentBypassNo(page, onLog, 8000);
     await page.waitForTimeout(2500);
-    await clickPayOnBreakdown(page, onLog);
+    payBtn = await findPayButton(page, onLog, 6000);
   }
 
-  await capturePayuAndOpenChrome(page, onLog);
+  if (!payBtn) {
+    if (onLog) onLog('Click to Pay / Submit & Pay button not found on payment-breakdown.');
+    return;
+  }
+
+  await capturePayuAndOpenChrome(page, payBtn, onLog);
 }
 
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
-  await fillRemainingPartA(page, data, data, onLog);
 
-  if (!(await isMadhyaChipVisible(page))) {
-    if (onLog) onLog('STOP: Part A 2a state not filled. Save & Next will not be clicked.');
-    throw new Error('Part A required state (2a Madhya Pradesh) is not selected');
-  }
+  await fillUntilPortalAccepts(page, {
+    stepName: 'Part A',
+    onLog,
+    fillFn: () => fillRemainingPartA(page, data, data, onLog),
+    isReadyFn: () => isMadhyaChipVisible(page),
+    saveFn: () => clickSaveAndNext(page, onLog, 'Part A'),
+  });
 
-  const movedToB = await clickSaveAndNext(page, onLog, 'Part A');
-  if (!movedToB) {
-    if (onLog) onLog('STOP: Part A Save & Next did not open Part B.');
-    throw new Error('Part A Save & Next failed — portal still on Part A');
-  }
-
-  await fillPartBSection4(page, null, onLog);
-  await fillPartBSection5(page, null, onLog);
-  const movedToC = await clickSaveAndNext(page, onLog, 'Part B');
-  if (!movedToC) {
-    if (onLog) onLog('STOP: Part B Save & Next did not open Part C.');
-    throw new Error('Part B Save & Next failed — portal still on Part B');
-  }
+  await fillUntilPortalAccepts(page, {
+    stepName: 'Part B',
+    onLog,
+    fillFn: async () => {
+      await fillPartBSection4(page, null, onLog);
+      await fillPartBSection5(page, null, onLog);
+    },
+    saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
+  });
 
   await fillPartC(page, data, onLog);
 }

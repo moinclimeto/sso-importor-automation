@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { CheckCircle2, FileSignature, FileText, PenLine, Sparkles, Upload } from 'lucide-react';
+import LocalFilePreview from './LocalFilePreview.jsx';
 import LetterStudioModal from './LetterStudioModal.jsx';
 import {
   buildLetterValues,
@@ -41,10 +42,13 @@ function DocumentCard({
       </div>
 
       {filePath ? (
-        <p className="text-xs text-emerald-700 flex items-center gap-1.5 min-w-0">
-          <CheckCircle2 size={13} className="shrink-0" />
-          <span className="truncate" title={filePath}>{fileLabel(filePath)}</span>
-        </p>
+        <div className="flex items-center gap-3 min-w-0">
+          <p className="text-xs text-emerald-700 flex items-center gap-1.5 min-w-0">
+            <CheckCircle2 size={13} className="shrink-0" />
+            <span className="truncate" title={filePath}>{fileLabel(filePath)}</span>
+          </p>
+          <LocalFilePreview filePath={filePath} />
+        </div>
       ) : (
         <p className="text-xs text-slate-400">No signed PDF attached yet.</p>
       )}

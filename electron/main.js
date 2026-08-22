@@ -1,6 +1,13 @@
+import dns from 'dns';
 import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  /* older Node */
+}
 import { initDatabase } from './db/database.js';
 import { registerIpcHandlers } from './ipc/ipcHandlers.js';
 
