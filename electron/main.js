@@ -1,10 +1,18 @@
+import dns from 'dns';
 import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { initDatabase, dbJsonPath } from './database.js';
-import { migrateFromJsonToSqlite } from './dataMigration.js';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  /* older Node */
+}
+
+import { initDatabase, dbJsonPath } from './db/database.js';
+import { migrateFromJsonToSqlite } from './db/dataMigration.js';
 import { registerAuthHandlers } from './authHandlers.js';
-import { registerIpcHandlers } from './ipcHandlers.js';
+import { registerIpcHandlers } from './ipc/ipcHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -31,16 +39,34 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
 
+  const zoomBy = (delta) => {
+    const wc = win.webContents;
+    const next = Math.min(3, Math.max(0.5, wc.getZoomFactor() + delta));
+    wc.setZoomFactor(Number(next.toFixed(2)));
+  };
+  win.webContents.on('before-input-event', (event, input) => {
+    if (!(input.control || input.meta) || input.type !== 'keyDown') return;
+    const key = String(input.key || '');
+    if (key === '=' || key === '+' || key === 'Add' || key === 'NumpadAdd') {
+      event.preventDefault();
+      zoomBy(0.1);
+    } else if (key === '-' || key === '_' || key === 'Subtract' || key === 'NumpadSubtract') {
+      event.preventDefault();
+      zoomBy(-0.1);
+    } else if (key === '0' || key === 'Numpad0') {
+      event.preventDefault();
+      win.webContents.setZoomFactor(1);
+    }
+  });
+
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5180');
-    win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 }
 
 app.whenReady().then(async () => {
-  // Windows taskbar grouping / custom icon
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.climeto.pwp');
   }

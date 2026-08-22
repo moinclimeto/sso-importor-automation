@@ -8,6 +8,17 @@ contextBridge.exposeInMainWorld('pwp', {
   // FS
   fs: {
     readFileBase64: (filePath) => ipcRenderer.invoke('fs:readFileBase64', filePath),
+    readLocalFileBase64: (filePath) => ipcRenderer.invoke('fs:readLocalFileBase64', filePath),
+    copyRegistrationFile: (filePath) => ipcRenderer.invoke('fs:copyRegistrationFile', filePath),
+    saveRegistrationFile: (fileName, base64) => ipcRenderer.invoke('fs:saveRegistrationFile', fileName, base64),
+  },
+  files: {
+    storeUpload: (payload) => ipcRenderer.invoke('files:store-upload', payload),
+  },
+  letters: {
+    preview: (payload) => ipcRenderer.invoke('letters:preview', payload),
+    save: (payload) => ipcRenderer.invoke('letters:save', payload),
+    saveAll: (payload) => ipcRenderer.invoke('letters:saveAll', payload),
   },
   companies: {
     getAll: () => ipcRenderer.invoke('companies:getAll'),
@@ -109,6 +120,12 @@ contextBridge.exposeInMainWorld('pwp', {
     refreshLoginCaptcha: () => ipcRenderer.invoke('scraper:refreshLoginCaptcha'),
     submitLoginOtp: (payload) => ipcRenderer.invoke('scraper:submitLoginOtp', payload),
     resendLoginOtp: () => ipcRenderer.invoke('scraper:resendLoginOtp'),
+    answerPaymentBypass: (payload) => ipcRenderer.invoke('scraper:answerPaymentBypass', payload),
+    onPaymentBypassPrompt: (callback) => {
+      const handler = () => callback?.();
+      ipcRenderer.on('scraper:payment-bypass-prompt', handler);
+      return () => ipcRenderer.removeListener('scraper:payment-bypass-prompt', handler);
+    },
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),
@@ -129,10 +146,20 @@ contextBridge.exposeInMainWorld('pwp', {
     startCpcbKeepAlive: () => ipcRenderer.invoke('scraper:startCpcbKeepAlive'),
     stopCpcbKeepAlive: () => ipcRenderer.invoke('scraper:stopCpcbKeepAlive'),
     pingCpcbSession: () => ipcRenderer.invoke('scraper:pingCpcbSession'),
+    onPrepareProgress: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('scraper:prepare-progress', handler);
+      return () => ipcRenderer.removeListener('scraper:prepare-progress', handler);
+    },
     onLog: (callback) => {
       const handler = (_event, payload) => callback?.(payload);
       ipcRenderer.on('scraper:log', handler);
       return () => ipcRenderer.removeListener('scraper:log', handler);
+    },
+    onPortalToast: (callback) => {
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on('cpcb:portal-toast', handler);
+      return () => ipcRenderer.removeListener('cpcb:portal-toast', handler);
     },
   },
   // EPR Scraped Data (SQLite)

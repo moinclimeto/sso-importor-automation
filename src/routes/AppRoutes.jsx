@@ -23,8 +23,9 @@ import CpcbDashboard from '../pages/CpcbDashboard.jsx';
 import ProductionEntryPage from '../pages/ProductionEntryPage.jsx';
 import CreditCalculations from '../pages/CreditCalculations.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
-import RegistrationForm from '../pages/RegistrationForm.jsx';
 import MasterDataPage from '../pages/MasterDataPage.jsx';
+import CpcbRegistrationPage from '../pages/CpcbRegistrationPage.jsx';
+import NewApplicationPage from '../pages/NewApplicationPage.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn, loading } = useAuth();
@@ -43,7 +44,7 @@ export default function AppRoutes() {
     <BrowserRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
-        <Route path="/" element={<Navigate to="/doc-processor" replace />} />
+        <Route path="/" element={<Navigate to="/cpcb-dashboard" replace />} />
         <Route
           path="/"
           element={
@@ -74,7 +75,9 @@ export default function AppRoutes() {
           <Route path="sales-review/:id" element={<SalesReview />} />
           <Route path="production-entry" element={<ProductionEntryPage />} />
           <Route path="credit-calculations" element={<CreditCalculations />} />
-          <Route path="registration-form" element={<RegistrationForm />} />
+          <Route path="registration-form" element={<Navigate to="/cpcb-registration" replace />} />
+          <Route path="cpcb-registration" element={<CpcbRegistrationPage />} />
+          <Route path="new-application" element={<NewApplicationPage />} />
           <Route path="supplier-master" element={<Navigate to="/master-data?tab=supplier" replace />} />
           <Route path="packaging-master" element={<Navigate to="/master-data?tab=packaging" replace />} />
         </Route>

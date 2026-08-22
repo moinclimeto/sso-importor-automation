@@ -155,10 +155,23 @@ export async function assertNoDuplicateSale(db, data, options = {}) {
   if (match) throw duplicateError(match);
 }
 
+/** Remove file_hashes rows that no longer belong to a purchase/sale record. */
+export async function pruneOrphanFileHashes(db) {
+  const result = await db.run(`
+    DELETE FROM file_hashes
+    WHERE hash NOT IN (
+      SELECT file_hash FROM purchases WHERE file_hash IS NOT NULL AND file_hash != ''
+      UNION
+      SELECT file_hash FROM sales WHERE file_hash IS NOT NULL AND file_hash != ''
+    )
+  `);
+  return { removed: result.changes || 0 };
+}
+
 export async function getAllProcessedFileHashes(db) {
+  await pruneOrphanFileHashes(db);
   const hashes = new Set();
   const tables = [
-    db.all('SELECT hash FROM file_hashes'),
     db.all(`SELECT file_hash AS hash FROM purchases WHERE file_hash IS NOT NULL AND file_hash != ''`),
     db.all(`SELECT file_hash AS hash FROM sales WHERE file_hash IS NOT NULL AND file_hash != ''`),
   ];

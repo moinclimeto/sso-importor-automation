@@ -32,6 +32,11 @@ yarn-error.log*
 database.sqlite
 db.json
 pwp.db
+sso_importer.db
+sso_importer.db-wal
+sso_importer.db-shm
+electron/sso_importer.db-shm
+electron/sso_importer.db-wal
 
 # Electron / Playwright
 playwright_session/
@@ -77,3 +82,6 @@ coverage/
 # Scraped Playwright Data
 playwright_data/*.json
 playwright_data/*.png
+
+# Debug screenshots
+login_stuck.png

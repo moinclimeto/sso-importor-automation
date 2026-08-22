@@ -9,6 +9,8 @@
     "build": "vite build",
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5180 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && electron-builder",
+    "setup:ghostscript": "node scripts/setup-ghostscript.mjs",
+    "preelectron:build": "node scripts/setup-ghostscript.mjs",
     "db:sync": "node sync_to_sqlite.js",
     "qr:docker:build": "docker build -t pwp-qr-scanner:latest ./scripts/qr_scanner",
     "qr:scan": "node scripts/test-qr-scan.mjs"
@@ -51,6 +53,7 @@
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^5.0.4",
+    "7zip-bin-full": "^26.2.1",
     "autoprefixer": "^10.4.21",
     "concurrently": "^9.2.1",
     "cross-env": "^10.1.0",
@@ -76,6 +79,13 @@
       {
         "from": "electron/db",
         "to": "db"
+      },
+      {
+        "from": "electron/ghostscript",
+        "to": "ghostscript",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {

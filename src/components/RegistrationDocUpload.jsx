@@ -11,21 +11,34 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
-  REQUIRED_REGISTRATION_DOCS,
 } from '../utils/registrationDataMapper.js';
+import {
+  normalizeCompanyDocumentExtraction,
+  resolveGstDocType,
+} from '../utils/companyDocNormalize.js';
+import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 
 const REGISTRATION_DOC_TYPES = new Set([
   'gst', 'person_pan', 'company_pan', 'cto', 'cin', 'udyam', 'iec',
+  'unit_gst', 'supporting_category_doc', 'operations_details',
+  'plastic_packaging_picture', 'covering_letter', 'signature', 'self_declaration'
 ]);
 
 const DOC_TYPE_LABELS = {
-  gst: 'GST Certificate',
+  gst: 'Company GST',
+  unit_gst: 'Unit GST',
   person_pan: 'Person PAN',
   company_pan: 'Company PAN',
   cto: 'CTO Certificate',
   cin: 'CIN Certificate',
   udyam: 'Udyam Certificate',
   iec: 'IEC Certificate',
+  supporting_category_doc: 'Supporting Category Doc',
+  operations_details: 'Operations Details (3a)',
+  plastic_packaging_picture: 'Plastic Packaging Pic (3b)',
+  covering_letter: 'Covering Letter',
+  signature: 'Signature',
+  self_declaration: 'Self Declaration (Any Other Info)',
   unknown: 'Unknown Document',
 };
 
@@ -50,13 +63,14 @@ function buildDocumentPayload(data, filePath) {
     date_of_commencement: data.date_of_commencement || '',
     industry_category: data.industry_category || '',
     allowed_capacity: data.allowed_capacity || '',
-    validity_date: data.validity_date || '',
+    validity_date: data.validity_date || data.valid_upto || '',
     billing_month: data.billing_month || '',
-    amount: data.amount || 0,
-    units_consumed: data.units_consumed || 0,
+    amount: Number(data.amount) || 0,
+    units_consumed: Number(data.units_consumed) || 0,
     due_date: data.due_date || '',
-    provider: data.provider || '',
+    provider: data.provider || data.vendor_name || '',
     file_path: filePath || '',
+    fileHash: data.fileHash || '',
     raw_json: JSON.stringify(data),
   };
 }
@@ -68,35 +82,77 @@ async function notifyExtracted(onExtracted) {
   onExtracted(buildRegistrationDataFromDocuments(relevant));
 }
 
-function normalizeDocType(data) {
-  let type = data.doc_type || 'unknown';
-  if (type === 'pan') {
-    const pan = String(data.document_number || '').toUpperCase();
-    type = pan.charAt(3) === 'C' ? 'company_pan' : 'person_pan';
-    data.doc_type = type;
+function normalizeDocType(data, fileName = '', gstContext = {}) {
+  normalizeCompanyDocumentExtraction(data, fileName);
+  resolveGstDocType(data, fileName, gstContext);
+  return data.doc_type || 'unknown';
+}
+
+async function repairStoredDocument(doc) {
+  if (!window.pwp?.documents?.add || !window.pwp?.documents?.delete) return doc;
+
+  let parsed = {};
+  try {
+    parsed = JSON.parse(doc.raw_json || '{}');
+  } catch {
+    parsed = {};
   }
-  return type;
+
+  const fileName = doc.file_path?.split(/[/\\]/).pop() || '';
+  const merged = normalizeCompanyDocumentExtraction(
+    {
+      ...parsed,
+      doc_type: doc.doc_type,
+      document_number: doc.document_number || parsed.document_number,
+      entity_name: doc.entity_name || parsed.entity_name,
+    },
+    fileName,
+    { allowFilenameReclassify: false }
+  );
+
+  const docTypeChanged = merged.doc_type !== doc.doc_type;
+  const numberAdded = !doc.document_number && merged.document_number;
+  if (!docTypeChanged && !numberAdded) return doc;
+
+  await window.pwp.documents.delete(doc.id);
+  const payload = buildDocumentPayload(merged, doc.file_path || '');
+  const saved = await window.pwp.documents.add(payload);
+  return { ...doc, ...saved, doc_type: merged.doc_type, document_number: merged.document_number, entity_name: merged.entity_name, id: saved.id };
 }
 
 function ProgressPanel({ progress }) {
   if (!progress) return null;
-  const total = Math.max(0, Number(progress.total || progress.totalPages || 0));
-  const current = Math.max(0, Number(progress.current || 0));
-  const processed = Math.max(0, Number(progress.processed || 0));
-  const displayCount = progress.stage === 'complete' ? processed : current || processed;
-  const percent =
-    total > 0
-      ? Math.min(100, Math.round(((progress.stage === 'complete' ? processed : current) / total) * 100))
-      : 0;
+  const total = Math.max(
+    0,
+    Number(progress.batchTotal || progress.selectedTotal || progress.total || progress.totalPages || 0)
+  );
+  const processed = Math.max(0, Number(progress.processed || progress.current || 0));
+  const success = Math.max(0, Number(progress.successCount || 0));
+  const failed = Math.max(0, Number(progress.failedCount || 0));
+  const remaining = Math.max(
+    0,
+    Number.isFinite(progress.remaining)
+      ? progress.remaining
+      : total - processed
+  );
+  const currentFile = progress.currentFile || progress.currentFile || '';
+  const displayCount = progress.stage === 'complete' ? total || processed : processed;
+  const percent = total > 0 ? Math.min(100, Math.round((displayCount / total) * 100)) : 0;
   const done = progress.stage === 'complete';
 
   return (
     <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 space-y-2">
       <div className="flex items-center justify-between gap-3 text-sm">
-        <span className="font-medium text-slate-800">{progress.message}</span>
-        <span className="text-slate-500 tabular-nums font-medium">
-          {displayCount}/{total || '—'}
+        <span className="font-medium text-slate-800">
+          {progress.message || (done ? 'Processing complete' : 'Processing documents…')}
         </span>
+        <span className="text-slate-500 tabular-nums font-medium">
+          {done ? `${success} extracted` : `${remaining} remaining`}
+        </span>
+      </div>
+      <div className="flex items-center justify-between gap-3 text-xs text-slate-500">
+        <span>{success} extracted successfully{failed > 0 ? ` · ${failed} failed` : ''}</span>
+        <span>{processed}/{total || '—'} processed</span>
       </div>
       <div className="h-2 rounded-full bg-slate-200 overflow-hidden">
         <div
@@ -104,8 +160,8 @@ function ProgressPanel({ progress }) {
           style={{ width: `${percent}%` }}
         />
       </div>
-      {progress.currentFile && (
-        <p className="text-xs text-slate-500 truncate">{progress.currentFile}</p>
+      {currentFile && (
+        <p className="text-xs text-slate-500 truncate">{currentFile}</p>
       )}
     </div>
   );
@@ -178,6 +234,47 @@ function DocListRow({ item, onRemove, removing }) {
   );
 }
 
+/** Same physical upload — the row keeps its identity across processing → done/failed. */
+function isSameUpload(a, b) {
+  const pathA = String(a.filePath || '').toLowerCase();
+  const pathB = String(b.filePath || '').toLowerCase();
+  if (pathA && pathB) return pathA === pathB;
+  const nameA = String(a.fileName || '').toLowerCase();
+  const nameB = String(b.fileName || '').toLowerCase();
+  return Boolean(nameA) && nameA === nameB;
+}
+
+function mergeDocItem(existing, incoming) {
+  const merged = { ...existing };
+  for (const [key, value] of Object.entries(incoming)) {
+    if (value === undefined || value === null || value === '') continue;
+    merged[key] = value;
+  }
+  if (incoming.status) merged.status = incoming.status;
+  merged.error = merged.status === 'done' ? '' : incoming.error || existing.error || '';
+  if (existing.dbId && !incoming.dbId) merged.id = existing.id;
+  return merged;
+}
+
+function dedupeDocList(list) {
+  const out = [];
+  for (const item of list) {
+    const idx = out.findIndex((d) => {
+      if (d.dbId && item.dbId) return d.dbId === item.dbId;
+      if (isSameUpload(d, item)) return true;
+      return (
+        item.status === 'done' &&
+        d.status === 'done' &&
+        Boolean(item.docType) &&
+        d.docType === item.docType
+      );
+    });
+    if (idx >= 0) out[idx] = mergeDocItem(out[idx], item);
+    else out.push(item);
+  }
+  return out;
+}
+
 export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
@@ -187,7 +284,9 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   const [processing, setProcessing] = useState(false);
   const [resolving, setResolving] = useState(false);
   const [progress, setProgress] = useState(null);
+  const [batchCount, setBatchCount] = useState(null);
   const [removingId, setRemovingId] = useState(null);
+  const [showGuidelines, setShowGuidelines] = useState(false);
 
   useEffect(() => {
     return () => {
@@ -203,7 +302,8 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         const relevant = (docs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
         if (!relevant.length) return;
 
-        const items = relevant.map((doc) => {
+        const repaired = await Promise.all(relevant.map((doc) => repairStoredDocument(doc)));
+        const items = repaired.map((doc) => {
           dbIdsByType.current[doc.doc_type] = doc.id;
           return {
             id: `db-${doc.id}`,
@@ -217,10 +317,8 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             error: '',
           };
         });
-        setDocList(items);
-        if (onExtracted) {
-          onExtracted(buildRegistrationDataFromDocuments(relevant));
-        }
+        setDocList(dedupeDocList(items));
+        await notifyExtracted(onExtracted);
       } catch {
         /* ignore */
       }
@@ -229,39 +327,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   }, [onExtracted]);
 
   const upsertDocInList = (item) => {
-    setDocList((prev) => {
-      let next = [...prev];
-
-      if (item.filePath) {
-        const procIdx = next.findIndex(
-          (d) => d.filePath === item.filePath && d.status === 'processing'
-        );
-        if (procIdx >= 0) {
-          next[procIdx] = item;
-        } else {
-          next.push(item);
-        }
-      } else {
-        next.push(item);
-      }
-
-      if (item.status === 'done' && item.docType) {
-        let found = false;
-        next = next.filter((d) => {
-          if (d.docType === item.docType && d.status === 'done') {
-            if (!found && d.id === item.id) {
-              found = true;
-              return true;
-            }
-            if (d.id === item.id) return true;
-            return false;
-          }
-          return true;
-        });
-      }
-
-      return next;
-    });
+    setDocList((prev) => dedupeDocList([...prev, item]));
   };
 
   const saveDocument = async (data, filePath) => {
@@ -285,7 +351,14 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
   };
 
   const processBatch = async (fileEntries) => {
-    const targets = fileEntries.filter((f) => f.path);
+    const seenPaths = new Set();
+    const targets = fileEntries.filter((f) => {
+      if (!f.path) return false;
+      const key = String(f.path).toLowerCase();
+      if (seenPaths.has(key)) return false;
+      seenPaths.add(key);
+      return true;
+    });
     if (!targets.length) {
       showToast?.('No valid file paths found. Use Browse inside the Electron app.', 'error');
       return;
@@ -297,12 +370,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     }
 
     setProcessing(true);
+    const batchTotal = targets.length;
+    setBatchCount({ total: batchTotal, success: 0, failed: 0, remaining: batchTotal });
     setProgress({
       stage: 'start',
-      total: targets.length,
+      batchTotal,
+      total: batchTotal,
+      selectedTotal: batchTotal,
       processed: 0,
       current: 0,
-      message: `Processing ${targets.length} document(s)…`,
+      successCount: 0,
+      failedCount: 0,
+      remaining: batchTotal,
+      message: `Processing ${batchTotal} document(s)…`,
       currentFile: '',
     });
 
@@ -319,11 +399,61 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
 
     if (typeof unsubRef.current === 'function') unsubRef.current();
     if (window.pwp.ocr.onProgress) {
-      unsubRef.current = window.pwp.ocr.onProgress((p) => setProgress(p));
+      unsubRef.current = window.pwp.ocr.onProgress((p) => {
+        const total = Math.max(0, Number(p.selectedTotal || p.total || batchTotal));
+        const processed = Math.max(0, Number(p.processed || p.current || 0));
+        const success = Math.max(0, Number(p.successCount || 0));
+        const failed = Math.max(0, Number(p.failedCount || 0));
+        const remaining = Math.max(0, total - processed);
+        setBatchCount({ total, success, failed, remaining });
+        setProgress({
+          ...p,
+          batchTotal: total,
+          total,
+          processed,
+          successCount: success,
+          failedCount: failed,
+          remaining,
+          message: p.message || `${success} extracted · ${remaining} remaining`,
+        });
+        const fs = p.fileStatus;
+        if (!fs) return;
+        const name = fs.sourceFileName || fs.fileName;
+        if (!name) return;
+        const status =
+          fs.status === 'success' || fs.status === 'ok'
+            ? 'done'
+            : fs.status === 'failed' || fs.status === 'fail'
+              ? 'failed'
+              : fs.status === 'skipped'
+                ? 'failed'
+                : 'processing';
+        upsertDocInList({
+          id: `proc-${name}`,
+          fileName: name,
+          filePath: '',
+          docType: null,
+          status,
+          error: status === 'failed' ? fs.label || '' : '',
+        });
+      });
     }
 
     let savedCount = 0;
     let failedCount = 0;
+
+    let companyGstNumber = null;
+    let hasCompanyGst = false;
+    try {
+      const existingDocs = await window.pwp.documents.getAll();
+      const existingGst = (existingDocs || []).find((d) => d.doc_type === 'gst');
+      if (existingGst?.document_number) {
+        companyGstNumber = String(existingGst.document_number).toUpperCase();
+        hasCompanyGst = true;
+      }
+    } catch {
+      /* ignore */
+    }
 
     try {
       const batch = await window.pwp.ocr.extractBatch({
@@ -346,11 +476,24 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             status: 'failed',
             error: r.message || 'Extraction failed',
           });
+          const processedSoFar = savedCount + failedCount;
+          const remainingNow = Math.max(0, batchTotal - processedSoFar);
+          setBatchCount({
+            total: batchTotal,
+            success: savedCount,
+            failed: failedCount,
+            remaining: remainingNow,
+          });
           continue;
         }
 
         const data = { ...(r.data || {}) };
-        const docType = normalizeDocType(data);
+        const docType = normalizeDocType(data, fileName, { companyGstNumber, hasCompanyGst });
+
+        if (data.doc_type === 'gst' && data.document_number) {
+          companyGstNumber = String(data.document_number).toUpperCase();
+          hasCompanyGst = true;
+        }
 
         try {
           const saved = await saveDocument(data, sourcePath);
@@ -377,16 +520,56 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             error: err?.message || 'Save failed',
           });
         }
+
+        const processedSoFar = savedCount + failedCount;
+        const remainingNow = Math.max(0, batchTotal - processedSoFar);
+        setBatchCount({
+          total: batchTotal,
+          success: savedCount,
+          failed: failedCount,
+          remaining: remainingNow,
+        });
+        setProgress((prev) => ({
+          ...(prev || {}),
+          batchTotal,
+          total: batchTotal,
+          processed: processedSoFar,
+          successCount: savedCount,
+          failedCount: failedCount,
+          remaining: remainingNow,
+          message: `${savedCount} extracted · ${remainingNow} remaining`,
+        }));
       }
+
+      const allDocs = await window.pwp.documents.getAll();
+      const relevant = (allDocs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
+      const processedTotal = savedCount + failedCount;
+      const remaining = Math.max(0, batchTotal - processedTotal);
+
+      setBatchCount({
+        total: batchTotal,
+        success: savedCount,
+        failed: failedCount,
+        remaining: 0,
+      });
 
       setProgress((prev) => ({
         ...(prev || {}),
         stage: 'complete',
-        message: `Done · ${savedCount} saved${failedCount ? ` · ${failedCount} failed` : ''}`,
+        batchTotal,
+        total: batchTotal,
+        processed: processedTotal,
+        successCount: savedCount,
+        failedCount: failedCount,
+        remaining: 0,
+        message: `Done · ${savedCount} extracted${failedCount ? ` · ${failedCount} failed` : ''}${remaining > 0 ? ` · ${remaining} skipped` : ''}`,
       }));
 
       if (savedCount > 0) {
-        showToast?.(`${savedCount} document(s) extracted and saved`, 'success');
+        showToast?.(
+          `${savedCount} new document(s) saved · ${relevant.length} total uploaded`,
+          'success'
+        );
       }
       if (failedCount > 0 && savedCount === 0) {
         showToast?.('Could not extract documents. Check files and try again.', 'error');
@@ -394,6 +577,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     } catch (err) {
       showToast?.(err?.message || 'Batch extraction failed', 'error');
       setProgress(null);
+      setBatchCount(null);
     } finally {
       setProcessing(false);
       if (typeof unsubRef.current === 'function') {
@@ -495,21 +679,39 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     setDocList((prev) => prev.filter((d) => d.id !== item.id));
   };
 
-  const savedDocs = docList.filter((d) => d.status === 'done');
-  const uploadedTypes = new Set(savedDocs.map((d) => d.docType));
-  const uploadedCount = REQUIRED_REGISTRATION_DOCS.filter((t) => uploadedTypes.has(t)).length;
+  const savedDocs = docList.filter((d) => d.status === 'done' && (d.dbId || d.docType));
+  const totalUploaded = savedDocs.length;
+  const countLabel = resolving
+    ? 'Reading files…'
+    : processing
+      ? `${batchCount?.remaining ?? batchCount?.total ?? 0} remaining`
+      : `${totalUploaded} uploaded`;
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 relative">
+      <ReadinessGuidelinesModal 
+        isOpen={showGuidelines} 
+        onClose={() => setShowGuidelines(false)} 
+      />
+
       <div className="flex items-center justify-between">
         <div>
-          <h3 className="text-md font-medium text-slate-800">Registration Documents</h3>
+          <div className="flex items-center gap-2">
+            <h3 className="text-md font-medium text-slate-800">Registration Documents</h3>
+            <button 
+              onClick={() => setShowGuidelines(true)}
+              className="p-1 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
+              title="View Readiness Guidelines"
+            >
+              <AlertCircle size={16} />
+            </button>
+          </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            Upload GST, Person PAN, Company PAN &amp; CTO together — type is detected automatically
+            Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
-          {uploadedCount}/{REQUIRED_REGISTRATION_DOCS.length} ready
+          {countLabel}
         </span>
       </div>
 
@@ -550,17 +752,17 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             Browse files
           </button>
         </div>
-        <input
-          ref={inputRef}
-          type="file"
-          accept=".pdf,.png,.jpg,.jpeg,.webp,.zip"
-          multiple
-          className="hidden"
-          onChange={(e) => {
-            addBrowserFiles(e.target.files);
-            e.target.value = '';
-          }}
-        />
+          <input
+            ref={inputRef}
+            type="file"
+            accept=".pdf,.png,.jpg,.jpeg"
+            multiple
+            className="hidden"
+            onChange={(e) => {
+              addBrowserFiles(e.target.files);
+              e.target.value = '';
+            }}
+          />
       </div>
 
       {(processing || resolving) && (
@@ -603,7 +805,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       {docList.length === 0 && !processing && (
         <div className="flex items-center gap-2 text-xs text-slate-400 px-1">
           <AlertCircle size={14} />
-          Upload all 4 documents — extracted data will auto-fill the form below
+          Upload documents — extracted data will auto-fill the form below
         </div>
       )}
     </div>
