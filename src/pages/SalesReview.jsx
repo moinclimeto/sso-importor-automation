@@ -51,6 +51,7 @@ import {
   ReadonlyHeaderField,
   REGISTRATION_TYPE_OPTIONS,
 } from '../components/ReviewDocumentHeaderFields';
+import RegisteredEntityVerify from '../components/RegisteredEntityVerify.jsx';
 
 const PLASTIC_MATERIALS = ['HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'Others', 'PLA', 'PBAT', 'PVC', 'Multi-layer'];
 
@@ -104,9 +105,7 @@ export default function SalesReview() {
   const [cfSetupLoading, setCfSetupLoading] = useState(false);
   const [bulkStatus, setBulkStatus] = useState('');
   const [dirty, setDirty] = useState(false);
-  const autoSaveTimerRef = useRef(null);
   const skipDirtyRef = useRef(true);
-  const handleSaveRef = useRef(null);
 
   const isPublished = tab === 'published';
   const draftStatus = isPublished ? 'published' : 'inbox';
@@ -138,16 +137,24 @@ export default function SalesReview() {
   const markUnsaved = useCallback(() => {
     if (readOnly || skipDirtyRef.current) return;
     setDirty(true);
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current?.(draftStatus, { silent: true, skipReload: true });
-    }, 2000);
-  }, [draftStatus]);
+  }, [readOnly]);
 
   const patchHeader = useCallback((patch) => {
     setHeader((h) => ({ ...h, ...patch }));
     markUnsaved();
   }, [markUnsaved]);
+
+  const applyVerifiedEntity = useCallback((entity) => {
+    if (!entity) return;
+    patchHeader({
+      registration_type: entity.registration_type || header.registration_type,
+      entity_type: entity.entity_type || header.entity_type,
+      entity_name: entity.trade_name || header.entity_name,
+      address: entity.address || header.address,
+      mobile_number: entity.mobile || header.mobile_number,
+    });
+    showToast('Fields updated from verification — click Save to persist.', 'success');
+  }, [patchHeader, header.registration_type, header.entity_type, header.entity_name, header.address, header.mobile_number, showToast]);
 
   const isLineEditable = useCallback(
     (idx) => {
@@ -160,10 +167,11 @@ export default function SalesReview() {
   useEffect(() => {
     setPageHeader({
       title: 'Post Consumer Document Processing',
-      description: isPublished ? 'Published — editable' : 'OCR Review',
+      subtitle: isPublished ? 'Published — editable' : 'OCR Review',
+      onBack: () => navigate('/doc-table', { state: { type: 'sale', tab } }),
     });
     return clearPageHeader;
-  }, [isPublished, setPageHeader, clearPageHeader]);
+  }, [isPublished, tab, navigate, setPageHeader, clearPageHeader]);
 
   const loadRecord = useCallback(async () => {
     if (!window.pwp?.sales || !id) return;
@@ -217,9 +225,6 @@ export default function SalesReview() {
 
   useEffect(() => {
     loadRecord();
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
   }, [loadRecord]);
 
   useEffect(() => {
@@ -424,10 +429,6 @@ export default function SalesReview() {
 
   const handleSave = async (docStatus, { silent = false, skipReload = false } = {}) => {
     if (!record?.id) return;
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
     setSaving(true);
     try {
       const payload = buildSavePayload(docStatus);
@@ -474,8 +475,6 @@ export default function SalesReview() {
     }
   };
 
-  handleSaveRef.current = handleSave;
-
   const handlePublish = async () => {
     applyValidationDraft();
     if (!validation.ok) {
@@ -517,8 +516,10 @@ export default function SalesReview() {
     const next = navRows[navIndex + delta];
     if (!next) return;
     if (dirty && record?.id) {
+      const saveFirst = window.confirm('You have unsaved changes. Save before moving to the next document?');
+      if (!saveFirst) return;
       try {
-        await handleSave(draftStatus, { silent: true, skipReload: true });
+        await handleSave(draftStatus, { skipReload: true });
       } catch {
         return;
       }
@@ -547,7 +548,7 @@ export default function SalesReview() {
           </span>
           {dirty ? (
             <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
-              Unsaved — auto-saving…
+              Unsaved changes
             </span>
           ) : null}
         </div>
@@ -596,7 +597,18 @@ export default function SalesReview() {
         <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
           {/* Document header — no Verify Supplier */}
           <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 mb-3">Document Header</h3>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-slate-800">Document Header</h3>
+              <button
+                type="button"
+                disabled={saving || !dirty}
+                onClick={() => handleSave(draftStatus, { skipReload: true })}
+                className="btn-primary text-xs py-1.5 px-3 disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin inline" /> : null}
+                {' '}Save
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <ReadonlyHeaderField label="Customer Name" value={header.entity_name} />
               <EditableHeaderTextarea
@@ -613,6 +625,15 @@ export default function SalesReview() {
                   state: header.state || resolveState('', v),
                 })}
                 readOnly={readOnly}
+              />
+              <RegisteredEntityVerify
+                gst={header.customer_gstin}
+                companyId={record?.company_id}
+                entityName={header.entity_name}
+                entityType={header.entity_type}
+                state={header.state}
+                disabled={readOnly}
+                onApply={applyVerifiedEntity}
               />
               <EditableHeaderField
                 label="Invoice Number"

@@ -54,6 +54,12 @@ contextBridge.exposeInMainWorld('pwp', {
     get: (key) => ipcRenderer.invoke('settings:get', key),
     set: (key, value) => ipcRenderer.invoke('settings:set', key, value),
   },
+  auth: {
+    login: (payload) => ipcRenderer.invoke('auth:login', payload),
+    logout: () => ipcRenderer.invoke('auth:logout'),
+    getSession: () => ipcRenderer.invoke('auth:getSession'),
+    syncToken: (token) => ipcRenderer.invoke('auth:syncToken', token),
+  },
   // Extractor
   extractor: {
     saveData: (data) => ipcRenderer.invoke('extractor:saveData', data),
@@ -78,6 +84,16 @@ contextBridge.exposeInMainWorld('pwp', {
       ipcRenderer.on('ocr:progress', handler);
       return () => ipcRenderer.removeListener('ocr:progress', handler);
     },
+  },
+  gstVerify: {
+    probePartiesFromFiles: (payload) => ipcRenderer.invoke('gst:probe-parties', payload),
+    verifyComplete: (payload) => ipcRenderer.invoke('gst:verify-complete', payload),
+  },
+  entityVerify: {
+    lookupByGst: (payload) => ipcRenderer.invoke('entityVerify:lookupByGst', payload),
+  },
+  pibo: {
+    search: (payload) => ipcRenderer.invoke('pibo:search', payload),
   },
   // Scraper
   scraper: {
@@ -150,6 +166,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getAll: (filters) => ipcRenderer.invoke('supplierMaster:getAll', filters),
     add: (data) => ipcRenderer.invoke('supplierMaster:add', data),
     update: (data) => ipcRenderer.invoke('supplierMaster:update', data),
+    bulkUpsert: (payload) => ipcRenderer.invoke('supplierMaster:bulkUpsert', payload),
     delete: (id) => ipcRenderer.invoke('supplierMaster:delete', id),
   },
   // Packaging Master

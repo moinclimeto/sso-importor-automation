@@ -16,11 +16,15 @@ import InvoiceDetailsModal, {
 } from '../components/InvoiceDetailsModal.jsx';
 import { getApi } from '../utils/pwpApi.js';
 import { applyCompanyRoutingToResults } from '../utils/companyInvoiceMatch.js';
+import { enrichRoutedResultsWithEntityVerify, entityVerifyLabel } from '../utils/entityVerifyEnrich.js';
+import InvoicePartyProbeModal from '../components/InvoicePartyProbeModal.jsx';
+import { upsertCompanyFromParty } from '../utils/companyProfileFromGst.js';
 import {
   calcTotalPlasticQuantityMt,
   enrichLineItemsWithWeightMt,
 } from '../utils/procurementQuantity.js';
 import { resolveFinancialYear } from '../../shared/procurementConversionFactor.js';
+import { resolveBuyerAddressFields } from '../../shared/reviewEnrichment.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import ZipPreviewModal from '../components/ZipPreviewModal.jsx';
 function getFyOptions() {
@@ -171,7 +175,8 @@ function outcomeReason(r) {
   if (outcome === 'saved') {
     const route = r.decidedType === 'purchase' ? 'Purchase' : 'Sale';
     const co = r.routing?.companyName ? ` · ${r.routing.companyName}` : '';
-    return `Auto-saved to ${route}${co}`;
+    const verify = entityVerifyLabel(r.data);
+    return `Auto-saved to ${route}${co}${verify ? ` · ${verify}` : ''}`;
   }
   if (outcome === 'matched') return r.routing?.reason || 'Matched';
   return '—';
@@ -228,6 +233,13 @@ export default function DocUpload() {
   const [pageJobs, setPageJobs] = useState([]);
   const [inspecting, setInspecting] = useState(false);
   const [zipPreview, setZipPreview] = useState(null);
+  const [probeOpen, setProbeOpen] = useState(false);
+  const [probeLoading, setProbeLoading] = useState(false);
+  const [probeResult, setProbeResult] = useState(null);
+  const [probeCompanies, setProbeCompanies] = useState([]);
+  const [probeSaving, setProbeSaving] = useState(false);
+  const pendingExtractRef = useRef(null);
+  const activeCompanyRef = useRef(null);
   const [resolving, setResolving] = useState(false);
   const [globalBankDetails, setGlobalBankDetails] = useState(null);
 
@@ -549,10 +561,10 @@ export default function DocUpload() {
     }
 
     const entityName =
-      data.entity_name || data.customer_name || parties.buyerName || '';
-      
-    const matchedCompany = sourceRow?.routing?.company || null;
-      
+      data.entity_name || data.customer_name || data.buyer_name || parties.buyerName || '';
+
+    const buyerFields = resolveBuyerAddressFields(data);
+
     return {
       ...data,
       company_id: companyId,
@@ -561,6 +573,10 @@ export default function DocUpload() {
       entity_name: entityName,
       customer_name: entityName,
       customer_gstin: String(data.customer_gstin || parties.buyerGst || '').toUpperCase(),
+      address: buyerFields.address || data.address || '',
+      state: buyerFields.state || data.state || '',
+      district: buyerFields.district || data.district || '',
+      pin_code: buyerFields.pin_code || data.pin_code || '',
       recycled_plastic_percent: parseFloat(data.recycled_plastic_percent) || 0,
       conversion_factor: parseFloat(data.conversion_factor) || 0,
       available_quantity_mt: parseFloat(data.available_quantity_mt) || 0,
@@ -764,6 +780,65 @@ export default function DocUpload() {
       setError('Please select files using Browse inside the Electron app (paths required).');
       return;
     }
+
+    pendingExtractRef.current = { targets };
+    setProbeLoading(true);
+    setProbeOpen(true);
+    setProbeResult(null);
+    try {
+      let companies = [];
+      try {
+        companies = (await getApi().companies.getAll()) || [];
+      } catch {
+        companies = [];
+      }
+      setProbeCompanies(companies);
+
+      if (window.pwp?.gstVerify?.probePartiesFromFiles) {
+        const probe = await window.pwp.gstVerify.probePartiesFromFiles({
+          filePaths: [targets[0].path],
+        });
+        setProbeResult({
+          ...probe,
+          totalFiles: targets.length,
+        });
+      } else {
+        setProbeResult({ success: true, files: [], totalFiles: targets.length });
+      }
+    } catch (err) {
+      showToast(err?.message || 'GST party probe failed — continuing without pre-verify.', 'error');
+      setProbeResult({ success: false, files: [] });
+    } finally {
+      setProbeLoading(false);
+    }
+  };
+
+  const handleProbeConfirm = async ({ selectedParty } = {}) => {
+    setProbeSaving(true);
+    try {
+      let activeCompany = null;
+      if (selectedParty?.gst) {
+        activeCompany = await upsertCompanyFromParty(selectedParty, probeCompanies);
+        showToast(`Company profile saved: ${activeCompany.name}`, 'success');
+      } else {
+        const companies = (await getApi().companies.getAll()) || [];
+        if (companies.length === 1) activeCompany = companies[0];
+      }
+      activeCompanyRef.current = activeCompany;
+      await runExtractionBatch({ activeCompany });
+    } catch (err) {
+      showToast(err?.message || 'Failed to save company profile.', 'error');
+    } finally {
+      setProbeSaving(false);
+    }
+  };
+
+  const runExtractionBatch = async ({ activeCompany = null } = {}) => {
+    const pending = pendingExtractRef.current;
+    if (!pending?.targets?.length) return;
+
+    setProbeOpen(false);
+    const targets = pending.targets;
     setStage('processing');
     setError('');
     setSavedCount(0);
@@ -846,8 +921,11 @@ export default function DocUpload() {
           };
         } else if (r.ok) {
           const lines = lineCount(r);
+          const verifyNote = entityVerifyLabel(r.data);
           nextStatus[r.fileName] = {
-            label: `Success · ${r.qr?.priorityApplied ? 'QR+OCR · ' : ''}${lines} line(s)`,
+            label: verifyNote
+              ? `Success · ${verifyNote} · ${lines} line(s)`
+              : `Success · ${r.qr?.priorityApplied ? 'QR+OCR · ' : ''}${lines} line(s)`,
             tone: 'ok',
           };
         } else {
@@ -858,19 +936,32 @@ export default function DocUpload() {
         }
       }
       const rawResults = batch.results || [];
+      const routingCompany = activeCompany ?? activeCompanyRef.current;
       let companies = [];
       try {
         companies = (await getApi().companies.getAll()) || [];
       } catch {
         companies = [];
       }
-      const routed = applyCompanyRoutingToResults(rawResults, companies, docType);
+      const routed = applyCompanyRoutingToResults(
+        rawResults,
+        routingCompany ? [routingCompany] : companies,
+        docType,
+      );
 
       setProgress((prev) => ({
         ...(prev || {}),
         trackId: batch.trackId || prev?.trackId,
         stage: 'saving',
-        message: 'Matching company & auto-saving…',
+        message: 'Verifying GST/PIBO & matching company…',
+      }));
+
+      const entityEnriched = await enrichRoutedResultsWithEntityVerify(routed);
+
+      setProgress((prev) => ({
+        ...(prev || {}),
+        stage: 'saving',
+        message: 'Auto-saving matched documents…',
       }));
       setSaving(true);
       const {
@@ -878,7 +969,7 @@ export default function DocUpload() {
         savedPurchase,
         savedSale,
         saveFailed,
-      } = await autoSaveMatched(routed);
+      } = await autoSaveMatched(entityEnriched);
       setSaving(false);
 
       for (const r of finalResults) {
@@ -1282,6 +1373,19 @@ export default function DocUpload() {
           </div>
         </div>
       )}
+      <InvoicePartyProbeModal
+        open={probeOpen}
+        probeResult={probeResult}
+        companies={probeCompanies}
+        loading={probeLoading}
+        saving={probeSaving}
+        onCancel={() => {
+          setProbeOpen(false);
+          setProbeLoading(false);
+          setProbeSaving(false);
+        }}
+        onConfirm={handleProbeConfirm}
+      />
       <ZipPreviewModal
         open={Boolean(zipPreview)}
         summaries={zipPreview?.summaries}

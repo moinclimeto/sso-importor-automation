@@ -17,6 +17,10 @@ import {
 import { createLogger, createTrackId } from './logger.js';
 import { runExtractQueue } from './extractQueue.js';
 import {
+  beginEntityVerifyBatch,
+  endEntityVerifyBatch,
+} from './entityRegistrationVerify.js';
+import {
   getPdfPageCount,
   expandFilesToPageJobs,
   renderPdfPageToPng,
@@ -346,6 +350,8 @@ async function extractOneInvoice({
       row = normalizePurchasePartyFields(row);
     }
 
+    // Counterparty GST/PIBO verify runs after company routing in DocUpload (with companyId + supplier_master cache).
+
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;
       if (!row._source_fields[key] && row[key] != null && row[key] !== '') {
@@ -506,6 +512,7 @@ export function registerOcrHandlers() {
     };
 
     try {
+      beginEntityVerifyBatch();
       return await runExtractQueue({
         filePaths,
         type,
@@ -540,6 +547,8 @@ export function registerOcrHandlers() {
         skippedCount: 0,
         total: 0,
       };
+    } finally {
+      endEntityVerifyBatch();
     }
   });
 }

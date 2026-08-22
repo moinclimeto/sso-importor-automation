@@ -8,6 +8,7 @@ import {
   resolveLineMt,
 } from './procurementConversionFactor.js';
 import { resolveState } from './gstStateCodes.js';
+import { fillLineItemsHsn, normalizeHsnCode, resolveLineHsn } from './hsnUtils.js';
 import { normalizePlasticCategory } from './plasticCategories.js';
 
 /** Resolve invoice / document number from row + OCR extraction + filename. */
@@ -122,31 +123,110 @@ export function resolveProcurementAddress(row = {}) {
   return parts.join(', ');
 }
 
+/** Buyer / customer address + state from row (never supplier address on sale records). */
+export function resolveBuyerAddressFields(row = {}) {
+  const ext = parseRowExtraction(row);
+  const buyerGst =
+    row.customer_gstin ||
+    row.buyer_gst ||
+    ext.buyer_gst ||
+    ext.buyerGst ||
+    ext.bg ||
+    '';
+
+  const line1 = firstNonEmptyAddress(
+    row.buyer_address,
+    ext.buyer_address,
+    ext.buyerAddress,
+    ext.consignee_address,
+    ext.consigneeAddress,
+    ext.ship_to_address,
+    ext.shipToAddress,
+    ext.bill_to_address,
+    ext.billToAddress,
+  );
+
+  const city = firstNonEmptyAddress(row.buyer_city, ext.buyer_city, ext.buyerCity, ext.city);
+  const pin = firstNonEmptyAddress(
+    row.buyer_pin_code,
+    ext.buyer_pin_code,
+    ext.buyerPinCode,
+    ext.pin,
+    row.pin_code,
+  );
+  const district = firstNonEmptyAddress(
+    row.buyer_district,
+    ext.buyer_district,
+    ext.buyerDistrict,
+    ext.dist,
+    ext.district,
+    city,
+  );
+
+  const buyerStateRaw = firstNonEmptyAddress(
+    row.buyer_state,
+    ext.buyer_state,
+    ext.buyerState,
+  );
+
+  const stateFromGst = resolveState('', buyerGst);
+  const state = resolveState(buyerStateRaw, buyerGst);
+
+  const address =
+    line1 ||
+    [
+      ext.a1,
+      ext.addr,
+      ext.addressLine1,
+      ext.address,
+      city,
+      district,
+      stateFromGst || state,
+      pin,
+    ]
+      .map((v) => (v != null ? String(v).trim() : ''))
+      .filter(Boolean)
+      .join(', ');
+
+  return {
+    address,
+    state: stateFromGst || state,
+    district,
+    pin_code: pin,
+    city,
+  };
+}
+
 /** Buyer / customer address from DB row or OCR extraction payload. */
 export function resolveSalesAddress(row = {}) {
+  const buyerFields = resolveBuyerAddressFields(row);
+  if (buyerFields.address) return buyerFields.address;
+
   const extraction =
     row.extraction && typeof row.extraction === 'object' ? row.extraction : {};
 
+  const isSale =
+    String(row.record_type || '').includes('sale') ||
+    row._routing?.decidedType === 'sale';
+
   const direct = firstNonEmptyAddress(
     row.address,
-    row.address_line_1,
-    extraction.buyer_address,
-    extraction.buyerAddress,
-    extraction.consignee_address,
-    extraction.consigneeAddress,
-    extraction.ship_to_address,
-    extraction.shipToAddress,
     extraction.address,
     extraction.addr,
     extraction.a1,
-    extraction.address_line_1,
+    extraction.addressLine1,
   );
   if (direct) return direct;
 
+  if (!isSale) {
+    const supplierLine = firstNonEmptyAddress(row.address_line_1);
+    if (supplierLine) return supplierLine;
+  }
+
   const parts = [
     extraction.city || row.city,
-    row.state || extraction.state,
-    row.pin_code || extraction.pin_code || extraction.pin,
+    buyerFields.state,
+    buyerFields.pin_code,
   ]
     .map((v) => (v != null ? String(v).trim() : ''))
     .filter(Boolean);
@@ -213,23 +293,22 @@ export function resolveSalesGstOtherCharges(row = {}) {
 
 export function buildSalesHeaderFromRow(row = {}) {
   const ext = parseRowExtraction(row);
+  const buyerFields = resolveBuyerAddressFields(row);
   const date = row.invoice_date || ext.invoiceDate || '';
+  const customerGst =
+    row.customer_gstin ||
+    ext.buyerGst ||
+    ext.buyer_gst ||
+    ext.gstNumber ||
+    ext.gst ||
+    '';
   return {
     entity_name: row.entity_name || row.customer_name || ext.buyerName || ext.buyer_name || '',
     customer_name: row.customer_name || row.entity_name || ext.buyerName || ext.buyer_name || '',
-    customer_gstin:
-      row.customer_gstin ||
-      ext.buyerGst ||
-      ext.buyer_gst ||
-      ext.gstNumber ||
-      ext.gst ||
-      '',
+    customer_gstin: customerGst,
     address: resolveSalesAddress(row),
-    state: resolveState(
-      row.state || ext.state || ext.st,
-      row.customer_gstin || ext.buyerGst || ext.gstNumber,
-    ),
-    district: resolveSalesDistrict(row),
+    state: buyerFields.state || resolveState(row.buyer_state || ext.buyer_state, customerGst),
+    district: buyerFields.district || resolveSalesDistrict(row),
     mobile_number: row.mobile_number || ext.mobile || ext.mob || '',
     invoice_number: resolveInvoiceNumberFromRecord(row) || row.invoice_no || row.application_number || '',
     invoice_date: date,
@@ -262,19 +341,21 @@ export function buildSalesHeaderFromRow(row = {}) {
 
 /** Merge OCR / extraction fallbacks into a sales row for table, edit modal, or view. */
 export function enrichSaleRecord(row = {}) {
-  const district = resolveSalesDistrict(row);
+  const buyerFields = resolveBuyerAddressFields(row);
+  const district = buyerFields.district || resolveSalesDistrict(row);
   const gst = resolveSalesGstOtherCharges(row);
   const ext = parseRowExtraction(row);
   const gstValue = gst !== '' && gst != null ? gst : row.gst_other_charges ?? '';
+  const customerGst = row.customer_gstin || ext.buyerGst || ext.buyer_gst || ext.gstNumber || '';
   return {
     ...row,
     district: district || row.district || '',
     gst_other_charges: gstValue === '' || gstValue == null ? '' : String(gstValue),
-    customer_gstin: row.customer_gstin || ext.buyerGst || ext.buyer_gst || ext.gstNumber || '',
-    address: resolveSalesAddress(row) || row.address || '',
+    customer_gstin: customerGst,
+    address: resolveSalesAddress(row) || row.address || buyerFields.address || '',
     state:
-      row.state ||
-      resolveState(ext.state || ext.st, row.customer_gstin || ext.buyerGst || ext.gstNumber) ||
+      buyerFields.state ||
+      resolveState(row.buyer_state || ext.buyer_state, customerGst) ||
       '',
   };
 }
@@ -347,6 +428,18 @@ export function enrichReviewLines(drafts = [], row = {}, packagingRows = []) {
     if (!String(line.rate || '').trim()) {
       const rateVal = resolveLineRate(line, line.quantity, line.amount);
       if (rateVal != null) line.rate = formatLineRate(rateVal);
+    }
+    if (!String(line.hsn || '').trim()) {
+      const extLine = extractionLines[idx];
+      const parsedHsn = resolveLineHsn(extLine || line);
+      if (parsedHsn) {
+        line.hsn = parsedHsn;
+      } else {
+        const headerHsn = normalizeHsnCode(
+          row.hsn_code || row.extraction?.hsn_code || row.extraction?.MainHsnCode,
+        );
+        if (headerHsn && drafts.length === 1) line.hsn = headerHsn;
+      }
     }
     const master = lookupPackagingMasterRow(packagingRows, line);
     if (master && shouldAutoApplyPackagingMaster(line)) {

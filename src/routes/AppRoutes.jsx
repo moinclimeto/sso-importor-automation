@@ -27,7 +27,14 @@ import RegistrationForm from '../pages/RegistrationForm.jsx';
 import MasterDataPage from '../pages/MasterDataPage.jsx';
 
 function ProtectedRoute({ children }) {
-  const { isLoggedIn } = useAuth();
+  const { isLoggedIn, loading } = useAuth();
+  if (loading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-[#f7f8fa] text-slate-600 text-sm">
+        Loading session…
+      </div>
+    );
+  }
   return isLoggedIn ? children : <Navigate to="/login" replace />;
 }
 

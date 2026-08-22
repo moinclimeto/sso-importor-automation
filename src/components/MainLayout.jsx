@@ -225,8 +225,8 @@ function MainLayoutInner() {
       : baseHeader.title);
   const headerSubtitle = pageHeader?.subtitle ?? baseHeader.subtitle;
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     navigate('/login');
   };
 
