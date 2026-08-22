@@ -1,8 +1,15 @@
+import dns from 'dns';
 import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { initDatabase } from './database.js';
-import { registerIpcHandlers } from './ipcHandlers.js';
+
+try {
+  dns.setDefaultResultOrder('ipv4first');
+} catch {
+  /* older Node */
+}
+import { initDatabase } from './db/database.js';
+import { registerIpcHandlers } from './ipc/ipcHandlers.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -29,9 +36,29 @@ function createWindow() {
 
   win.once('ready-to-show', () => win.show());
 
+  const zoomBy = (delta) => {
+    const wc = win.webContents;
+    const next = Math.min(3, Math.max(0.5, wc.getZoomFactor() + delta));
+    wc.setZoomFactor(Number(next.toFixed(2)));
+  };
+  win.webContents.on('before-input-event', (event, input) => {
+    if (!(input.control || input.meta) || input.type !== 'keyDown') return;
+    const key = String(input.key || '');
+    if (key === '=' || key === '+' || key === 'Add' || key === 'NumpadAdd') {
+      event.preventDefault();
+      zoomBy(0.1);
+    } else if (key === '-' || key === '_' || key === 'Subtract' || key === 'NumpadSubtract') {
+      event.preventDefault();
+      zoomBy(-0.1);
+    } else if (key === '0' || key === 'Numpad0') {
+      event.preventDefault();
+      win.webContents.setZoomFactor(1);
+    }
+  });
+
   if (process.env.NODE_ENV === 'development') {
     win.loadURL('http://localhost:5180');
-    win.webContents.openDevTools();
+    // win.webContents.openDevTools();
   } else {
     win.loadFile(path.join(__dirname, '../dist/index.html'));
   }

@@ -1,48 +1,13 @@
 /**
- * Test / dev fallback data for PWP registration automation.
- * Used when no documents are uploaded in DB (real OCR data takes priority when present).
+ * Helper utilities for PWP registration automation data resolution.
+ * All dummy fallback data has been removed. Users must supply actual data or use OCR.
  */
-export const REGISTRATION_USE_DUMMY_FALLBACK = true;
 
-export const REGISTRATION_DUMMY_DATA = {
-  gstin: '23AAHCB2620B1ZI',
-  companyPan: 'AAHCB2620B',
-  companyName: 'test company pvt ltd',
-  legalName: 'test company pvt ltd',
-  dateOfEstablishment: '2010-04-01',
-  authPan: 'ABCPV1234A',
-  authName: 'SUNIL KUMAR',
-  authDob: '1985-06-13',
-  constitutionOfBusiness: 'Private Limited Company',
-  registeredAddress: 'test company pvt ltd, Satna Road, Maihar, Madhya Pradesh 485771',
-  registeredAddressLine1: 'test company pvt ltd, Satna Road, Maihar, Madhya Pradesh 485771',
-  registeredAddressLine2: '',
-  district: 'Maihar',
-  stateUt: 'MADHYA PRADESH',
-  operatingStates: ['MADHYA PRADESH'],
-  cin: 'L26943MP1946PLC000369',
-  typeOfBusiness: 'Pvt. Ltd.',
-  typeOfCompany: 'Large',
-  hasProductionFacility: 'Not Applicable',
-  capitalInvested: '5.50',
-  yearOfCommencement: '2020',
-  authDesignation: 'Director',
-  ctoNumber: 'CTO/MP/2020/12345',
-  ctoValidity: '2028-03-31',
-  dateOfCommencement: '2010-06-01',
-  industryCategory: 'Orange',
-  allowedCapacity: 'Cement Manufacturing',
-  enterpriseType: 'Large',
-  password: '',
-  confirmPassword: '',
-  panDocumentPath: 'C:\\Users\\itcli\\Documents\\GitHub\\sso-importor-automation\\data\\dummy_pan.pdf',
-};
-
-/** Fallback login credentials when DB has no saved contact (dev / first-time after registration). */
+/** Fallback login credentials if none provided. */
 export const REGISTRATION_LOGIN_DUMMY = {
-  email: 'amreen.climeto@gmail.com',
-  mobile: '9109424392',
-  password: 'Pass@321',
+  email: '',
+  mobile: '',
+  password: '',
 };
 
 export function resolveRegistrationLoginCredentials(data = {}) {
@@ -74,29 +39,23 @@ export function hasCompleteRegistrationData(data) {
   );
 }
 
-/** Prefer uploaded document data; fill gaps from dummy when fallback is enabled. */
+/** Resolves registration data strictly from provided docData. No dummy fallback. */
 export function resolveRegistrationData(docData = {}) {
-  const merged = pickNonEmpty(REGISTRATION_DUMMY_DATA, docData);
+  const data = pickNonEmpty({}, docData);
 
   if (hasCompleteRegistrationData(docData)) {
-    return { data: docData, isDummy: false, source: 'documents' };
+    return { data, isDummy: false, source: 'documents' };
   }
 
-  if (REGISTRATION_USE_DUMMY_FALLBACK) {
-    return { data: merged, isDummy: true, source: 'dummy' };
-  }
-
-  return { data: merged, isDummy: false, source: 'partial' };
+  return { data, isDummy: false, source: 'partial' };
 }
 
 export function isRegistrationReadyWithFallback(docs = [], docData = {}) {
   if (hasCompleteRegistrationData(docData)) {
     return { ready: true, isDummy: false, missing: [] };
   }
-  if (REGISTRATION_USE_DUMMY_FALLBACK) {
-    return { ready: true, isDummy: true, missing: [] };
-  }
+  
   const types = new Set((docs || []).map((d) => d.doc_type));
-  const missing = ['gst', 'person_pan', 'company_pan', 'cto'].filter((t) => !types.has(t));
+  const missing = ['gst', 'person_pan', 'company_pan'].filter((t) => !types.has(t));
   return { ready: false, isDummy: false, missing };
 }

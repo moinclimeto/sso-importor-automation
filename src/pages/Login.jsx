@@ -41,7 +41,7 @@ export default function LoginPage() {
       login('local-token', { email: validEmail });
       showToast('Login successful');
       setTimeout(() => {
-        navigate('/doc-processor');
+        navigate('/cpcb-dashboard');
       }, 700);
     } else {
       showToast('Invalid email or password', 'error');

@@ -1,4 +1,4 @@
-﻿# Dependencies
+# Dependencies
 node_modules/
 
 # Build output
@@ -25,11 +25,16 @@ yarn-error.log*
 
 # Database & local data
 *.db
+*.db-wal
+*.db-shm
 *.sqlite
 *.sqlite3
 database.sqlite
 db.json
 pwp.db
+sso_importer.db
+sso_importer.db-wal
+sso_importer.db-shm
 
 # Electron / Playwright
 playwright_session/
