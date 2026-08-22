@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { getDocument } from 'pdfjs-dist/legacy/build/pdf.mjs';
-import { scanQrFromDocument } from './qrScan.js';
+import { scanQrFromDocument } from './ocr_captcha/qrScan.js';
 import {
   dedupeParties,
   extractGstNumbersFromText,

@@ -17,10 +17,10 @@ import {
   normalizeLineUom,
   resolveFinancialYear,
   resolveLineRate,
-} from '../shared/procurementConversionFactor.js';
-import { resolveState } from '../shared/gstStateCodes.js';
-import { fillLineItemsHsn, resolveLineHsn } from '../shared/hsnUtils.js';
-import { normalizePlasticCategory } from '../shared/plasticCategories.js';
+} from '../../shared/procurementConversionFactor.js';
+import { resolveState } from '../../shared/gstStateCodes.js';
+import { fillLineItemsHsn, resolveLineHsn } from '../../shared/hsnUtils.js';
+import { normalizePlasticCategory } from '../../shared/plasticCategories.js';
 
 
 

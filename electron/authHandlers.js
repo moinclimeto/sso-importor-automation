@@ -1,5 +1,5 @@
 import { ipcMain } from 'electron';
-import { getDb } from './database.js';
+import { getDb } from './db/database.js';
 import { setClimetoSessionToken } from './climetoApiConfig.js';
 import {
   getClimetoSession,

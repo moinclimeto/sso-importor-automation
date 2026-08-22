@@ -19,7 +19,7 @@ import { runExtractQueue } from './extractQueue.js';
 import {
   beginEntityVerifyBatch,
   endEntityVerifyBatch,
-} from './entityRegistrationVerify.js';
+} from '../entityRegistrationVerify.js';
 import {
   getPdfPageCount,
   expandFilesToPageJobs,
