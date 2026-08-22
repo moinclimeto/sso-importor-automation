@@ -1,18 +1,13 @@
 import { INDIAN_STATES } from './SingleRecordModal';
 import { normalizePlasticMaterial } from '../../shared/reviewEnrichment';
 import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
+import {
+  ENTITY_TYPE_OPTIONS,
+  PURCHASE_ENTITY_TYPES,
+  REGISTRATION_TYPE_OPTIONS,
+} from '../../shared/entityRegistrationTypes.js';
 
-export { FINANCIAL_YEAR_OPTIONS };
-
-export const REGISTRATION_TYPE_OPTIONS = ['Registered', 'Unregistered'];
-
-export const ENTITY_TYPE_OPTIONS = [
-  'PWPs',
-  'Producers',
-  'Brand Owners',
-  'PIBOs',
-  'Importers',
-];
+export { FINANCIAL_YEAR_OPTIONS, ENTITY_TYPE_OPTIONS, PURCHASE_ENTITY_TYPES, REGISTRATION_TYPE_OPTIONS };
 
 export function buildMaterialOptions(current, materials = []) {
   const cur = normalizePlasticMaterial(current);

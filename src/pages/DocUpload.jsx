@@ -18,6 +18,7 @@ import { getApi } from '../utils/pwpApi.js';
 import { applyCompanyRoutingToResults } from '../utils/companyInvoiceMatch.js';
 import { enrichRoutedResultsWithEntityVerify, entityVerifyLabel } from '../utils/entityVerifyEnrich.js';
 import InvoicePartyProbeModal from '../components/InvoicePartyProbeModal.jsx';
+import { upsertCompanyFromParty } from '../utils/companyProfileFromGst.js';
 import {
   calcTotalPlasticQuantityMt,
   enrichLineItemsWithWeightMt,
@@ -236,7 +237,9 @@ export default function DocUpload() {
   const [probeLoading, setProbeLoading] = useState(false);
   const [probeResult, setProbeResult] = useState(null);
   const [probeCompanies, setProbeCompanies] = useState([]);
+  const [probeSaving, setProbeSaving] = useState(false);
   const pendingExtractRef = useRef(null);
+  const activeCompanyRef = useRef(null);
   const [resolving, setResolving] = useState(false);
   const [globalBankDetails, setGlobalBankDetails] = useState(null);
 
@@ -793,11 +796,14 @@ export default function DocUpload() {
 
       if (window.pwp?.gstVerify?.probePartiesFromFiles) {
         const probe = await window.pwp.gstVerify.probePartiesFromFiles({
-          filePaths: targets.map((t) => t.path),
+          filePaths: [targets[0].path],
         });
-        setProbeResult(probe);
+        setProbeResult({
+          ...probe,
+          totalFiles: targets.length,
+        });
       } else {
-        setProbeResult({ success: true, files: [] });
+        setProbeResult({ success: true, files: [], totalFiles: targets.length });
       }
     } catch (err) {
       showToast(err?.message || 'GST party probe failed — continuing without pre-verify.', 'error');
@@ -807,7 +813,27 @@ export default function DocUpload() {
     }
   };
 
-  const runExtractionBatch = async ({ companyId = null } = {}) => {
+  const handleProbeConfirm = async ({ selectedParty } = {}) => {
+    setProbeSaving(true);
+    try {
+      let activeCompany = null;
+      if (selectedParty?.gst) {
+        activeCompany = await upsertCompanyFromParty(selectedParty, probeCompanies);
+        showToast(`Company profile saved: ${activeCompany.name}`, 'success');
+      } else {
+        const companies = (await getApi().companies.getAll()) || [];
+        if (companies.length === 1) activeCompany = companies[0];
+      }
+      activeCompanyRef.current = activeCompany;
+      await runExtractionBatch({ activeCompany });
+    } catch (err) {
+      showToast(err?.message || 'Failed to save company profile.', 'error');
+    } finally {
+      setProbeSaving(false);
+    }
+  };
+
+  const runExtractionBatch = async ({ activeCompany = null } = {}) => {
     const pending = pendingExtractRef.current;
     if (!pending?.targets?.length) return;
 
@@ -910,13 +936,18 @@ export default function DocUpload() {
         }
       }
       const rawResults = batch.results || [];
+      const routingCompany = activeCompany ?? activeCompanyRef.current;
       let companies = [];
       try {
         companies = (await getApi().companies.getAll()) || [];
       } catch {
         companies = [];
       }
-      const routed = applyCompanyRoutingToResults(rawResults, companies, docType);
+      const routed = applyCompanyRoutingToResults(
+        rawResults,
+        routingCompany ? [routingCompany] : companies,
+        docType,
+      );
 
       setProgress((prev) => ({
         ...(prev || {}),
@@ -1347,11 +1378,13 @@ export default function DocUpload() {
         probeResult={probeResult}
         companies={probeCompanies}
         loading={probeLoading}
+        saving={probeSaving}
         onCancel={() => {
           setProbeOpen(false);
           setProbeLoading(false);
+          setProbeSaving(false);
         }}
-        onConfirm={(ctx) => runExtractionBatch(ctx)}
+        onConfirm={handleProbeConfirm}
       />
       <ZipPreviewModal
         open={Boolean(zipPreview)}

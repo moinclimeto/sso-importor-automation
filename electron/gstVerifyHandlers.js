@@ -4,7 +4,7 @@ import {
   probeInvoicePartiesFromFiles,
   verifyGstForCompanyProfile,
 } from './invoicePartyProbe.js';
-import { lookupRegisteredEntities } from './entityRegistrationVerify.js';
+import { lookupRegisteredEntities, applySelectedMasterEntity } from './entityRegistrationVerify.js';
 import { searchPiboEntities } from './piboEntitiesService.js';
 
 export function registerGstVerifyHandlers() {
@@ -35,10 +35,21 @@ export function registerGstVerifyHandlers() {
       return await lookupRegisteredEntities(db, {
         gst: payload.gst,
         companyId: payload.companyId,
+        forceApi: payload.forceApi === true,
       });
     } catch (err) {
       console.error('entityVerify:lookupByGst error', err);
       return { success: false, error: err.message || 'Entity verification failed.', entities: [], bestEntity: null };
+    }
+  });
+
+  ipcMain.handle('entityVerify:applySelection', async (_, payload = {}) => {
+    try {
+      const db = getDb();
+      return await applySelectedMasterEntity(db, payload.companyId, payload.entity);
+    } catch (err) {
+      console.error('entityVerify:applySelection error', err);
+      return { success: false, error: err.message || 'Failed to save selected entity.' };
     }
   });
 

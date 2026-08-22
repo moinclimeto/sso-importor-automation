@@ -19,7 +19,6 @@ import { runExtractQueue } from './extractQueue.js';
 import {
   beginEntityVerifyBatch,
   endEntityVerifyBatch,
-  enrichExtractedRowWithEntityVerify,
 } from './entityRegistrationVerify.js';
 import {
   getPdfPageCount,
@@ -351,14 +350,7 @@ async function extractOneInvoice({
       row = normalizePurchasePartyFields(row);
     }
 
-    if (invoiceType === 'purchase' || invoiceType === 'sale') {
-      try {
-        const db = getDb();
-        row = await enrichExtractedRowWithEntityVerify(db, row, invoiceType);
-      } catch (err) {
-        log.warn('GST/PIBO verify skipped at extraction', { message: err.message });
-      }
-    }
+    // Counterparty GST/PIBO verify runs after company routing in DocUpload (with companyId + supplier_master cache).
 
     for (const key of Object.keys(row)) {
       if (key.startsWith('_')) continue;

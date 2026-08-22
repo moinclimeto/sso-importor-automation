@@ -44,6 +44,7 @@ import {
   submitLoginOtp,
   resendLoginOtp,
 } from './cpcbLogin.js';
+import { upsertSupplierMasterRow } from './supplierMasterService.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -583,22 +584,37 @@ async function syncReviewLinesToPackagingMaster(db, companyId, listType, lineIte
   return { synced };
 }
 
-async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, address, mobile, entityType) {
+async function syncSupplierMasterFromRecord(
+  db,
+  companyId,
+  gstNumber,
+  tradeName,
+  legalName,
+  address,
+  mobile,
+  entityType,
+  registrationType,
+  source = 'invoice_review',
+) {
   if (!companyId || !gstNumber) return;
-  const now = new Date().toISOString();
-  
-  const existing = await db.get(
-    'SELECT id FROM supplier_master WHERE company_id = ? AND gst_number = ?',
-    [companyId, gstNumber]
-  );
-  
-  if (!existing) {
-    await db.run(`
-      INSERT INTO supplier_master (
-        company_id, gst_number, trade_name, address, mobile, entity_type,
-        is_active, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, 1, ?, ?)
-    `, [companyId, gstNumber, tradeName || '', address || '', mobile || '', entityType || '', now, now]);
+  try {
+    await upsertSupplierMasterRow(
+      db,
+      {
+        company_id: companyId,
+        gst_number: gstNumber,
+        trade_name: tradeName || '',
+        legal_name: legalName || '',
+        address: address || '',
+        mobile: mobile || '',
+        entity_type: entityType || '',
+        registration_type: registrationType || 'Unregistered',
+        source,
+      },
+      { cascadeFn: cascadeSupplierMasterUpdates, fromImport: false },
+    );
+  } catch (e) {
+    console.warn('[supplierMaster] sync from record skipped:', e.message);
   }
 }
 
@@ -621,24 +637,16 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       processedData.supplier_name || processedData.vendor_name
     );
 
-    await autoPopulateSupplierMaster(
+    await syncSupplierMasterFromRecord(
       db,
       processedData.company_id,
       processedData.supplier_gst_number || processedData.vendor_gstin,
       processedData.supplier_name || processedData.vendor_name,
+      '',
       processedData.address_line_1,
       processedData.supplier_mobile_number,
-      processedData.entity_type
-    );
-
-    await autoPopulateSupplierMaster(
-      db,
-      processedData.company_id,
-      processedData.supplier_gst_number || processedData.vendor_gstin,
-      processedData.supplier_name || processedData.vendor_name,
-      processedData.address_line_1,
-      processedData.supplier_mobile_number,
-      processedData.entity_type
+      processedData.entity_type,
+      processedData.registration_type,
     );
 
     const stmt = await db.prepare(`
@@ -801,6 +809,18 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       synced.supplier_name || synced.vendor_name,
     );
 
+    await syncSupplierMasterFromRecord(
+      db,
+      synced.company_id,
+      synced.supplier_gst_number || synced.vendor_gstin,
+      synced.supplier_name || synced.vendor_name,
+      '',
+      synced.address_line_1,
+      synced.supplier_mobile_number,
+      synced.entity_type,
+      synced.registration_type,
+    );
+
     return {
       success: true,
       packagingSynced: packagingResult.synced || 0,
@@ -925,14 +945,16 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       processedData.customer_name || processedData.entity_name
     );
 
-    await autoPopulateSupplierMaster(
+    await syncSupplierMasterFromRecord(
       db,
       processedData.company_id,
       processedData.customer_gstin || processedData.buyer_gst,
       processedData.customer_name || processedData.entity_name,
+      '',
       processedData.address,
       processedData.mobile_number,
-      processedData.entity_type
+      processedData.entity_type,
+      processedData.registration_type,
     );
 
     const stmt = await db.prepare(`
@@ -1083,6 +1105,18 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
       synced.lineItems || [],
       synced.customer_gstin || synced.buyer_gst,
       synced.customer_name || synced.entity_name,
+    );
+
+    await syncSupplierMasterFromRecord(
+      db,
+      synced.company_id,
+      synced.customer_gstin || synced.buyer_gst,
+      synced.customer_name || synced.entity_name,
+      '',
+      synced.address,
+      synced.mobile_number,
+      synced.entity_type,
+      synced.registration_type,
     );
 
     return {
@@ -2538,9 +2572,26 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
     const created_at = new Date().toISOString();
     try {
       const result = await db.run(
-        `INSERT INTO supplier_master (company_id, gst_number, trade_name, address, mobile, entity_type, registration_type, source, is_active, created_at, updated_at)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [data.company_id, data.gst_number, data.trade_name, data.address, data.mobile, data.entity_type, data.registration_type, data.source || 'manual', 1, created_at, created_at]
+        `INSERT INTO supplier_master (
+          company_id, gst_number, trade_name, address, mobile, entity_type, registration_type,
+          registration_number, state, pan, source, is_active, created_at, updated_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          data.company_id,
+          data.gst_number,
+          data.trade_name,
+          data.address,
+          data.mobile,
+          data.entity_type,
+          data.registration_type,
+          data.registration_number || null,
+          data.state || null,
+          data.pan || null,
+          data.source || 'manual',
+          1,
+          created_at,
+          created_at,
+        ],
       );
       return { success: true, id: result.lastID };
     } catch (e) {
@@ -2565,10 +2616,29 @@ async function autoPopulateSupplierMaster(db, companyId, gstNumber, tradeName, a
            mobile = COALESCE(?, mobile),
            entity_type = COALESCE(?, entity_type),
            registration_type = COALESCE(?, registration_type),
+           registration_number = COALESCE(?, registration_number),
+           state = COALESCE(?, state),
+           pan = COALESCE(?, pan),
+           source = COALESCE(?, source),
            is_active = COALESCE(?, is_active),
            updated_at = ?
          WHERE id = ?`,
-        [data.company_id, data.gst_number, data.trade_name, data.address, data.mobile, data.entity_type, data.registration_type, data.is_active, updated_at, id]
+        [
+          data.company_id,
+          data.gst_number,
+          data.trade_name,
+          data.address,
+          data.mobile,
+          data.entity_type,
+          data.registration_type,
+          data.registration_number,
+          data.state,
+          data.pan,
+          data.source,
+          data.is_active,
+          updated_at,
+          id,
+        ],
       );
 
       const updatedRecord = await db.get('SELECT * FROM supplier_master WHERE id = ?', [id]);
@@ -2711,6 +2781,37 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
     }
   }
 }
+
+  ipcMain.handle('supplierMaster:bulkUpsert', async (_, { rows }) => {
+    const db = getDb();
+    try {
+      let added = 0;
+      let updated = 0;
+      const errors = [];
+      for (let i = 0; i < (rows || []).length; i++) {
+        const row = rows[i];
+        try {
+          const result = await upsertSupplierMasterRow(db, row, {
+            cascadeFn: cascadeSupplierMasterUpdates,
+            fromImport: true,
+          });
+          if (result.action === 'added') added += 1;
+          else updated += 1;
+        } catch (e) {
+          errors.push(`Row ${i + 1}: ${e.message}`);
+        }
+      }
+      return {
+        success: errors.length === 0,
+        added,
+        updated,
+        errors,
+      };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
 
   ipcMain.handle('supplierMaster:delete', async (_, id) => {
     const db = getDb();

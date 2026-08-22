@@ -86,7 +86,6 @@ export default function ProcurementReview() {
   const [cfSetupLoading, setCfSetupLoading] = useState(false);
   const [bulkStatus, setBulkStatus] = useState('');
   const [dirty, setDirty] = useState(false);
-  const autoSaveTimerRef = useRef(null);
   const skipDirtyRef = useRef(true);
 
   const isPublished = tab === 'published';
@@ -119,11 +118,7 @@ export default function ProcurementReview() {
   const markUnsaved = useCallback(() => {
     if (readOnly || skipDirtyRef.current) return;
     setDirty(true);
-    if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    autoSaveTimerRef.current = setTimeout(() => {
-      handleSaveRef.current?.(draftStatus, { silent: true, skipReload: true });
-    }, 2000);
-  }, [draftStatus]);
+  }, [readOnly]);
 
   const patchHeader = useCallback((patch) => {
     setHeader((h) => ({ ...h, ...patch }));
@@ -139,10 +134,8 @@ export default function ProcurementReview() {
       address_line_1: entity.address || header.address_line_1,
       supplier_mobile_number: entity.mobile || header.supplier_mobile_number,
     });
-    showToast('Registration type and entity type updated from verified entity.', 'success');
+    showToast('Fields updated from verification — click Save to persist.', 'success');
   }, [patchHeader, header.registration_type, header.entity_type, header.supplier_name, header.address_line_1, header.supplier_mobile_number, showToast]);
-
-  const handleSaveRef = useRef(null);
 
   const isLineEditable = useCallback(
     (idx) => {
@@ -155,10 +148,11 @@ export default function ProcurementReview() {
   useEffect(() => {
     setPageHeader({
       title: 'Procurement Document Processing',
-      description: isPublished ? 'Published — editable' : 'OCR Review',
+      subtitle: isPublished ? 'Published — editable' : 'OCR Review',
+      onBack: () => navigate('/doc-table', { state: { type: 'purchase', tab } }),
     });
     return clearPageHeader;
-  }, [isPublished, setPageHeader, clearPageHeader]);
+  }, [isPublished, tab, navigate, setPageHeader, clearPageHeader]);
 
   const loadRecord = useCallback(async () => {
     if (!window.pwp?.purchases || !id) return;
@@ -203,9 +197,6 @@ export default function ProcurementReview() {
 
   useEffect(() => {
     loadRecord();
-    return () => {
-      if (autoSaveTimerRef.current) clearTimeout(autoSaveTimerRef.current);
-    };
   }, [loadRecord]);
 
   useEffect(() => {
@@ -377,10 +368,6 @@ export default function ProcurementReview() {
 
   const handleSave = async (docStatus, { silent = false, skipReload = false } = {}) => {
     if (!record?.id) return;
-    if (autoSaveTimerRef.current) {
-      clearTimeout(autoSaveTimerRef.current);
-      autoSaveTimerRef.current = null;
-    }
     setSaving(true);
     try {
       const payload = buildSavePayload(docStatus);
@@ -427,8 +414,6 @@ export default function ProcurementReview() {
     }
   };
 
-  handleSaveRef.current = handleSave;
-
   const handlePublish = async () => {
     applyValidationDraft();
     if (!validation.ok) {
@@ -470,8 +455,10 @@ export default function ProcurementReview() {
     const next = navRows[navIndex + delta];
     if (!next) return;
     if (dirty && record?.id) {
+      const saveFirst = window.confirm('You have unsaved changes. Save before moving to the next document?');
+      if (!saveFirst) return;
       try {
-        await handleSave(draftStatus, { silent: true, skipReload: true });
+        await handleSave(draftStatus, { skipReload: true });
       } catch {
         return;
       }
@@ -500,7 +487,7 @@ export default function ProcurementReview() {
           </span>
           {dirty ? (
             <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md">
-              Unsaved — auto-saving…
+              Unsaved changes
             </span>
           ) : null}
         </div>
@@ -549,7 +536,18 @@ export default function ProcurementReview() {
         <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
           {/* Document header — no Verify Supplier */}
           <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
-            <h3 className="text-sm font-bold text-slate-800 mb-3">Document Header</h3>
+            <div className="flex items-center justify-between gap-3 mb-3">
+              <h3 className="text-sm font-bold text-slate-800">Document Header</h3>
+              <button
+                type="button"
+                disabled={saving || !dirty}
+                onClick={() => handleSave(draftStatus, { skipReload: true })}
+                className="btn-primary text-xs py-1.5 px-3 disabled:opacity-40"
+              >
+                {saving ? <Loader2 size={14} className="animate-spin inline" /> : null}
+                {' '}Save
+              </button>
+            </div>
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-sm">
               <ReadonlyHeaderField label="Name" value={header.supplier_name} />
               <EditableHeaderTextarea

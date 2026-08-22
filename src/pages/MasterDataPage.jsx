@@ -9,7 +9,7 @@ import PlasticMtReports from './PlasticMtReports.jsx';
 
 const TABS = [
   { id: 'company', label: 'Company Master', icon: Building2 },
-  { id: 'supplier', label: 'Supplier Master', icon: Users },
+  { id: 'supplier', label: 'Supplier/Customer Master', icon: Users },
   { id: 'packaging', label: 'Packaging Master', icon: Package },
   { id: 'reports', label: 'MT Reports', icon: BarChart3 },
 ];
@@ -20,8 +20,8 @@ const TAB_HEADERS = {
     subtitle: 'Manage company details',
   },
   supplier: {
-    title: 'Supplier Master',
-    subtitle: 'Manage suppliers across companies',
+    title: 'Supplier/Customer Master',
+    subtitle: 'Manage suppliers and customers across companies',
   },
   packaging: {
     title: 'Packaging Master',

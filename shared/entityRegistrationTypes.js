@@ -1,12 +1,15 @@
 export const REGISTRATION_TYPE_OPTIONS = ['Registered', 'Unregistered'];
 
-export const ENTITY_TYPE_OPTIONS = [
-  'PWPs',
-  'Producers',
-  'Brand Owners',
-  'PIBOs',
-  'Importers',
+export const PURCHASE_ENTITY_TYPES = [
+  'Producer',
+  'PWP',
+  'Brand Owner',
+  'Importer',
+  'Manufacturer',
+  'Other',
 ];
+
+export const ENTITY_TYPE_OPTIONS = PURCHASE_ENTITY_TYPES;
 
 export function normalizeGstin(gst) {
   return String(gst || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
@@ -21,16 +24,20 @@ export function normalizeRegistrationType(value) {
 }
 
 const ENTITY_ALIASES = {
-  pwp: 'PWPs',
-  pwps: 'PWPs',
-  producer: 'Producers',
-  producers: 'Producers',
-  'brand owner': 'Brand Owners',
-  'brand owners': 'Brand Owners',
-  pibo: 'PIBOs',
-  pibos: 'PIBOs',
-  importer: 'Importers',
-  importers: 'Importers',
+  pwp: 'PWP',
+  pwps: 'PWP',
+  producer: 'Producer',
+  producers: 'Producer',
+  'brand owner': 'Brand Owner',
+  'brand owners': 'Brand Owner',
+  importer: 'Importer',
+  importers: 'Importer',
+  manufacturer: 'Manufacturer',
+  manufacturers: 'Manufacturer',
+  other: 'Other',
+  others: 'Other',
+  pibo: 'Other',
+  pibos: 'Other',
 };
 
 export function normalizeEntityType(value) {

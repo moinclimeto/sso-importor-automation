@@ -1,7 +1,8 @@
 import { app, BrowserWindow, nativeImage } from 'electron';
 import { fileURLToPath } from 'url';
 import path from 'path';
-import { initDatabase } from './database.js';
+import { initDatabase, dbJsonPath } from './database.js';
+import { migrateFromJsonToSqlite } from './dataMigration.js';
 import { registerAuthHandlers } from './authHandlers.js';
 import { registerIpcHandlers } from './ipcHandlers.js';
 
@@ -43,7 +44,9 @@ app.whenReady().then(async () => {
   if (process.platform === 'win32') {
     app.setAppUserModelId('com.climeto.pwp');
   }
-  await initDatabase();
+  await initDatabase(async (db) => {
+    await migrateFromJsonToSqlite(db, dbJsonPath);
+  });
   registerAuthHandlers();
   registerIpcHandlers();
   createWindow();

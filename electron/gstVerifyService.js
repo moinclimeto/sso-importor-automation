@@ -1,5 +1,10 @@
 import axios from 'axios';
-import { mapGstDetailsToEntity, normalizeGstin } from '../shared/entityRegistrationTypes.js';
+import {
+  mapGstDetailsToEntity,
+  normalizeEntityType,
+  normalizeGstin,
+  normalizeRegistrationType,
+} from '../shared/entityRegistrationTypes.js';
 import { buildClimetoApiUrl, getClimetoApiBase, getClimetoAuthHeaders } from './climetoApiConfig.js';
 import { panFromGstin } from './gstPartyUtils.js';
 
@@ -14,7 +19,73 @@ function isActiveGstStatus(status) {
   return !/cancelled|canceled|inactive|suspended|invalid|revoked/i.test(s);
 }
 
-/** Map Climeto POST /gst/verify/complete response (gstZenResponse). */
+function dedupeMasterRows(rows = []) {
+  const seen = new Set();
+  return rows.filter((row) => {
+    const key = [
+      row.id,
+      row.gst,
+      row.epr_registration_number,
+      row.trade_name,
+      row.entity_type,
+    ].join('|');
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+/** Map one Climeto master-data registration row from gst/verify/complete. */
+export function mapMasterDataMatchRow(row, gstin, idx = 0) {
+  if (!row || typeof row !== 'object') return null;
+  const normalizedGst = normalizeGstin(row.gstin || row.gst || row.gstNo || row.gst_number || gstin);
+  return {
+    id: row.id != null ? `master-${row.id}` : `master-${normalizedGst}-${idx}`,
+    gst: normalizedGst,
+    trade_name:
+      row.tradeName
+      || row.trade_name
+      || row.entityName
+      || row.entity_name
+      || row.company_name
+      || row.companyName
+      || row.name
+      || '',
+    legal_name: row.legalName || row.legal_name || '',
+    address: row.address || row.registeredAddress || row.primary_address || '',
+    mobile: row.mobile || row.mobileNumber || row.mobile_number || '',
+    registration_type: 'Registered',
+    entity_type: normalizeEntityType(
+      row.entityType || row.entity_type || row.applicantType || row.applicant_type || row.companyType,
+    ),
+    epr_registration_number:
+      row.eprRegistrationNumber
+      || row.eprNo
+      || row.epr_registration_number
+      || row.registrationNumber
+      || row.registration_number
+      || '',
+    source: 'climeto_master_data',
+    confidence: row.confidence ?? row.matchScore ?? null,
+    raw: row,
+  };
+}
+
+export function mapMasterDataMatchesFromPayload(payload, gstin) {
+  const raw = [];
+  if (Array.isArray(payload?.masterDataMatches)) raw.push(...payload.masterDataMatches);
+  if (Array.isArray(payload?.allMasterDataMatches)) raw.push(...payload.allMasterDataMatches);
+  if (payload?.masterDataMatch && typeof payload.masterDataMatch === 'object') {
+    raw.push(payload.masterDataMatch);
+  }
+  return dedupeMasterRows(
+    raw
+      .map((row, idx) => mapMasterDataMatchRow(row, gstin, idx))
+      .filter(Boolean),
+  );
+}
+
+/** Map Climeto POST /gst/verify/complete response (gstZenResponse + master data). */
 export function mapClimetoGstVerifyResponse(payload) {
   if (!payload || payload.success === false) return null;
 
@@ -22,6 +93,10 @@ export function mapClimetoGstVerifyResponse(payload) {
   const zen = payload.gstZenResponse || {};
   const statusLabel = zen.company_status || zen.status || '';
   const active = zen.valid !== false && isActiveGstStatus(statusLabel);
+  const masterDataMatches = mapMasterDataMatchesFromPayload(payload, gstin);
+  const hasMasterMatches = masterDataMatches.length > 0;
+  const requiresUserSelection =
+    payload.requiresUserSelection === true || masterDataMatches.length > 1;
 
   return {
     success: true,
@@ -32,8 +107,11 @@ export function mapClimetoGstVerifyResponse(payload) {
     pan: payload.panNumber || zen.pan || panFromGstin(gstin) || '',
     status: statusLabel || (active ? 'Active' : 'Inactive'),
     state: zen.state || '',
-    registration_type: active ? 'Registered' : 'Unregistered',
-    entity_type: '',
+    registration_type: hasMasterMatches ? 'Registered' : 'Unregistered',
+    entity_type: masterDataMatches.length === 1 ? masterDataMatches[0].entity_type : '',
+    masterDataMatches,
+    requiresUserSelection,
+    totalMatches: payload.totalMatches ?? masterDataMatches.length,
     source: 'climeto_gst',
     message: payload.message || '',
     raw: payload,

@@ -448,7 +448,7 @@ account_number=Supplier bank account number if printed.
 ifsc_code=Supplier bank IFSC if printed.
 OTHER RULES:
 registration_type=Registered or Unregistered (of supplier entity if printed).
-entity_type=PWPs/Producers/Brand Owners/PIBOs/Importers (supplier entity type if printed).
+entity_type=Producer/PWP/Brand Owner/Importer/Manufacturer/Other (supplier entity type if printed).
 country=Supplier country.
 supplier_state=Supplier state from address block (State / Place of Supply for supplier side).
 supplier_city=Supplier city if printed.
@@ -478,7 +478,7 @@ conversion_factor=numeric if printed else null.`;
 Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Seller bank for bank fields.
 ${fy}
 {"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","pin":"","city":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
-RULES:buyerName/buyerGst/addr/st/dist/pin/city/mob=buyer(customer).sellerName/sellerGst=seller.st=State name from buyer address (not code).dist=District if printed.pin=PIN if printed.sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (PWPs/Producers/Brand Owners/PIBOs/Importers).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
+RULES:buyerName/buyerGst/addr/st/dist/pin/city/mob=buyer(customer).sellerName/sellerGst=seller.st=State name from buyer address (not code).dist=District if printed.pin=PIN if printed.sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (Producer/PWP/Brand Owner/Importer/Manufacturer/Other).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
 }
 
 /** Normalize raw Gemini JSON (short or long keys) → common shape */

@@ -91,8 +91,9 @@ export async function probeInvoicePartiesFromFile(filePath) {
 }
 
 export async function probeInvoicePartiesFromFiles(db, filePaths = []) {
+  const paths = Array.isArray(filePaths) ? filePaths : [];
   const files = [];
-  for (const filePath of filePaths) {
+  for (const filePath of paths) {
     files.push(await probeInvoicePartiesFromFile(filePath));
   }
 
@@ -120,6 +121,21 @@ export async function probeInvoicePartiesFromFiles(db, filePaths = []) {
     success: true,
     files: enrichedFiles,
     verifiedByGst,
+    totalFiles: paths.length,
+    sampleFileName: enrichedFiles[0]?.fileName || null,
+  };
+}
+
+/** Probe only the first invoice — used before bulk extraction to identify user's company. */
+export async function probeFirstInvoiceForCompanySetup(db, filePaths = []) {
+  const firstPath = (Array.isArray(filePaths) ? filePaths : []).find(Boolean);
+  if (!firstPath) {
+    return { success: true, files: [], verifiedByGst: {}, totalFiles: 0, sampleFileName: null };
+  }
+  const result = await probeInvoicePartiesFromFiles(db, [firstPath]);
+  return {
+    ...result,
+    totalFiles: filePaths.length,
   };
 }
 

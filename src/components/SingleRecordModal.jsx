@@ -3,6 +3,7 @@ import { X, Loader2, Plus, ArrowLeftRight, ChevronLeft, ChevronRight } from 'luc
 import { PLASTIC_CATEGORIES } from '../utils/excelImport.js';
 import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
 import { enrichSaleRecord } from '../../shared/reviewEnrichment.js';
+import { PURCHASE_ENTITY_TYPES } from '../../shared/entityRegistrationTypes.js';
 import { getApi } from '../utils/pwpApi.js';
 import {
   calcTotalPlasticQuantityMt,
@@ -607,11 +608,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
                     onChange={(e) => set('entity_type', e.target.value)}
                   >
                     <option value="">Select Entity Type</option>
-                    <option value="PWPs">PWPs</option>
-                    <option value="Producers">Producers</option>
-                    <option value="Brand Owners">Brand Owners</option>
-                    <option value="PIBOs">PIBOs</option>
-                    <option value="Importers">Importers</option>
+                    {PURCHASE_ENTITY_TYPES.map((type) => (
+                      <option key={type} value={type}>{type}</option>
+                    ))}
                   </select>
                   {fieldErrors.entity_type && (
                     <p className="text-xs text-red-500 mt-1">{fieldErrors.entity_type}</p>
@@ -928,11 +927,9 @@ export default function SingleRecordModal({ type, initialData, onClose, onSaved,
               <Field label="Entity Type">
                 <select className="input bg-white" value={form.entity_type || ''} onChange={(e) => set('entity_type', e.target.value)}>
                   <option value="">Select Entity Type</option>
-                  <option value="PWPs">PWPs</option>
-                  <option value="Producers">Producers</option>
-                  <option value="Brand Owners">Brand Owners</option>
-                  <option value="PIBOs">PIBOs</option>
-                  <option value="Importers">Importers</option>
+                  {PURCHASE_ENTITY_TYPES.map((type) => (
+                    <option key={type} value={type}>{type}</option>
+                  ))}
                 </select>
               </Field>
               <Field label="Registration Type">

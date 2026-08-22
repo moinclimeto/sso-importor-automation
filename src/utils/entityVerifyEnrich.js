@@ -14,7 +14,12 @@ function counterpartyGst(data, decided) {
 function mergeEntityIntoData(data, entity, decided) {
   if (!entity) return data;
   const next = { ...data };
-  const trusted = entity.source === 'supplier_master' || entity.source === 'climeto_api';
+  const trusted = [
+    'supplier_master',
+    'climeto_api',
+    'climeto_master_data',
+    'climeto_gst',
+  ].includes(entity.source);
 
   const setField = (key, value) => {
     if (value == null || value === '') return;
@@ -22,19 +27,23 @@ function mergeEntityIntoData(data, entity, decided) {
   };
 
   setField('registration_type', entity.registration_type);
-  setField('entity_type', entity.entity_type);
+  if (entity.entity_type) setField('entity_type', entity.entity_type);
+  else if (entity.registration_type === 'Unregistered' && trusted) next.entity_type = '';
+
+  const displayName = entity.trade_name || entity.legal_name || '';
 
   if (decided === 'purchase') {
-    setField('supplier_name', entity.trade_name);
-    setField('vendor_name', entity.trade_name);
+    setField('supplier_name', displayName);
+    setField('vendor_name', displayName);
     setField('address_line_1', entity.address);
     setField('supplier_mobile_number', entity.mobile);
     setField('supplier_gst_number', entity.gst);
     setField('vendor_gstin', entity.gst);
     if (entity.registration_type === 'Registered') next.is_supplier_gst_available = true;
+    else if (entity.registration_type === 'Unregistered') next.is_supplier_gst_available = false;
   } else if (decided === 'sale') {
-    setField('entity_name', entity.trade_name);
-    setField('customer_name', entity.trade_name);
+    setField('entity_name', displayName);
+    setField('customer_name', displayName);
     setField('address', entity.address);
     setField('mobile_number', entity.mobile);
     setField('customer_gstin', entity.gst);
@@ -45,6 +54,8 @@ function mergeEntityIntoData(data, entity, decided) {
     source: entity.source,
     registration_type: entity.registration_type,
     entity_type: entity.entity_type,
+    legal_name: entity.legal_name || '',
+    trade_name: entity.trade_name || '',
     gst_status: entity.gst_status || null,
     verified_at: new Date().toISOString(),
   };
@@ -85,8 +96,9 @@ export async function enrichRoutedResultsWithEntityVerify(routed = []) {
       if (!cached) {
         const res = await window.pwp.entityVerify.lookupByGst({ gst, companyId });
         cached = {
-          entity: res?.bestEntity && res.bestEntity.source !== 'fallback' ? res.bestEntity : null,
+          entity: res?.bestEntity || res?.gstProfile || null,
           piboWarning: res?.piboWarning || null,
+          fromSupplierMaster: res?.fromSupplierMaster || false,
         };
         cache.set(cacheKey, cached);
       }

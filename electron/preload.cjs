@@ -166,6 +166,7 @@ contextBridge.exposeInMainWorld('pwp', {
     getAll: (filters) => ipcRenderer.invoke('supplierMaster:getAll', filters),
     add: (data) => ipcRenderer.invoke('supplierMaster:add', data),
     update: (data) => ipcRenderer.invoke('supplierMaster:update', data),
+    bulkUpsert: (payload) => ipcRenderer.invoke('supplierMaster:bulkUpsert', payload),
     delete: (id) => ipcRenderer.invoke('supplierMaster:delete', id),
   },
   // Packaging Master

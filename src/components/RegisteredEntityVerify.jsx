@@ -18,6 +18,8 @@ export default function RegisteredEntityVerify({
   const [message, setMessage] = useState('');
   const [piboWarning, setPiboWarning] = useState('');
   const [error, setError] = useState('');
+  const [requiresSelection, setRequiresSelection] = useState(false);
+  const [registrationType, setRegistrationType] = useState('');
 
   const runLookup = useCallback(async () => {
     const normalized = String(gst || '').replace(/[^A-Za-z0-9]/g, '');
@@ -37,6 +39,9 @@ export default function RegisteredEntityVerify({
     setError('');
     setMessage('');
     setPiboWarning('');
+    setRequiresSelection(false);
+    setRegistrationType('');
+
     try {
       const res = await window.pwp.entityVerify.lookupByGst({ gst: normalized, companyId });
       if (!res?.success) {
@@ -45,28 +50,48 @@ export default function RegisteredEntityVerify({
         setSelectedId('');
         return;
       }
-      setEntities(res.entities || []);
+
+      const selectable = res.selectableEntities?.length
+        ? res.selectableEntities
+        : (res.entities || []).filter((item) => item.source !== 'climeto_gst' && item.source !== 'fallback');
+
+      setEntities(selectable);
       setMessage(res.message || '');
       setPiboWarning(res.piboWarning || '');
+      setRequiresSelection(Boolean(res.requiresUserSelection));
+      setRegistrationType(res.gstVerified?.registration_type || res.bestEntity?.registration_type || '');
 
-      const best = res.bestEntity && res.bestEntity.source !== 'fallback'
-        ? res.bestEntity
-        : (res.entities?.length === 1 ? res.entities[0] : null);
+      const needsPick = res.requiresUserSelection || selectable.length > 1;
+
+      if (needsPick) {
+        setSelectedId('');
+        if (!selectable.length && res.gstVerified?.registration_type === 'Unregistered') {
+          onApply?.(res.bestEntity || res.gstProfile);
+        }
+        return;
+      }
+
+      const best = res.bestEntity
+        || (selectable.length === 1 ? selectable[0] : null)
+        || res.gstProfile
+        || null;
+
       if (best) {
         setSelectedId(best.id);
+        setRegistrationType(best.registration_type || '');
         onApply?.(best);
       } else {
         setSelectedId('');
       }
 
       if (
-        res.bestEntity?.registration_type === 'Registered'
+        best?.registration_type === 'Registered'
         && window.pwp?.pibo?.search
         && !res.piboWarning
       ) {
         const pibo = await window.pwp.pibo.search({
-          search: entityName || res.bestEntity?.trade_name || normalized,
-          entityType: entityType || res.bestEntity?.entity_type || '',
+          search: entityName || best?.trade_name || normalized,
+          entityType: entityType || best?.entity_type || '',
           state,
         });
         if (pibo?.success && !pibo.entities?.length) {
@@ -88,12 +113,24 @@ export default function RegisteredEntityVerify({
     setMessage('');
     setPiboWarning('');
     setError('');
+    setRequiresSelection(false);
+    setRegistrationType('');
   }, [gst]);
 
-  const handleSelect = (entityId) => {
+  const handleSelect = async (entityId) => {
     setSelectedId(entityId);
     const entity = entities.find((item) => item.id === entityId);
-    if (entity) onApply?.(entity);
+    if (entity) {
+      setRegistrationType(entity.registration_type || '');
+      onApply?.(entity);
+      if (companyId && window.pwp?.entityVerify?.applySelection) {
+        try {
+          await window.pwp.entityVerify.applySelection({ companyId, entity });
+        } catch {
+          /* persist best-effort */
+        }
+      }
+    }
   };
 
   return (
@@ -114,9 +151,22 @@ export default function RegisteredEntityVerify({
         </button>
       </div>
 
+      {registrationType ? (
+        <p className="text-xs text-slate-600 mb-2">
+          Registration Type:{' '}
+          <span className={registrationType === 'Registered' ? 'text-emerald-700 font-medium' : 'text-amber-700 font-medium'}>
+            {registrationType}
+          </span>
+        </p>
+      ) : null}
+
       {entities.length > 0 ? (
         <div>
-          <label className="label text-xs text-slate-500 mb-1">Registered Entity (API)</label>
+          <label className="label text-xs text-slate-500 mb-1">
+            {requiresSelection || entities.length > 1
+              ? 'Select registration (multiple found for this GST)'
+              : 'Registered Entity (API)'}
+          </label>
           <select
             className="input text-sm w-full bg-white"
             value={selectedId}
@@ -127,6 +177,7 @@ export default function RegisteredEntityVerify({
             {entities.map((entity) => (
               <option key={entity.id} value={entity.id}>
                 {entityOptionLabel(entity)}
+                {entity.epr_registration_number ? ` · EPR ${entity.epr_registration_number}` : ''}
                 {entity.gst ? ` — ${entity.gst}` : ''}
               </option>
             ))}
@@ -134,7 +185,11 @@ export default function RegisteredEntityVerify({
         </div>
       ) : null}
 
-      {message ? <p className="mt-2 text-xs text-emerald-700">{message}</p> : null}
+      {message ? (
+        <p className={`mt-2 text-xs ${message.includes('Supplier/Customer Master') || message.includes('Supplier Master') ? 'text-indigo-700' : 'text-emerald-700'}`}>
+          {message}
+        </p>
+      ) : null}
       {piboWarning ? (
         <p className="mt-2 text-xs text-amber-700 flex items-start gap-1.5">
           <AlertTriangle size={13} className="mt-0.5 shrink-0" />
