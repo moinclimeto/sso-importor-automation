@@ -626,7 +626,7 @@ export function mapProductsToLineItems(products = []) {
 
     productDescription: nf(p.productDescription),
 
-    hsn: nf(p.hsn),
+    hsn: nf(p.hsn) || resolveLineHsn(p),
 
     plasticMaterial: nf(p.plasticMaterial),
 

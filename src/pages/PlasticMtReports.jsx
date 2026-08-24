@@ -8,10 +8,8 @@ import {
   formatMt,
   mergeAggregates,
 } from '../../shared/plasticMtAggregation.js';
-import {
-  buildPlasticConsumed3cFromPurchases,
-  plasticConsumed3cHasData,
-} from '../../shared/plasticConsumed3c.js';
+import { buildPlasticConsumed3cForReports } from '../../shared/plasticConsumed3cReports.js';
+import { plasticConsumed3cHasData } from '../../shared/plasticConsumed3c.js';
 import PlasticConsumed3cTable from '../components/PlasticConsumed3cTable.jsx';
 import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
 
@@ -77,6 +75,8 @@ export default function PlasticMtReports({ embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [sales, setSales] = useState([]);
+  const [packagingRows, setPackagingRows] = useState([]);
+  const [savedImporter3a, setSavedImporter3a] = useState(null);
   const [companies, setCompanies] = useState([]);
   const [companyFilter, setCompanyFilter] = useState('');
 
@@ -93,13 +93,20 @@ export default function PlasticMtReports({ embedded = false }) {
     if (!window.pwp) return;
     setLoading(true);
     try {
-      const [p, s, comps] = await Promise.all([
+      const [p, s, pm, reg, comps] = await Promise.all([
         window.pwp.purchases.getAll(),
         window.pwp.sales.getAll(),
+        window.pwp.packagingMaster?.getAll?.() ?? [],
+        window.pwp.registration?.get?.() ?? { success: false },
         window.pwp.companies.getAll(),
       ]);
       setPurchases(p || []);
       setSales(s || []);
+      setPackagingRows(pm || []);
+      const importer3a = reg?.success && reg?.data?.formData?.autoData?.importer3a
+        ? reg.data.formData.autoData.importer3a
+        : null;
+      setSavedImporter3a(importer3a);
       setCompanies(comps || []);
     } finally {
       setLoading(false);
@@ -116,12 +123,16 @@ export default function PlasticMtReports({ embedded = false }) {
   );
 
   const plasticConsumed3c = useMemo(
-    () => buildPlasticConsumed3cFromPurchases(purchases, {
+    () => buildPlasticConsumed3cForReports({
+      purchases,
+      sales,
+      packagingRows,
       docStatus,
       financialYear: fyFilter,
       companyId: companyFilter || null,
+      savedImporter3a,
     }),
-    [purchases, docStatus, fyFilter, companyFilter],
+    [purchases, sales, packagingRows, docStatus, fyFilter, companyFilter, savedImporter3a],
   );
 
   const fyRows = useMemo(() => {
@@ -306,9 +317,15 @@ export default function PlasticMtReports({ embedded = false }) {
           <div className="rounded-lg border border-teal-100 bg-teal-50/60 px-4 py-3 text-sm text-teal-900">
             <p className="font-medium">Section 3c — Plastic packaging consumed (confirmation)</p>
             <p className="mt-1 text-xs text-teal-800 leading-relaxed">
-              Totals are calculated from <strong>Procurement</strong> invoices where packaging is added on review
-              (line-level category + MT). Values are category-wise and financial-year-wise in Tonnes — confirm before CPCB upload.
+              Totals use <strong>Importer 3a</strong> when import–sale matches exist; otherwise
+              <strong> Sales + Packaging Master</strong> MT, then procurement. Values are category-wise and
+              financial-year-wise in Tonnes — confirm before CPCB upload.
             </p>
+            {plasticConsumed3c.sourceLabel ? (
+              <p className="mt-2 text-xs font-medium text-teal-900">
+                Data source: {plasticConsumed3c.sourceLabel}
+              </p>
+            ) : null}
           </div>
           <PlasticConsumed3cTable
             title=""
@@ -318,7 +335,7 @@ export default function PlasticMtReports({ embedded = false }) {
           />
           {!plasticConsumed3cHasData(plasticConsumed3c.plasticConsumed) ? (
             <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
-              No packaging MT found for selected filters. Publish procurement records with plastic category and conversion factor on review pages.
+              No packaging MT found for selected filters. Publish sales or procurement records with plastic category and conversion factor, or finalize Importer 3a.
             </p>
           ) : null}
         </div>

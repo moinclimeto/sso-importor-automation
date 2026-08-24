@@ -75,14 +75,17 @@ export default function ConversionFactorSetupModal({
           </div>
 
           <div className="space-y-2 border-t border-slate-100 pt-4">
-            <p className="text-xs font-semibold text-slate-700">Manual CF</p>
+            <p className="text-xs font-semibold text-slate-700">Manual CF (kg per invoice unit)</p>
+            <p className="text-xs text-slate-500">
+              Packaging MT = quantity × CF ÷ 1000. Example: 4,000 Nos × 0.05 kg/Nos = 0.20 MT.
+            </p>
             <div className="flex gap-2">
               <input
                 type="text"
                 className="input text-sm flex-1"
                 value={manualCf}
                 onChange={(e) => setManualCf(e.target.value)}
-                placeholder="e.g. 0.025"
+                placeholder={`e.g. 0.05 kg/${line.unit || line.uom || 'Nos'}`}
               />
               <button
                 type="button"

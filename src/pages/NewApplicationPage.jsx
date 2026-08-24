@@ -32,11 +32,14 @@ import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
-import PlasticConsumed3cTable from '../components/PlasticConsumed3cTable.jsx';
+import ImporterEprWorkbench from '../components/ImporterEprWorkbench.jsx';
+import ImporterPackagingImages from '../components/ImporterPackagingImages.jsx';
+import ImporterSection3cPanel from '../components/importerEpr/ImporterSection3cPanel.jsx';
+import ImporterEprChecklist from '../components/importerEpr/ImporterEprChecklist.jsx';
 import {
-  buildPlasticConsumed3cFromPurchases,
   plasticConsumed3cHasData,
 } from '../../shared/plasticConsumed3c.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -140,12 +143,11 @@ export default function NewApplicationPage() {
   const [savedCeprId, setSavedCeprId] = useState('');
   const [registrationComplete, setRegistrationComplete] = useState(false);
   const [loadingSavedRegistration, setLoadingSavedRegistration] = useState(true);
-  const [purchases, setPurchases] = useState([]);
-  const [plastic3cLoading, setPlastic3cLoading] = useState(false);
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
   const [registrationBlocker, setRegistrationBlocker] = useState('');
+  const [plasticConsumedConfirmed, setPlasticConsumedConfirmed] = useState(false);
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -367,34 +369,56 @@ export default function NewApplicationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
-  const refreshPlasticConsumed3c = useCallback(async (applyToForm = false) => {
-    if (!window.pwp?.purchases?.getAll) return null;
-    setPlastic3cLoading(true);
-    try {
-      const rows = await window.pwp.purchases.getAll();
-      setPurchases(rows || []);
-      const built = buildPlasticConsumed3cFromPurchases(rows || [], { docStatus: 'published' });
-      if (applyToForm) {
-        setGeneralInfo((prev) => ({
-          ...prev,
-          plasticConsumed: built.plasticConsumed,
-        }));
-      }
-      return built;
-    } finally {
-      setPlastic3cLoading(false);
-    }
-  }, []);
+  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
 
-  useEffect(() => {
-    if (loadingSavedRegistration) return;
-    refreshPlasticConsumed3c(true);
-  }, [loadingSavedRegistration, refreshPlasticConsumed3c]);
+  const persistRegistrationForm = useCallback(async (nextGeneral, nextAuto) => {
+    if (!window.pwp?.registration?.save) return;
+    const updatedFormData = {
+      ...(savedRegistration?.formData || {}),
+      email,
+      mobile,
+      autoData: nextAuto ?? autoData,
+      generalInfo: nextGeneral ?? generalInfo,
+    };
+    await window.pwp.registration.save({
+      ...(savedRegistration || {}),
+      email,
+      mobile,
+      form_data_json: JSON.stringify(updatedFormData),
+      details_of_products_produced_marketed: (nextAuto ?? autoData).detailsOfProductsPath,
+      representative_picture_of_plastic_packaging: (nextAuto ?? autoData).representativePicturePath,
+      plastic_consumed_json: JSON.stringify((nextGeneral ?? generalInfo).plasticConsumed || {}),
+      importer_3a_status: (nextGeneral ?? generalInfo).importer3aStatus,
+    }).catch(console.error);
+  }, [savedRegistration, email, mobile, autoData, generalInfo]);
 
-  const plasticConsumed3cPreview = useMemo(
-    () => buildPlasticConsumed3cFromPurchases(purchases, { docStatus: 'published' }),
-    [purchases],
-  );
+  const handleImporter3aFinalized = useCallback(async (result) => {
+    const nextAuto = {
+      ...autoData,
+      detailsOfProductsPath: result.detailsOfProductsPath,
+      importer3a: result.importer3a,
+    };
+    const nextGeneral = {
+      ...generalInfo,
+      plasticConsumed: result.plasticConsumed,
+      importer3aStatus: result.importer3aStatus,
+    };
+    setAutoData(nextAuto);
+    setGeneralInfo(nextGeneral);
+    setPlasticConsumedConfirmed(false);
+    await persistRegistrationForm(nextGeneral, nextAuto);
+  }, [autoData, generalInfo, persistRegistrationForm]);
+
+  const handleImporter3bChange = useCallback(async (payload) => {
+    const nextAuto = {
+      ...autoData,
+      representativePicturePath: payload.representativePicturePath || payload.generatedPdfPath,
+      importer3b: payload.importer3bJson ? JSON.parse(payload.importer3bJson) : { images: payload.images },
+    };
+    setAutoData(nextAuto);
+    await persistRegistrationForm(generalInfo, nextAuto);
+  }, [autoData, generalInfo, persistRegistrationForm]);
+
 
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
@@ -755,13 +779,15 @@ export default function NewApplicationPage() {
     }
 
     const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
-    const built3c = buildPlasticConsumed3cFromPurchases(purchases, { docStatus: 'published' });
-    const plasticConsumed = plasticConsumed3cHasData(built3c.plasticConsumed)
-      ? built3c.plasticConsumed
-      : (generalInfo.plasticConsumed || {
-        '2024-25': { ...zeroCats },
-        '2025-26': { ...zeroCats },
-      });
+    const emptyPc = Object.fromEntries(reportingFys.map((fy) => [fy, { ...zeroCats }]));
+    const plasticConsumed = plasticConsumed3cHasData(generalInfo.plasticConsumed)
+      ? generalInfo.plasticConsumed
+      : emptyPc;
+
+    if (!autoData.detailsOfProductsPath) {
+      showToast('Finalize Section 3a (Importer Workbench) before starting New Application.', 'error');
+      return;
+    }
     const derivedState =
       generalInfo.stateUt ||
       stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
@@ -787,7 +813,7 @@ export default function NewApplicationPage() {
     };
 
     setGeneralInfo(applicationDefaults);
-    showToast('Starting New Application — Part A/B quantities will be filled as 0.', 'success');
+    showToast('Starting New Application — 3a/3b PDFs and 3c values will be submitted to CPCB.', 'success');
 
     const saveLogs = [];
     if (window.pwp?.registration?.save) {
@@ -1470,36 +1496,50 @@ export default function NewApplicationPage() {
                     </select>
                   </div>
                   
-                  <div className="md:col-span-2 mt-4">
-                    <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-                      <label className="block text-sm font-medium text-slate-700">
-                        3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *
-                      </label>
-                      <button
-                        type="button"
-                        onClick={() => refreshPlasticConsumed3c(true)}
-                        disabled={plastic3cLoading}
-                        className="inline-flex items-center gap-1.5 rounded-md border border-teal-200 bg-white px-2.5 py-1 text-xs font-medium text-teal-800 hover:bg-teal-50 disabled:opacity-50"
-                      >
-                        <RefreshCw size={13} className={plastic3cLoading ? 'animate-spin' : ''} />
-                        Refresh from Procurement
-                      </button>
-                    </div>
-                    <p className="text-xs text-teal-800 bg-teal-50 border border-teal-100 rounded-md px-2 py-1.5 mb-2">
-                      Auto-calculated from <strong>published procurement</strong> invoices (packaging category + MT on review).
-                      Confirm values below — these are submitted to CPCB on New Application.
-                    </p>
-                    <PlasticConsumed3cTable
-                      years={plasticConsumed3cPreview.years}
-                      plasticConsumed={generalInfo.plasticConsumed || plasticConsumed3cPreview.plasticConsumed}
-                      readOnly
-                      compact
+                  <div className="md:col-span-2 mt-4" data-importer-3a-workbench>
+                    <ImporterEprWorkbench
+                      companyName={autoData.companyName || autoData.legalName || 'Importer'}
+                      importer3a={autoData.importer3a}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      onFinalized={handleImporter3aFinalized}
+                      showToast={showToast}
                     />
-                    {!plasticConsumed3cHasData(generalInfo.plasticConsumed || plasticConsumed3cPreview.plasticConsumed) ? (
-                      <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mt-2">
-                        No packaging MT in published procurement yet. Review & publish purchase invoices with plastic packaging, then click Refresh.
-                      </p>
-                    ) : null}
+                  </div>
+
+                  <div className="md:col-span-2 mt-4">
+                    <label className="block text-sm font-medium text-slate-700 mb-2">
+                      3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *
+                    </label>
+                    <ImporterSection3cPanel
+                      years={reportingFys}
+                      plasticConsumed={generalInfo.plasticConsumed || Object.fromEntries(
+                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                      )}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      confirmed={plasticConsumedConfirmed}
+                      onConfirmedChange={setPlasticConsumedConfirmed}
+                      readOnly
+                    />
+                  </div>
+
+                  <div className="md:col-span-2 mt-4">
+                    <ImporterEprChecklist
+                      draft={autoData.importer3a}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                      representativePicturePath={autoData.representativePicturePath || ''}
+                      plasticConsumedConfirmed={
+                        plasticConsumedConfirmed || generalInfo.importer3aStatus === 'nil'
+                      }
+                      onNavigatePurchases={() => navigate('/doc-table', { state: { type: 'purchase', tab: 'published' } })}
+                      onNavigateSales={() => navigate('/doc-table', { state: { type: 'sale', tab: 'published' } })}
+                      onNavigateWorkbench={() => {
+                        document.querySelector('[data-importer-3a-workbench]')?.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      onNavigate3b={() => {
+                        document.querySelector('[data-importer-3b-section]')?.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                    />
                   </div>
 
                   <div className="md:col-span-2">
@@ -1553,77 +1593,24 @@ export default function NewApplicationPage() {
         <div className="space-y-6 mt-8 border-t pt-8">
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
-            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, detailsOfProductsPath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, representativePicturePath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
-                </div>
-              </div>
+            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6" data-importer-3b-section>
+              <ImporterPackagingImages
+                companyName={autoData.companyName || autoData.legalName || 'Importer'}
+                images={autoData.importer3b?.images || []}
+                generatedPdfPath={autoData.representativePicturePath || ''}
+                onChange={handleImporter3bChange}
+                showToast={showToast}
+              />
+              {autoData.detailsOfProductsPath ? (
+                <p className="text-xs text-green-700 bg-green-50 border border-green-100 rounded-md px-3 py-2">
+                  Section 3a PDF: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}
+                  {generalInfo.importer3aStatus === 'nil' ? ' (NIL)' : ''}
+                </p>
+              ) : (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+                  Section 3a PDF will appear here after you finalize the Importer Workbench above.
+                </p>
+              )}
             </div>
           </div>
         </div>

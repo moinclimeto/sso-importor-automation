@@ -2,6 +2,10 @@ import { normalizeEntityType, normalizeRegistrationType } from './entityRegistra
 
 export const PIBO_DROPDOWN_ENTITY_TYPES = ['Producer', 'Brand Owner', 'Importer'];
 
+/** Shown when GST/master says Registered but CPCB PIBO sync has no match. */
+export const PIBO_NOT_FOUND_WARNING =
+  'Not found in synced CPCB PIBO records. This is separate from GST/Master "Registered" status — verify on the CPCB portal if EPR registration is required.';
+
 export function isPiboSearchEligible(registrationType, entityType) {
   return normalizeRegistrationType(registrationType) === 'Registered'
     && PIBO_DROPDOWN_ENTITY_TYPES.includes(normalizeEntityType(entityType));

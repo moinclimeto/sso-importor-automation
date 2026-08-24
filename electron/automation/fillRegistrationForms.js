@@ -12,6 +12,11 @@ import {
   fillUntilPortalAccepts,
   waitForPortalBusy,
 } from './portalErrorGuard.js';
+import {
+  fillPlasticConsumedGrid,
+  resolvePlasticConsumedYears,
+} from './portalPlasticConsumed.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMMY_PDF = path.resolve(__dirname, '../../data/dummy_pan.pdf');
@@ -57,7 +62,9 @@ export function normalizeApplicationData(raw = {}) {
     hasProductionFacility: src.hasProductionFacility || '',
     capitalInvested: src.capitalInvested || '',
     yearOfCommencement: src.yearOfCommencement || '2026',
-    plasticConsumed: ZERO_PLASTIC,
+    plasticConsumed: src.plasticConsumed && typeof src.plasticConsumed === 'object'
+      ? src.plasticConsumed
+      : ZERO_PLASTIC,
     complianceStatus: src.complianceStatus || '',
     thicknessOfPlastic: src.thicknessOfPlastic || '',
     isSameAsRegisteredAddress: src.isSameAsRegisteredAddress ?? true,
@@ -881,12 +888,18 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await uploadNearLabel(page, 'products produced/marketed', productsFile, onLog);
   await uploadNearLabel(page, 'Representative picture of Plastic Packaging', pictureFile, onLog);
 
-  await fillAgGridZeros(
-    page,
-    /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
-    onLog,
-    'Part A 3c'
-  );
+  const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
+    ? resolvePlasticConsumedYears(data.plasticConsumed)
+    : getImporterReportingFinancialYears();
+  const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
+  if (!filled3c) {
+    await fillAgGridZeros(
+      page,
+      /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
+      onLog,
+      'Part A 3c fallback zeros'
+    );
+  }
 
   await chooseOption(page, {
     labelRegex: /Status of compliance with PWM Rules/i,

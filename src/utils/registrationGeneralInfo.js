@@ -1,4 +1,11 @@
 import { parseGstLabeledAddress } from './registrationDataMapper.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { emptyPlasticConsumedYear } from '../../shared/plasticConsumed3c.js';
+
+const _reportingFys = getImporterReportingFinancialYears();
+const _defaultPlasticConsumed = Object.fromEntries(
+  _reportingFys.map((fy) => [fy, emptyPlasticConsumedYear()]),
+);
 
 export const TYPE_OF_BUSINESS_OPTIONS = [
   'Pvt. Ltd.',
@@ -181,10 +188,7 @@ export const GENERAL_INFO_EMPTY = {
   hasProductionFacility: 'Not Applicable',
   capitalInvested: '',
   yearOfCommencement: '',
-  plasticConsumed: {
-    '2024-25': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' },
-    '2025-26': { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }
-  },
+  plasticConsumed: _defaultPlasticConsumed,
   complianceStatus: '',
   thicknessOfPlastic: '',
   

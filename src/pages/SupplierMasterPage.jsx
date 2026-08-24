@@ -129,6 +129,7 @@ export default function SupplierMasterPage({ embedded = false }) {
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
   const [form, setForm] = useState(EMPTY_SUPPLIER_FORM);
+  const [piboVerified, setPiboVerified] = useState(false);
   const fileInputRef = useRef(null);
   const actionsRef = useRef(null);
   const { setPageHeader, clearPageHeader } = usePageHeader();
@@ -165,6 +166,7 @@ export default function SupplierMasterPage({ embedded = false }) {
   useEffect(() => {
     if (!modal) {
       setForm(EMPTY_SUPPLIER_FORM);
+      setPiboVerified(false);
       return;
     }
     setForm({
@@ -180,14 +182,48 @@ export default function SupplierMasterPage({ embedded = false }) {
       registration_type: modal.registration_type || 'Unregistered',
       source: modal.source || 'manual',
     });
+    setPiboVerified(
+      modal.registration_type === 'Registered'
+      && modal.source === 'pibo_registered',
+    );
   }, [modal]);
 
+  const openEditForRegistered = (record) => {
+    if (!record?.entity_type) {
+      showToast('Select Entity Type first, then choose Registered for CPCB PIBO verification.', 'error');
+      setModal(record);
+      return;
+    }
+    setModal({ ...record, registration_type: 'Registered' });
+    showToast('Verify this supplier in CPCB PIBO records before saving as Registered.', 'info', { duration: 6000 });
+  };
+
   const updateForm = (patch) => {
-    setForm((prev) => ({ ...prev, ...patch }));
+    setForm((prev) => {
+      const entityTypeChanged = patch.entity_type != null && patch.entity_type !== prev.entity_type;
+      if (
+        patch.registration_type === 'Unregistered'
+        || patch.registration_type === 'Registered'
+        || entityTypeChanged
+      ) {
+        setPiboVerified(false);
+      }
+
+      const next = { ...prev, ...patch };
+      if (patch.registration_type === 'Unregistered') {
+        next.source = 'manual';
+      } else if (patch.registration_type === 'Registered' && patch.source !== 'pibo_registered') {
+        next.source = 'manual';
+      } else if (entityTypeChanged && next.registration_type === 'Registered') {
+        next.source = 'manual';
+      }
+      return next;
+    });
   };
 
   const handlePiboSelect = (entity) => {
     const normalized = normalizePiboEntityForForm(entity);
+    setPiboVerified(true);
     setForm((prev) => ({
       ...prev,
       ...normalized,
@@ -250,13 +286,26 @@ export default function SupplierMasterPage({ embedded = false }) {
     e.preventDefault();
     if (!window.pwp?.supplierMaster) return;
 
+    let payload = { ...form };
+    if (payload.registration_type === 'Registered' && !piboVerified) {
+      showToast(
+        'CPCB PIBO verification required. Select a PIBO record below, or save as Unregistered.',
+        'error',
+        { duration: 7000 },
+      );
+      return;
+    }
+    if (payload.registration_type !== 'Registered') {
+      payload = { ...payload, registration_type: 'Unregistered', source: 'manual' };
+    }
+
     try {
       if (modal?.id) {
-        const result = await window.pwp.supplierMaster.update({ ...form, id: modal.id });
+        const result = await window.pwp.supplierMaster.update({ ...payload, id: modal.id });
         if (result?.success === false) throw new Error(result.error || 'Update failed');
         showToast('Supplier/Customer updated', 'success');
       } else {
-        const result = await window.pwp.supplierMaster.add(form);
+        const result = await window.pwp.supplierMaster.add(payload);
         if (result?.success === false) throw new Error(result.error || 'Add failed');
         showToast('Supplier/Customer added', 'success');
       }
@@ -279,6 +328,10 @@ export default function SupplierMasterPage({ embedded = false }) {
   };
 
   const handleInlineUpdate = async (record, patch) => {
+    if (patch.registration_type === 'Registered') {
+      openEditForRegistered(record);
+      return;
+    }
     if (!window.pwp?.supplierMaster) return;
     try {
       const result = await window.pwp.supplierMaster.update({ id: record.id, ...patch });
@@ -501,7 +554,14 @@ export default function SupplierMasterPage({ embedded = false }) {
                   <td className="px-4 py-3">
                     <select
                       value={r.registration_type || 'Unregistered'}
-                      onChange={(e) => handleInlineUpdate(r, { registration_type: e.target.value })}
+                      onChange={(e) => {
+                        const next = e.target.value;
+                        if (next === 'Registered') {
+                          openEditForRegistered(r);
+                          return;
+                        }
+                        handleInlineUpdate(r, { registration_type: next });
+                      }}
                       className="w-full min-w-[140px] rounded-md border-slate-200 bg-white px-2 py-1.5 text-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                     >
                       {REGISTRATION_TYPE_OPTIONS.map((type) => (
@@ -606,12 +666,27 @@ export default function SupplierMasterPage({ embedded = false }) {
 
                 {showPiboPicker ? (
                   <section>
+                    {form.registration_type === 'Registered' && !piboVerified ? (
+                      <p className="mb-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                        Select a CPCB PIBO record below to verify this supplier. Without verification, you can only save as Unregistered.
+                      </p>
+                    ) : null}
+                    {piboVerified ? (
+                      <p className="mb-3 rounded-lg border border-emerald-200 bg-emerald-50 px-3 py-2 text-xs text-emerald-800 flex items-center gap-1.5">
+                        <CheckCircle2 size={14} />
+                        CPCB PIBO verified — you can save as Registered.
+                      </p>
+                    ) : null}
                     <PiboMasterListPicker
                       entityType={form.entity_type}
                       registrationType={form.registration_type}
                       onSelect={handlePiboSelect}
                     />
                   </section>
+                ) : form.registration_type === 'Registered' && !form.entity_type ? (
+                  <p className="rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-800">
+                    Select Entity Type above to search CPCB PIBO records.
+                  </p>
                 ) : null}
 
                 <section className="space-y-2.5">

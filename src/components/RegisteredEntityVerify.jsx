@@ -1,6 +1,36 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { entityOptionLabel } from '../../shared/entityRegistrationTypes.js';
+import { PIBO_NOT_FOUND_WARNING } from '../../shared/piboEntityMasterData.js';
+
+async function checkPiboWarning({ gst, entity, entityType, state }) {
+  if (!window.pwp?.pibo?.search || entity?.registration_type !== 'Registered') {
+    return '';
+  }
+
+  const type = entityType || entity?.entity_type || '';
+  const normalizedGst = String(gst || entity?.gst || '').replace(/[^A-Za-z0-9]/g, '');
+
+  if (normalizedGst.length === 15) {
+    const byGst = await window.pwp.pibo.search({ search: normalizedGst, entityType: type, state });
+    if (byGst?.success && byGst.entities?.length) return '';
+  }
+
+  const name = String(entity?.trade_name || entity?.entity_name || '').trim();
+  if (name) {
+    const byName = await window.pwp.pibo.search({ search: name, entityType: type, state });
+    if (byName?.success && !byName.entities?.length) {
+      return PIBO_NOT_FOUND_WARNING;
+    }
+    return '';
+  }
+
+  if (normalizedGst.length === 15) {
+    return PIBO_NOT_FOUND_WARNING;
+  }
+
+  return '';
+}
 
 export default function RegisteredEntityVerify({
   gst,
@@ -84,19 +114,14 @@ export default function RegisteredEntityVerify({
         setSelectedId('');
       }
 
-      if (
-        best?.registration_type === 'Registered'
-        && window.pwp?.pibo?.search
-        && !res.piboWarning
-      ) {
-        const pibo = await window.pwp.pibo.search({
-          search: entityName || best?.trade_name || normalized,
+      if (!res.piboWarning && best?.registration_type === 'Registered') {
+        const warning = await checkPiboWarning({
+          gst: normalized,
+          entity: best,
           entityType: entityType || best?.entity_type || '',
           state,
         });
-        if (pibo?.success && !pibo.entities?.length) {
-          setPiboWarning('Selected company is not available in CPCB PIBO registered records.');
-        }
+        if (warning) setPiboWarning(warning);
       }
     } catch (err) {
       setError(err.message || 'Verification failed.');
@@ -105,7 +130,7 @@ export default function RegisteredEntityVerify({
     } finally {
       setLoading(false);
     }
-  }, [gst, companyId, entityName, entityType, state, onApply]);
+  }, [gst, companyId, entityType, state, onApply]);
 
   useEffect(() => {
     setEntities([]);
@@ -122,6 +147,7 @@ export default function RegisteredEntityVerify({
     const entity = entities.find((item) => item.id === entityId);
     if (entity) {
       setRegistrationType(entity.registration_type || '');
+      setPiboWarning('');
       onApply?.(entity);
       if (companyId && window.pwp?.entityVerify?.applySelection) {
         try {
@@ -130,6 +156,13 @@ export default function RegisteredEntityVerify({
           /* persist best-effort */
         }
       }
+      const warning = await checkPiboWarning({
+        gst,
+        entity,
+        entityType: entityType || entity.entity_type || '',
+        state,
+      });
+      if (warning) setPiboWarning(warning);
     }
   };
 
@@ -153,10 +186,13 @@ export default function RegisteredEntityVerify({
 
       {registrationType ? (
         <p className="text-xs text-slate-600 mb-2">
-          Registration Type:{' '}
+          Master / GST status:{' '}
           <span className={registrationType === 'Registered' ? 'text-emerald-700 font-medium' : 'text-amber-700 font-medium'}>
             {registrationType}
           </span>
+          {registrationType === 'Registered' ? (
+            <span className="text-slate-500"> — from Supplier/Customer Master or GST API</span>
+          ) : null}
         </p>
       ) : null}
 

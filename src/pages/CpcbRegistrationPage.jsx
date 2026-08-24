@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
@@ -33,6 +33,11 @@ import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
+import ImporterEprWorkbench from '../components/ImporterEprWorkbench.jsx';
+import ImporterPackagingImages from '../components/ImporterPackagingImages.jsx';
+import ImporterSection3cPanel from '../components/importerEpr/ImporterSection3cPanel.jsx';
+import ImporterEprChecklist from '../components/importerEpr/ImporterEprChecklist.jsx';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -147,6 +152,7 @@ export default function CpcbRegistrationPage() {
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
+  const [plasticConsumedConfirmed, setPlasticConsumedConfirmed] = useState(false);
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -376,6 +382,56 @@ export default function CpcbRegistrationPage() {
     const { name, value } = e.target;
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
+
+  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
+
+  const handleImporter3aFinalized = useCallback(async (result) => {
+    setAutoData((prev) => ({
+      ...prev,
+      detailsOfProductsPath: result.detailsOfProductsPath,
+      importer3a: result.importer3a,
+    }));
+    setGeneralInfo((prev) => ({
+      ...prev,
+      plasticConsumed: result.plasticConsumed,
+      importer3aStatus: result.importer3aStatus,
+    }));
+    setPlasticConsumedConfirmed(false);
+    if (window.pwp?.registration?.save) {
+      await window.pwp.registration.save({
+        ...(savedRegistration || {}),
+        email,
+        mobile,
+        form_data_json: JSON.stringify({
+          ...(savedRegistration?.formData || {}),
+          email,
+          mobile,
+          autoData: {
+            ...autoData,
+            detailsOfProductsPath: result.detailsOfProductsPath,
+            importer3a: result.importer3a,
+          },
+          generalInfo: {
+            ...generalInfo,
+            plasticConsumed: result.plasticConsumed,
+            importer3aStatus: result.importer3aStatus,
+          },
+        }),
+        details_of_products_produced_marketed: result.detailsOfProductsPath,
+        plastic_consumed_json: JSON.stringify(result.plasticConsumed),
+        importer_3a_status: result.importer3aStatus,
+      }).catch(console.error);
+    }
+  }, [savedRegistration, email, mobile, autoData, generalInfo]);
+
+  const handleImporter3bChange = useCallback(async (payload) => {
+    setAutoData((prev) => ({
+      ...prev,
+      representativePicturePath: payload.representativePicturePath || payload.generatedPdfPath,
+      importer3b: payload.importer3bJson ? JSON.parse(payload.importer3bJson) : { images: payload.images },
+    }));
+    await persistRegistrationForm();
+  }, []);
 
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
@@ -1535,50 +1591,46 @@ export default function CpcbRegistrationPage() {
                     />
                   </div>
                   
+                  <div className="md:col-span-2 mt-4" data-importer-3a-workbench>
+                    <ImporterEprWorkbench
+                      companyName={autoData.companyName || autoData.legalName || 'Importer'}
+                      importer3a={autoData.importer3a}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      onFinalized={handleImporter3aFinalized}
+                      showToast={showToast}
+                    />
+                  </div>
+
                   <div className="md:col-span-2 mt-4">
                     <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-[#0b6c7a] text-white">
-                          <tr>
-                            <th className="px-4 py-3 font-medium">Year</th>
-                            <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 bg-white">
-                          {['2024-25', '2025-26'].map((year) => (
-                            <tr key={year}>
-                              <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
-                              {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
-                                <td key={cat} className="px-4 py-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                                    value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
-                                    onChange={(e) => {
-                                      setGeneralInfo(prev => ({
-                                        ...prev,
-                                        plasticConsumed: {
-                                          ...(prev.plasticConsumed || {}),
-                                          [year]: {
-                                            ...(prev.plasticConsumed?.[year] || {}),
-                                            [cat]: e.target.value
-                                          }
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
+                    <ImporterSection3cPanel
+                      years={reportingFys}
+                      plasticConsumed={generalInfo.plasticConsumed || Object.fromEntries(
+                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                      )}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      confirmed={plasticConsumedConfirmed}
+                      onConfirmedChange={setPlasticConsumedConfirmed}
+                      readOnly
+                    />
+                  </div>
+
+                  <div className="md:col-span-2 mt-4">
+                    <ImporterEprChecklist
+                      draft={autoData.importer3a}
+                      importer3aStatus={generalInfo.importer3aStatus || ''}
+                      detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                      representativePicturePath={autoData.representativePicturePath || ''}
+                      plasticConsumedConfirmed={
+                        plasticConsumedConfirmed || generalInfo.importer3aStatus === 'nil'
+                      }
+                      onNavigatePurchases={() => navigate('/doc-table', { state: { type: 'purchase', tab: 'published' } })}
+                      onNavigateSales={() => navigate('/doc-table', { state: { type: 'sale', tab: 'published' } })}
+                      onNavigateWorkbench={() => {
+                        document.querySelector('[data-importer-3a-workbench]')?.scrollIntoView({ behavior: 'smooth' });
+                      }}
+                      onNavigate3b={() => setWizardStep('partC')}
+                    />
                   </div>
 
                   <div className="md:col-span-2">
@@ -1636,68 +1688,40 @@ export default function CpcbRegistrationPage() {
         <div className="space-y-6">
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
-            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'detailsOfProductsPath');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.detailsOfProductsPath && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>
-                      <LocalFilePreview filePath={autoData.detailsOfProductsPath} />
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'representativePicturePath');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.representativePicturePath && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>
-                      <LocalFilePreview filePath={autoData.representativePicturePath} />
-                    </div>
-                  )}
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
-                      ? 'Type of Company Document — MSME Certificate (PDF) *'
-                      : 'Type of Company Document — Large Entity Declaration (PDF) *'}
-                  </label>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.typeOfCompanyDoc && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
-                        Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                      </p>
-                      <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
-                    </div>
-                  )}
-                </div>
+            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6" data-importer-3b-section>
+              <ImporterPackagingImages
+                companyName={autoData.companyName || autoData.legalName || 'Importer'}
+                images={autoData.importer3b?.images || []}
+                generatedPdfPath={autoData.representativePicturePath || ''}
+                onChange={handleImporter3bChange}
+                showToast={showToast}
+              />
+              {autoData.detailsOfProductsPath ? (
+                <p className="text-xs text-green-700">Section 3a PDF: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>
+              ) : null}
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
+                    ? 'Type of Company Document — MSME Certificate (PDF) *'
+                    : 'Type of Company Document — Large Entity Declaration (PDF) *'}
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
+                  }}
+                  className={inputClass}
+                />
+                {autoData.typeOfCompanyDoc && (
+                  <div className="mt-1 flex items-center gap-3">
+                    <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
+                      Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
+                    </p>
+                    <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
+                  </div>
+                )}
               </div>
             </div>
           </div>

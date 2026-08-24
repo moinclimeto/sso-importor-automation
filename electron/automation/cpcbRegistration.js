@@ -24,6 +24,11 @@ import {
   waitForPortalBusy,
 } from './portalErrorGuard.js';
 import { harvestPortalToasts } from './portalToastWatcher.js';
+import {
+  fillPlasticConsumedGrid,
+  resolvePlasticConsumedYears,
+} from './portalPlasticConsumed.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 
 let regBrowser = null;
 let regContext = null;
@@ -565,57 +570,13 @@ async function fillGeneralInformation(page, data, onLog) {
 
   if (data.plasticConsumed) {
     if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
-    
-    try {
-      // Find the main ag-Grid container for section 3c
-      const gridContainer = page.locator('app-ag-grid-table').filter({ hasText: /Rigid Plastic/i }).first();
-      await gridContainer.waitFor({ state: 'visible', timeout: 5000 });
-
-      // There are two rows: index 0 (2024-25) and index 1 (2025-26)
-      const yearsToFill = [
-        { year: '2024-25', index: 0 },
-        { year: '2025-26', index: 1 }
-      ];
-
-      const columns = [
-        { key: 'cat1', colId: 'rigidPlastic' },
-        { key: 'cat2', colId: 'flexiblePlastic' },
-        { key: 'cat3', colId: 'mlp' },
-        { key: 'cat4', colId: 'compostablePlastic' }
-      ];
-
-      for (const y of yearsToFill) {
-        // Find the row by checking its year text or row-index
-        let row = gridContainer.locator(`div.ag-center-cols-container div[role="row"]`).filter({ hasText: y.year }).first();
-        if ((await row.count().catch(() => 0)) === 0) {
-           row = gridContainer.locator(`div.ag-center-cols-container div[role="row"][row-index="${y.index}"]`).first();
-        }
-
-        if (await row.isVisible({ timeout: 2000 }).catch(() => false)) {
-          for (const col of columns) {
-            const val = data.plasticConsumed?.[y.year]?.[col.key] || '0';
-            const inputLoc = row.locator(`div[col-id="${col.colId}"] input.cell-input`).first();
-            
-            if (await inputLoc.isVisible({ timeout: 2000 }).catch(() => false)) {
-              await inputLoc.scrollIntoViewIfNeeded();
-              await inputLoc.click();
-              await inputLoc.fill('');
-              await inputLoc.pressSequentially(String(val), { delay: 10 });
-              await inputLoc.dispatchEvent('input');
-              await inputLoc.dispatchEvent('change');
-              await inputLoc.blur();
-              await page.waitForTimeout(200);
-            } else {
-              if (onLog) onLog(`Warning: Input for ${y.year} column ${col.colId} not found.`);
-            }
-          }
-        } else {
-          if (onLog) onLog(`Warning: Row for year ${y.year} not found in ag-Grid.`);
-        }
-      }
-    } catch (err) {
-      if (onLog) onLog(`Error filling Plastic Consumed ag-Grid: ${err.message}`);
-    }
+    const pcYears = resolvePlasticConsumedYears(data.plasticConsumed);
+    await fillPlasticConsumedGrid(
+      page,
+      data.plasticConsumed,
+      pcYears.length ? pcYears : getImporterReportingFinancialYears(),
+      onLog,
+    );
   }
 
   if (data.complianceStatus?.trim()) {

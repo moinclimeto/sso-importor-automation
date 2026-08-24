@@ -4,6 +4,7 @@ import {
   normalizeRegistrationType,
 } from '../shared/entityRegistrationTypes.js';
 import { verifyGstComplete } from './gstVerifyService.js';
+import { PIBO_NOT_FOUND_WARNING } from '../shared/piboEntityMasterData.js';
 import { searchPiboEntities } from './piboEntitiesService.js';
 import {
   supplierMasterCacheComplete,
@@ -189,6 +190,36 @@ function selectableEntities(entities = []) {
   return entities.filter((entity) => entity.source !== 'climeto_gst' && entity.source !== 'fallback');
 }
 
+async function resolvePiboWarning(db, entity) {
+  if (!entity || entity.registration_type !== 'Registered' || !entity.entity_type) {
+    return null;
+  }
+
+  const gst = normalizeGstin(entity.gst);
+  const entityType = entity.entity_type;
+  const state = String(entity.state || '').trim();
+
+  if (gst.length === 15) {
+    const byGst = await searchPiboEntities(db, { search: gst, entityType, state, limit: 5 });
+    if (byGst.success && byGst.entities?.length) return null;
+  }
+
+  const name = String(entity.trade_name || entity.entity_name || '').trim();
+  if (name) {
+    const byName = await searchPiboEntities(db, { search: name, entityType, state, limit: 5 });
+    if (byName.success && !byName.entities?.length) {
+      return PIBO_NOT_FOUND_WARNING;
+    }
+    return null;
+  }
+
+  if (gst.length === 15) {
+    return PIBO_NOT_FOUND_WARNING;
+  }
+
+  return null;
+}
+
 export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = false } = {}) {
   const normalized = normalizeGstin(gst);
   if (normalized.length !== 15) {
@@ -210,6 +241,7 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
     );
     if (supplierMasterCacheComplete(cachedRow)) {
       const entity = mapLookupRow(cachedRow, 'supplier_master', 'supplier');
+      const piboWarning = await resolvePiboWarning(db, entity);
       return {
         success: true,
         entities: [entity],
@@ -218,7 +250,7 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
         requiresUserSelection: false,
         fromSupplierMaster: true,
         gstVerified: null,
-        piboWarning: null,
+        piboWarning,
         message: 'Applied from Supplier/Customer Master (previously verified via GST API).',
       };
     }
@@ -285,20 +317,9 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
     }
   }
 
-  let piboWarning = null;
-  const piboCheckEntity = bestEntity && bestEntity.registration_type === 'Registered'
-    ? bestEntity
+  const piboWarning = bestEntity?.registration_type === 'Registered'
+    ? await resolvePiboWarning(db, bestEntity)
     : null;
-
-  if (piboCheckEntity?.entity_type) {
-    const pibo = await searchPiboEntities(db, {
-      search: piboCheckEntity.trade_name || piboCheckEntity.gst,
-      entityType: piboCheckEntity.entity_type,
-    });
-    if (pibo.success && !pibo.entities?.length) {
-      piboWarning = 'Selected company is not available in CPCB PIBO registered records.';
-    }
-  }
 
   return {
     success: true,

@@ -261,11 +261,12 @@ export default function ProcurementReview() {
   const applyMasterToLine = async (idx) => {
     const line = lines[idx];
     const master =
-      lookupPackagingMasterRow(packagingRows, line) ||
+      lookupPackagingMasterRow(packagingRows, line, 'purchase') ||
       (await window.pwp?.packagingMaster?.lookup?.({
         company_id: record?.company_id,
         product_description: line.productDescription,
         hsn: line.hsn,
+        list_type: 'purchase',
       }));
     if (!master) {
       showToast('No packaging master match for this line', 'info');
@@ -362,6 +363,7 @@ export default function ProcurementReview() {
       hsn_code: first?.hsn || record.hsn_code,
       category_of_plastic: bulkCat || first?.plasticCategory || record.category_of_plastic,
       plastic_type: bulkMaterial || first?.plasticMaterial || record.plastic_type,
+      procurement_source: header.procurement_source || record.procurement_source || '',
       doc_status: docStatus || record.doc_status || tab,
     };
   };
@@ -609,6 +611,29 @@ export default function ProcurementReview() {
                 disabled={readOnly}
                 placeholder="Select Entity Type"
               />
+              <EditableHeaderSelect
+                label="Procurement Source"
+                value={header.procurement_source || ''}
+                onChange={(v) => patchHeader({ procurement_source: v })}
+                options={[
+                  { value: '', label: 'Select…' },
+                  { value: 'import', label: 'Import' },
+                  { value: 'domestic', label: 'Domestic' },
+                ]}
+                readOnly={false}
+                disabled={readOnly}
+                placeholder="Import or Domestic"
+              />
+              {!readOnly && (!header.procurement_source || header.procurement_source === 'unknown') && (
+                <div className="md:col-span-2 rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-900">
+                  <strong>Required for Importer EPR:</strong> Please select <strong>Import</strong> or <strong>Domestic</strong> before this invoice can be used for Importer Section 3a. Unknown or unset purchases are excluded from the import pool.
+                </div>
+              )}
+              {!readOnly && header.procurement_source === 'import' && (
+                <p className="text-[11px] text-teal-800 bg-teal-50 border border-teal-100 rounded-md px-2 py-1.5 md:col-span-2">
+                  Marked as <strong>Import</strong> — this purchase can be matched to domestic sales in Importer Section 3a.
+                </p>
+              )}
               <ReadonlyHeaderField label="Financial Year" value={header.financial_year} />
               <EditableHeaderSelect
                 label="State"
@@ -820,7 +845,9 @@ export default function ProcurementReview() {
               </table>
             </div>
             {!readOnly && (
-              <p className="text-[11px] text-slate-400 px-4 py-2 border-t border-slate-100">Double-click a row to edit. Total Plastic Weight = sum of line Qty (MT).</p>
+              <p className="text-[11px] text-slate-400 px-4 py-2 border-t border-slate-100">
+                Double-click a row to edit. CF is <strong>kg per invoice unit</strong> (MT = qty × CF ÷ 1000). Total Plastic Weight = sum of line Qty (MT).
+              </p>
             )}
           </section>
 

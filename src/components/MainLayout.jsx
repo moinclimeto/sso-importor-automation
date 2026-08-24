@@ -34,7 +34,6 @@ const navLinks = [
   */
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
   { to: '/master-data', icon: Database, label: 'Master Data' },
-  { to: '/cpcb-registration', icon: FileScan, label: 'Registration' },
 ];
 
 const pageHeaders = {

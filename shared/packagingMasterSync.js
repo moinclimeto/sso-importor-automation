@@ -1,4 +1,15 @@
 import { buildProductMatchKey, normalizeCfBaseSource, normalizeLineUom } from './procurementConversionFactor.js';
+import { normalizePlasticCategory, PLASTIC_CATEGORIES } from './plasticCategories.js';
+import { extractHsnFromText } from './hsnUtils.js';
+
+export { extractHsnFromText };
+
+const KNOWN_PLASTIC_MATERIALS = [
+  'PET', 'HDPE', 'PVC', 'LDPE', 'LLDPE', 'PP', 'PS', 'MLP', 'PLA', 'PBAT', 'Others', 'Other',
+];
+
+const OCR_GARBAGE_MATERIAL_RE =
+  /customer'?s materials|customs tariff|tariff num|compl lwr|windsh|a2476200500|materials:/i;
 
 function parseNum(v) {
   if (v === null || v === undefined || v === '') return null;
@@ -52,6 +63,84 @@ export function formatPackagingConversionFactor(record = {}) {
   return cf.toLocaleString('en-IN', { maximumFractionDigits: 6 });
 }
 
+/** Human-readable CF label: kg per invoice unit (MT = qty × CF ÷ 1000). */
+export function formatConversionFactorWithUnit(record = {}, fallbackUnit = '') {
+  const cf = parseNum(record.conversion_factor ?? record.conversionFactor);
+  if (cf == null) return '—';
+  const uom = resolvePackagingUom(record) || str(fallbackUnit || record.unit || 'unit');
+  const cfText = cf.toLocaleString('en-IN', { maximumFractionDigits: 6 });
+  return `${cfText} kg/${uom}`;
+}
+
+/** Strip OCR garbage and normalize to a short plastic material label. */
+export function sanitizePlasticMaterial(value = '') {
+  let v = str(value);
+  if (!v) return '';
+
+  if (v.length > 48 || OCR_GARBAGE_MATERIAL_RE.test(v)) {
+    for (const material of KNOWN_PLASTIC_MATERIALS) {
+      const re = new RegExp(`\\b${material}\\b`, 'i');
+      if (re.test(v)) return material === 'Other' ? 'Others' : material;
+    }
+    return '';
+  }
+
+  if (/^cat-[iv]/i.test(v)) {
+    v = v.replace(/^cat-[iv][^a-zA-Z]*/i, '').replace(/^\(|\)$/g, '').trim();
+    if (!v || v.length > 32) return '';
+  }
+
+  const exact = KNOWN_PLASTIC_MATERIALS.find((m) => m.toLowerCase() === v.toLowerCase());
+  if (exact) return exact === 'Other' ? 'Others' : exact;
+
+  if (v.length <= 32) return v;
+  return '';
+}
+
+/** Keep only valid CPCB plastic categories. */
+export function sanitizePlasticCategory(value = '') {
+  const cat = normalizePlasticCategory(value);
+  return PLASTIC_CATEGORIES.includes(cat) ? cat : '';
+}
+
+/** Try to pull HSN digits from product description when column is empty. */
+/** Normalize one packaging_master row before save or repair. */
+export function normalizePackagingMasterRecord(record = {}) {
+  const product_description = str(record.product_description).slice(0, 500);
+  const hsn =
+    normalizeHsn(record.hsn) ||
+    extractHsnFromText(product_description) ||
+    extractHsnFromText(record.product_match_key);
+  const uom = resolvePackagingUom(record);
+  const product_match_key =
+    str(record.product_match_key) || buildProductMatchKey(product_description, hsn);
+  const conversion_factor = parseNum(record.conversion_factor);
+
+  return {
+    ...record,
+    product_description,
+    hsn,
+    uom,
+    product_match_key,
+    plastic_category: sanitizePlasticCategory(record.plastic_category),
+    plastic_material: sanitizePlasticMaterial(record.plastic_material),
+    conversion_factor,
+    cf_base_source: normalizeCfBaseSource(record.cf_base_source || 'quantity'),
+  };
+}
+
+export function packagingMasterCompleteness(record = {}) {
+  const missing = [];
+  if (!sanitizePlasticCategory(record.plastic_category)) missing.push('category');
+  if (parseNum(record.conversion_factor) == null) missing.push('cf');
+  if (!normalizeHsn(record.hsn)) missing.push('hsn');
+  return {
+    ok: missing.length === 0,
+    missing,
+    label: missing.length === 0 ? 'Complete' : `Missing ${missing.join(', ')}`,
+  };
+}
+
 /** Build packaging_master upsert payload from a review / invoice line item. */
 export function lineItemToPackagingSyncRow(line = {}, options = {}) {
   const productDesc = str(
@@ -72,9 +161,9 @@ export function lineItemToPackagingSyncRow(line = {}, options = {}) {
     return null;
   }
 
-  return {
+  return normalizePackagingMasterRecord({
     company_id: options.companyId ?? null,
-    list_type: options.listType || 'gpl',
+    list_type: options.listType || 'purchase',
     product_description: productDesc,
     product_match_key: productMatchKey,
     hsn,
@@ -89,7 +178,7 @@ export function lineItemToPackagingSyncRow(line = {}, options = {}) {
     cf_base_source: normalizeCfBaseSource(line.cfBaseSource ?? line.cf_base_source ?? 'quantity'),
     value_in_mt: processedMt,
     source: options.source || 'review',
-  };
+  });
 }
 export function lineItemsToPackagingSyncRows(lineItems = [], options = {}) {
   const rows = [];

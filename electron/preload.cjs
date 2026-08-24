@@ -81,6 +81,11 @@ contextBridge.exposeInMainWorld('pwp', {
     save: (data) => ipcRenderer.invoke('registration:save', data),
     get: () => ipcRenderer.invoke('registration:get'),
   },
+  importerEpr: {
+    compute3aDraft: (payload) => ipcRenderer.invoke('importerEpr:compute3aDraft', payload),
+    finalize3a: (payload) => ipcRenderer.invoke('importerEpr:finalize3a', payload),
+    generate3bPdf: (payload) => ipcRenderer.invoke('importerEpr:generate3bPdf', payload),
+  },
   // OCR (Gemini)
   ocr: {
     selectFiles: () => ipcRenderer.invoke('ocr:select-files'),
@@ -202,6 +207,10 @@ contextBridge.exposeInMainWorld('pwp', {
     lookup: (payload) => ipcRenderer.invoke('packagingMaster:lookup', payload),
     add: (data) => ipcRenderer.invoke('packagingMaster:add', data),
     update: (data) => ipcRenderer.invoke('packagingMaster:update', data),
+    updateMany: (payload) => ipcRenderer.invoke('packagingMaster:updateMany', payload),
     delete: (id) => ipcRenderer.invoke('packagingMaster:delete', id),
+    deleteMany: (ids) => ipcRenderer.invoke('packagingMaster:deleteMany', ids),
+    bulkUpsert: (payload) => ipcRenderer.invoke('packagingMaster:bulkUpsert', payload),
+    repair: (payload) => ipcRenderer.invoke('packagingMaster:repair', payload),
   },
 });
