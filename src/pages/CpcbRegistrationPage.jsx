@@ -33,10 +33,12 @@ import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
-import ImporterEprWorkbench from '../components/ImporterEprWorkbench.jsx';
-import ImporterPackagingImages from '../components/ImporterPackagingImages.jsx';
-import ImporterSection3cPanel from '../components/importerEpr/ImporterSection3cPanel.jsx';
-import ImporterEprChecklist from '../components/importerEpr/ImporterEprChecklist.jsx';
+import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
+import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
+import {
+  fetchComputedPlasticConsumed3c,
+  shouldHydratePlasticConsumed,
+} from '../utils/registrationPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
@@ -152,7 +154,7 @@ export default function CpcbRegistrationPage() {
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
-  const [plasticConsumedConfirmed, setPlasticConsumedConfirmed] = useState(false);
+  const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -385,6 +387,31 @@ export default function CpcbRegistrationPage() {
 
   const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
 
+  useEffect(() => {
+    if (loadingSavedRegistration) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await fetchComputedPlasticConsumed3c({
+          gstin: autoData.gstin,
+          savedImporter3a: autoData.importer3a,
+        });
+        if (cancelled || !result?.hasData) return;
+
+        setGeneralInfo((prev) => {
+          if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
+          return { ...prev, plasticConsumed: result.plasticConsumed };
+        });
+        setPlasticConsumedSource(result.sourceLabel || '');
+      } catch (err) {
+        console.error('Failed to hydrate Section 3c:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
+
   const handleImporter3aFinalized = useCallback(async (result) => {
     setAutoData((prev) => ({
       ...prev,
@@ -396,7 +423,6 @@ export default function CpcbRegistrationPage() {
       plasticConsumed: result.plasticConsumed,
       importer3aStatus: result.importer3aStatus,
     }));
-    setPlasticConsumedConfirmed(false);
     if (window.pwp?.registration?.save) {
       await window.pwp.registration.save({
         ...(savedRegistration || {}),
@@ -431,6 +457,10 @@ export default function CpcbRegistrationPage() {
       importer3b: payload.importer3bJson ? JSON.parse(payload.importer3bJson) : { images: payload.images },
     }));
     await persistRegistrationForm();
+  }, []);
+
+  const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
+    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
   }, []);
 
   const handleDocExtracted = useCallback(async (data) => {
@@ -1455,48 +1485,32 @@ export default function CpcbRegistrationPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {INDIAN_STATES.map((s) => {
-                        const isChecked = (generalInfo.operatingStates || []).includes(s);
-                        return (
-                          <label key={s} className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                setGeneralInfo(prev => {
-                                  const current = prev.operatingStates || [];
-                                  const newState = e.target.checked
-                                    ? [...current, s]
-                                    : current.filter(x => x !== s);
-                                  
-                                  const newStateObj = { ...prev, operatingStates: newState };
-                                  
-                                  // Auto-save logic
-                                  if (window.pwp?.registration?.save) {
-                                    const updatedFormData = {
-                                      ...(savedRegistration?.formData || {}),
-                                      email, mobile, autoData, generalInfo: newStateObj
-                                    };
-                                    window.pwp.registration.save({
-                                      ...(savedRegistration || {}),
-                                      email,
-                                      mobile,
-                                      form_data_json: JSON.stringify(updatedFormData)
-                                    }).catch(console.error);
-                                  }
-                                  
-                                  return newStateObj;
-                                });
-                              }}
-                              className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                            />
-                            <span className="text-sm text-slate-700">{s}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+                    <OperatingStatesMultiSelect
+                      value={generalInfo.operatingStates || []}
+                      onChange={(newState) => {
+                        setGeneralInfo((prev) => {
+                          const newStateObj = { ...prev, operatingStates: newState };
+
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email,
+                              mobile,
+                              autoData,
+                              generalInfo: newStateObj,
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email,
+                              mobile,
+                              form_data_json: JSON.stringify(updatedFormData),
+                            }).catch(console.error);
+                          }
+
+                          return newStateObj;
+                        });
+                      }}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
@@ -1591,47 +1605,25 @@ export default function CpcbRegistrationPage() {
                     />
                   </div>
                   
-                  <div className="md:col-span-2 mt-4" data-importer-3a-workbench>
-                    <ImporterEprWorkbench
-                      companyName={autoData.companyName || autoData.legalName || 'Importer'}
-                      importer3a={autoData.importer3a}
-                      importer3aStatus={generalInfo.importer3aStatus || ''}
-                      onFinalized={handleImporter3aFinalized}
-                      showToast={showToast}
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 mt-4">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-                    <ImporterSection3cPanel
-                      years={reportingFys}
-                      plasticConsumed={generalInfo.plasticConsumed || Object.fromEntries(
+                  <ImporterEprPreparedReview
+                    companyName={autoData.companyName || autoData.legalName || 'Importer'}
+                    importer3a={autoData.importer3a}
+                    importer3aStatus={generalInfo.importer3aStatus || ''}
+                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                    importer3b={autoData.importer3b}
+                    representativePicturePath={autoData.representativePicturePath || ''}
+                    plasticConsumed={
+                      generalInfo.plasticConsumed || Object.fromEntries(
                         reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
-                      )}
-                      importer3aStatus={generalInfo.importer3aStatus || ''}
-                      confirmed={plasticConsumedConfirmed}
-                      onConfirmedChange={setPlasticConsumedConfirmed}
-                      readOnly
-                    />
-                  </div>
-
-                  <div className="md:col-span-2 mt-4">
-                    <ImporterEprChecklist
-                      draft={autoData.importer3a}
-                      importer3aStatus={generalInfo.importer3aStatus || ''}
-                      detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
-                      representativePicturePath={autoData.representativePicturePath || ''}
-                      plasticConsumedConfirmed={
-                        plasticConsumedConfirmed || generalInfo.importer3aStatus === 'nil'
-                      }
-                      onNavigatePurchases={() => navigate('/doc-table', { state: { type: 'purchase', tab: 'published' } })}
-                      onNavigateSales={() => navigate('/doc-table', { state: { type: 'sale', tab: 'published' } })}
-                      onNavigateWorkbench={() => {
-                        document.querySelector('[data-importer-3a-workbench]')?.scrollIntoView({ behavior: 'smooth' });
-                      }}
-                      onNavigate3b={() => setWizardStep('partC')}
-                    />
-                  </div>
+                      )
+                    }
+                    reportingYears={reportingFys}
+                    onImporter3aFinalized={handleImporter3aFinalized}
+                    onImporter3bChange={handleImporter3bChange}
+                    onPlasticConsumedChange={handlePlasticConsumedChange}
+                    plasticConsumedSource={plasticConsumedSource}
+                    showToast={showToast}
+                  />
 
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
@@ -1688,17 +1680,7 @@ export default function CpcbRegistrationPage() {
         <div className="space-y-6">
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
-            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6" data-importer-3b-section>
-              <ImporterPackagingImages
-                companyName={autoData.companyName || autoData.legalName || 'Importer'}
-                images={autoData.importer3b?.images || []}
-                generatedPdfPath={autoData.representativePicturePath || ''}
-                onChange={handleImporter3bChange}
-                showToast={showToast}
-              />
-              {autoData.detailsOfProductsPath ? (
-                <p className="text-xs text-green-700">Section 3a PDF: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>
-              ) : null}
+            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
               <div>
                 <label className="block text-sm font-medium text-slate-700 mb-1">
                   {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)

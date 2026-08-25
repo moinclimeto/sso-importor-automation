@@ -33,6 +33,7 @@ import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import ImporterEprWorkbench from '../components/ImporterEprWorkbench.jsx';
+import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import ImporterPackagingImages from '../components/ImporterPackagingImages.jsx';
 import ImporterSection3cPanel from '../components/importerEpr/ImporterSection3cPanel.jsx';
 import ImporterEprChecklist from '../components/importerEpr/ImporterEprChecklist.jsx';
@@ -1372,48 +1373,32 @@ export default function NewApplicationPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {INDIAN_STATES.map((s) => {
-                        const isChecked = (generalInfo.operatingStates || []).includes(s);
-                        return (
-                          <label key={s} className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                setGeneralInfo(prev => {
-                                  const current = prev.operatingStates || [];
-                                  const newState = e.target.checked
-                                    ? [...current, s]
-                                    : current.filter(x => x !== s);
-                                  
-                                  const newStateObj = { ...prev, operatingStates: newState };
-                                  
-                                  // Auto-save logic
-                                  if (window.pwp?.registration?.save) {
-                                    const updatedFormData = {
-                                      ...(savedRegistration?.formData || {}),
-                                      email, mobile, autoData, generalInfo: newStateObj
-                                    };
-                                    window.pwp.registration.save({
-                                      ...(savedRegistration || {}),
-                                      email,
-                                      mobile,
-                                      form_data_json: JSON.stringify(updatedFormData)
-                                    }).catch(console.error);
-                                  }
-                                  
-                                  return newStateObj;
-                                });
-                              }}
-                              className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                            />
-                            <span className="text-sm text-slate-700">{s}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+                    <OperatingStatesMultiSelect
+                      value={generalInfo.operatingStates || []}
+                      onChange={(newState) => {
+                        setGeneralInfo((prev) => {
+                          const newStateObj = { ...prev, operatingStates: newState };
+
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email,
+                              mobile,
+                              autoData,
+                              generalInfo: newStateObj,
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email,
+                              mobile,
+                              form_data_json: JSON.stringify(updatedFormData),
+                            }).catch(console.error);
+                          }
+
+                          return newStateObj;
+                        });
+                      }}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
