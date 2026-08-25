@@ -146,7 +146,7 @@ export default function Companies() {
         if (!exists) {
            console.log("Auto-adding missing company...");
            // Auto-add it to local JSON DB
-           const pan = extractPanFromGstin(scrapedProfile.company_name) || "AUTO12345X"; // Default fallback PAN if missing
+           const pan = extractPanFromGstin(scrapedProfile.company_name)  // Default fallback PAN if missing
            await api.companies.add({
              name: scrapedProfile.company_name,
              gstin: "", // It might not be in profile, but we add it if found
