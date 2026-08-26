@@ -29,6 +29,11 @@ import {
   resolvePlasticConsumedYears,
 } from './portalPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import {
+  getBaseNameFromPath,
+  registrationDocFileName,
+  sanitizeCpcbPortalFileName,
+} from '../../shared/cpcbPortalFileName.js';
 
 let regBrowser = null;
 let regContext = null;
@@ -296,12 +301,16 @@ async function fillInputByLabel(page, labelPattern, value, onLog) {
 }
 
 export async function uploadDocumentByLabel(page, labelText, filePath, onLog, options = {}) {
-  const { optional = false } = options;
+  const { optional = false, uploadBaseName = '' } = options;
   if (!filePath) return false;
 
   const tempDir = os.tmpdir();
-  const originalName = path.basename(String(filePath)).replace(/[<>:"/\\|?*]/g, '_') || 'upload.pdf';
-  const safePath = path.join(tempDir, originalName);
+  const rawName = getBaseNameFromPath(filePath);
+  const ext = path.extname(rawName).toLowerCase() || '.pdf';
+  const safeUploadName = uploadBaseName
+    ? registrationDocFileName(uploadBaseName, ext)
+    : sanitizeCpcbPortalFileName(rawName, 'upload');
+  const safePath = path.join(tempDir, safeUploadName.replace(/[<>:"/\\|?*]/g, '_'));
   let finalUploadPath = filePath;
 
   if (!fs.existsSync(filePath)) {
@@ -331,7 +340,7 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog, op
     }
   }
 
-  if (onLog) onLog(`Uploading ${labelText} from ${originalName}...`);
+  if (onLog) onLog(`Uploading ${labelText} from ${safeUploadName}...`);
 
   const labelRegex = new RegExp(labelText, 'i');
   const maxAttempts = optional ? 1 : 3;

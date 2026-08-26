@@ -9,6 +9,9 @@ import LocalFilePreview from '../components/LocalFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
+  collectRegistrationUploadFileIssues,
+  formatCpcbFileNameIssue,
+  validateCpcbPortalFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -34,12 +37,17 @@ import { showRegistrationAutomationError } from '../utils/registrationAutomation
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
+import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../utils/registrationPartBSection4.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -109,6 +117,7 @@ export default function CpcbRegistrationPage() {
   const [generalInfo, setGeneralInfo] = useState({ ...GENERAL_INFO_EMPTY });
   const [docReady, setDocReady] = useState(true);
   const [missingDocs, setMissingDocs] = useState([]);
+  const [fileNameIssues, setFileNameIssues] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -155,6 +164,7 @@ export default function CpcbRegistrationPage() {
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
+  const [uploadingPdfField, setUploadingPdfField] = useState('');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -308,6 +318,13 @@ export default function CpcbRegistrationPage() {
     const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
     setDocReady(ready);
     setMissingDocs(missing);
+    setFileNameIssues(
+      collectRegistrationUploadFileIssues({
+        docs,
+        autoData: mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || {}),
+        generalInfo: mergeGeneralInfoFromSources(data, savedForm?.generalInfo || {}),
+      })
+    );
   }, []);
 
   const [savedRegistration, setSavedRegistration] = useState(null);
@@ -412,53 +429,6 @@ export default function CpcbRegistrationPage() {
     return () => { cancelled = true; };
   }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
 
-  const handleImporter3aFinalized = useCallback(async (result) => {
-    setAutoData((prev) => ({
-      ...prev,
-      detailsOfProductsPath: result.detailsOfProductsPath,
-      importer3a: result.importer3a,
-    }));
-    setGeneralInfo((prev) => ({
-      ...prev,
-      plasticConsumed: result.plasticConsumed,
-      importer3aStatus: result.importer3aStatus,
-    }));
-    if (window.pwp?.registration?.save) {
-      await window.pwp.registration.save({
-        ...(savedRegistration || {}),
-        email,
-        mobile,
-        form_data_json: JSON.stringify({
-          ...(savedRegistration?.formData || {}),
-          email,
-          mobile,
-          autoData: {
-            ...autoData,
-            detailsOfProductsPath: result.detailsOfProductsPath,
-            importer3a: result.importer3a,
-          },
-          generalInfo: {
-            ...generalInfo,
-            plasticConsumed: result.plasticConsumed,
-            importer3aStatus: result.importer3aStatus,
-          },
-        }),
-        details_of_products_produced_marketed: result.detailsOfProductsPath,
-        plastic_consumed_json: JSON.stringify(result.plasticConsumed),
-        importer_3a_status: result.importer3aStatus,
-      }).catch(console.error);
-    }
-  }, [savedRegistration, email, mobile, autoData, generalInfo]);
-
-  const handleImporter3bChange = useCallback(async (payload) => {
-    setAutoData((prev) => ({
-      ...prev,
-      representativePicturePath: payload.representativePicturePath || payload.generatedPdfPath,
-      importer3b: payload.importer3bJson ? JSON.parse(payload.importer3bJson) : { images: payload.images },
-    }));
-    await persistRegistrationForm();
-  }, []);
-
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
     setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
   }, []);
@@ -466,6 +436,21 @@ export default function CpcbRegistrationPage() {
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
   }, [applyRegistrationData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let docs = [];
+      if (window.pwp?.documents?.getAll) {
+        docs = await window.pwp.documents.getAll();
+      }
+      if (cancelled) return;
+      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoData, generalInfo]);
 
   const persistRegistrationForm = async () => {
     if (!window.pwp?.registration?.save) return;
@@ -483,30 +468,62 @@ export default function CpcbRegistrationPage() {
   };
 
   const persistPartCFile = async (file, field) => {
-    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+    const docBase = field === 'detailsOfProductsPath'
+      ? 'operations_details'
+      : field === 'representativePicturePath'
+        ? 'plastic_packaging_picture'
+        : 'document';
+    const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
+    if (!nameCheck.valid) {
+      showToast(
+        `"${file.name}" jaisa naam CPCB portal reject karta hai. App ise "${nameCheck.suggestedName}" ke naam se save karegi.`,
+        'warning',
+        { duration: 12000 }
+      );
+    }
+    const stored = await storeCompressedUpload(file, {
+      destSubdir: 'processed_registration_docs',
+      fileName: nameCheck.suggestedName,
+    });
     if (!stored.success || !stored.filePath) {
       showToast(stored.message || 'Could not save this file for preview. Please upload it again from the desktop app.', 'error');
       return;
     }
     setAutoData((prev) => {
       const next = { ...prev, [field]: stored.filePath };
-      if (window.pwp?.registration?.save) {
-        const updatedFormData = {
+      const savePayload = {
+        ...(savedRegistration || {}),
+        email,
+        mobile,
+        form_data_json: JSON.stringify({
           ...(savedRegistration?.formData || {}),
           email,
           mobile,
           autoData: next,
           generalInfo,
-        };
-        window.pwp.registration.save({
-          ...(savedRegistration || {}),
-          email,
-          mobile,
-          form_data_json: JSON.stringify(updatedFormData),
-        }).catch(console.error);
+        }),
+      };
+      if (field === 'detailsOfProductsPath') {
+        savePayload.details_of_products_produced_marketed = stored.filePath;
+      }
+      if (field === 'representativePicturePath') {
+        savePayload.representative_picture_of_plastic_packaging = stored.filePath;
+      }
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(savePayload).catch(console.error);
       }
       return next;
     });
+  };
+
+  const handlePartAPdfUpload = async (field, file) => {
+    setUploadingPdfField(field);
+    try {
+      await persistPartCFile(file, field);
+      showToast('PDF uploaded.', 'success');
+    } finally {
+      setUploadingPdfField('');
+    }
   };
 
   const handleSaveAndNext = async () => {
@@ -549,6 +566,24 @@ export default function CpcbRegistrationPage() {
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
+      return;
+    }
+
+    let docs = [];
+    if (window.pwp?.documents?.getAll) {
+      docs = await window.pwp.documents.getAll();
+    }
+    const uploadNameIssues = collectRegistrationUploadFileIssues({ docs, autoData, generalInfo });
+    if (uploadNameIssues.length) {
+      setFileNameIssues(uploadNameIssues);
+      showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
+      if (uploadNameIssues.length > 1) {
+        showToast(
+          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          'warning',
+          { duration: 12000 }
+        );
+      }
       return;
     }
     const missingAutoFields = [];
@@ -945,7 +980,42 @@ export default function CpcbRegistrationPage() {
     }
 
     if (missing.length > 0) {
+      const partAHints = [
+        'Type of Business',
+        'Type of Company',
+        'State/UT',
+        'Operating States',
+        'Year of Commencement',
+        'Compliance Status',
+        'Thickness',
+        'Details (Type & Quantity) of products produced/marketed',
+        'Representative picture of Plastic Packaging',
+        'Type of Company Document',
+      ];
+      if (missing.some((label) => partAHints.some((hint) => label.includes(hint)))) {
+        setWizardStep('partA');
+      } else if (missing.some((label) => label.startsWith('Part C'))) {
+        setWizardStep('partC');
+      }
       showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
+      return;
+    }
+
+    const section4Issues = validateSection4AgainstPlasticConsumed(
+      generalInfo.partBSection4 || [],
+      generalInfo.plasticConsumed || {},
+      getImporterReportingFinancialYears(),
+    );
+    if (section4Issues.length) {
+      setWizardStep('partB');
+      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
+      if (section4Issues.length > 1) {
+        showToast(
+          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          'warning',
+          { duration: 12000 },
+        );
+      }
       return;
     }
 
@@ -1244,6 +1314,24 @@ export default function CpcbRegistrationPage() {
       {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
         <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+
+        {fileNameIssues.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+            <p className="text-sm font-semibold text-amber-900">
+              CPCB file name issue — registration tab tak fix karein
+            </p>
+            <ul className="space-y-1.5">
+              {fileNameIssues.map((issue) => (
+                <li key={`${issue.label}-${issue.fileName}`} className="text-xs text-amber-900">
+                  {formatCpcbFileNameIssue(issue)}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-800">
+              Simple naam use karein jaise <strong>person_pan.pdf</strong> — bina space, brackets ( ) ya double extension ke.
+            </p>
+          </div>
+        )}
       </div>
       )}
 
@@ -1483,6 +1571,14 @@ export default function CpcbRegistrationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartACompanyProfile
+                    generalInfo={generalInfo}
+                    onChange={handleGeneralChange}
+                    autoData={autoData}
+                    onTypeOfCompanyDocSelect={(file) => persistPartCFile(file, 'typeOfCompanyDoc')}
+                    inputClass={inputClass}
+                    selectClass={inputClass}
+                  />
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
                     <OperatingStatesMultiSelect
@@ -1606,11 +1702,7 @@ export default function CpcbRegistrationPage() {
                   </div>
                   
                   <ImporterEprPreparedReview
-                    companyName={autoData.companyName || autoData.legalName || 'Importer'}
-                    importer3a={autoData.importer3a}
-                    importer3aStatus={generalInfo.importer3aStatus || ''}
                     detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
-                    importer3b={autoData.importer3b}
                     representativePicturePath={autoData.representativePicturePath || ''}
                     plasticConsumed={
                       generalInfo.plasticConsumed || Object.fromEntries(
@@ -1618,11 +1710,10 @@ export default function CpcbRegistrationPage() {
                       )
                     }
                     reportingYears={reportingFys}
-                    onImporter3aFinalized={handleImporter3aFinalized}
-                    onImporter3bChange={handleImporter3bChange}
+                    onPdfUpload={handlePartAPdfUpload}
+                    uploadingPdfField={uploadingPdfField}
                     onPlasticConsumedChange={handlePlasticConsumedChange}
                     plasticConsumedSource={plasticConsumedSource}
-                    showToast={showToast}
                   />
 
                   <div className="md:col-span-2">
@@ -1673,7 +1764,7 @@ export default function CpcbRegistrationPage() {
         )}
 
         {registrationComplete && wizardStep === 'partB' && (
-          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
         )}
 
         {registrationComplete && wizardStep === 'partC' && (
@@ -1846,7 +1937,7 @@ export default function CpcbRegistrationPage() {
           {!registrationComplete ? (
             <button
               type="submit"
-              disabled={loading || !docReady}
+              disabled={loading || !docReady || fileNameIssues.length > 0}
               className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}

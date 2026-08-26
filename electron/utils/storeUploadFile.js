@@ -6,13 +6,10 @@ import {
   CPCB_MAX_UPLOAD_BYTES,
   ensurePdfUnderMaxSize,
 } from "./pdfCompressor.js";
+import { sanitizeCpcbPortalFileName } from "../../shared/cpcbPortalFileName.js";
 
 function sanitizeFileName(name = "upload") {
-  return (
-    String(name)
-      .replace(/[<>:"/\\|?*]/g, "_")
-      .trim() || "upload"
-  );
+  return sanitizeCpcbPortalFileName(String(name || "upload"), "upload").replace(/\.[^.]+$/, "");
 }
 
 async function compressImageUnderMaxSize(sourcePath, outPath, maxBytes) {

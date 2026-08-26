@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -16,7 +17,45 @@ import {
   fillPlasticConsumedGrid,
   resolvePlasticConsumedYears,
 } from './portalPlasticConsumed.js';
+import { fillPartBSection4Grid } from './portalPartBSection4.js';
+import { fillPartBSection5bRows, fillPartBSection5dRows } from './portalPartBSection5.js';
+import { resolvePartBSection4ForAutomation, resolvePartBTransactionsForAutomation } from './registrationPartBData.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../../shared/partBSection4.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
+
+const UPLOAD_LABEL_BASE_NAMES = {
+  'Company PAN': 'company_pan',
+  'Unit GST': 'unit_gst',
+  '^\\s*GST\\s*\\*?': 'gst',
+  'CIN': 'cin',
+  'Supporting document for company category': 'supporting_category_doc',
+  'Authorized person PAN': 'person_pan',
+  '^\\s*PAN\\s*\\*?': 'person_pan',
+  'Details \\(Type & Quantity\\) of products produced/marketed': 'operations_details',
+  'Representative picture of Plastic Packaging': 'plastic_packaging_picture',
+  'Covering Letter': 'covering_letter',
+  'Signature': 'signature',
+  'Any Other Information': 'self_declaration',
+};
+
+function resolveUploadBaseName(labelPattern) {
+  return UPLOAD_LABEL_BASE_NAMES[labelPattern] || '';
+}
+
+function prepareUploadFile(filePath, uploadBaseName = '') {
+  if (!filePath || !fs.existsSync(filePath)) return filePath;
+  const ext = path.extname(filePath).toLowerCase() || '.pdf';
+  const safeName = uploadBaseName
+    ? registrationDocFileName(uploadBaseName, ext)
+    : sanitizeCpcbPortalFileName(path.basename(filePath), 'upload');
+  const safePath = path.join(os.tmpdir(), safeName.replace(/[<>:"/\\|?*]/g, '_'));
+  fs.copyFileSync(filePath, safePath);
+  return safePath;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMMY_PDF = path.resolve(__dirname, '../../data/dummy_pan.pdf');
@@ -104,6 +143,10 @@ export function normalizeApplicationData(raw = {}) {
       nested.partCAuditedStatement,
       nested.partCAuditedStatement
     ),
+    partBSection4: Array.isArray(src.partBSection4) ? src.partBSection4 : [],
+    partBTransactions: src.partBTransactions && typeof src.partBTransactions === 'object'
+      ? src.partBTransactions
+      : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
   };
 }
 
@@ -221,6 +264,9 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
     return false;
   }
 
+  const uploadBaseName = resolveUploadBaseName(labelPattern);
+  const uploadFile = prepareUploadFile(file, uploadBaseName);
+
   // Re-fill passes must only retry the slots that are still empty.
   if (await isAlreadyUploadedNearLabel(page, labelPattern)) {
     if (onLog) onLog(`${labelPattern} already has a document on the portal — skipping.`);
@@ -239,7 +285,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      await uploadDocumentByLabel(page, labelPattern, file, onLog);
+      await uploadDocumentByLabel(page, labelPattern, uploadFile, onLog, { uploadBaseName });
       await page.waitForTimeout(700);
       const alerts = await collectPortalAlerts(page);
       if (alerts.length) {
@@ -264,7 +310,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
     const box = label.locator('xpath=ancestor::div[contains(@class,"col") or contains(@class,"form") or contains(@class,"row")][1]');
     const fileInput = box.locator('input[type="file"]').first();
     if (await fileInput.count()) {
-      await fileInput.setInputFiles(file);
+      await fileInput.setInputFiles(uploadFile);
       await page.waitForTimeout(1200);
       if (onLog) onLog(`Uploaded ${labelPattern} via nearby file input`);
       return true;
@@ -275,7 +321,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
         page.waitForEvent('filechooser', { timeout: 10000 }),
         uploadBtn.click(),
       ]);
-      await chooser.setFiles(file);
+      await chooser.setFiles(uploadFile);
       await page.waitForTimeout(1200);
       if (onLog) onLog(`Uploaded ${labelPattern} via Upload link`);
       return true;
@@ -927,7 +973,26 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   }
 }
 
-export async function fillPartBSection4(page, _section4Data, onLog) {
+export async function fillPartBSection4(page, section4Data, onLog, plasticConsumed = {}) {
+  const groups = Array.isArray(section4Data) ? section4Data : [];
+  const validationIssues = validateSection4AgainstPlasticConsumed(
+    groups,
+    plasticConsumed,
+    getImporterReportingFinancialYears(),
+  );
+  if (validationIssues.length && onLog) {
+    onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4PartAIssue(validationIssues[0])}`);
+  }
+
+  if (groups.length) {
+    if (onLog) onLog(`Filling Part B Section 4 for ${groups.length} state-year group(s)...`);
+    const filled = await fillPartBSection4Grid(page, groups, onLog);
+    if (filled) return true;
+    if (onLog) onLog('Part B Section 4 grid fill did not confirm — retrying once after scroll.');
+    await page.waitForTimeout(800);
+    const retry = await fillPartBSection4Grid(page, groups, onLog);
+    if (retry) return true;
+  }
   if (onLog) onLog('Filling Part B Section 4 with 0...');
   await fillAgGridZeros(
     page,
@@ -937,8 +1002,24 @@ export async function fillPartBSection4(page, _section4Data, onLog) {
   );
 }
 
-export async function fillPartBSection5(page, _transactions, onLog) {
-  if (onLog) onLog('Skipping Part B Section 5 — leaving transaction tables empty.');
+export async function fillPartBSection5(page, transactions = {}, onLog) {
+  const sec5b = transactions?.sec5b || [];
+  const sec5d = transactions?.sec5d || [];
+  let filled = false;
+
+  if (sec5b.length) {
+    if (onLog) onLog(`Filling Part B Section 5b (${sec5b.length} row(s))...`);
+    filled = await fillPartBSection5bRows(page, sec5b, onLog) || filled;
+  }
+
+  if (sec5d.length) {
+    if (onLog) onLog(`Filling Part B Section 5d (${sec5d.length} row(s))...`);
+    filled = await fillPartBSection5dRows(page, sec5d, onLog) || filled;
+  }
+
+  if (!filled && onLog) {
+    onLog('No Part B Section 5b/5d rows prepared — skipping Section 5 transactions.');
+  }
 }
 
 async function fillPartCDocuments(page, data, onLog) {
@@ -1275,6 +1356,15 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
 
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
+  data.partBSection4 = await resolvePartBSection4ForAutomation({
+    partBSection4: data.partBSection4,
+    operatingStates: data.operatingStates,
+    onLog,
+  });
+  data.partBTransactions = await resolvePartBTransactionsForAutomation({
+    partBTransactions: data.partBTransactions,
+    onLog,
+  });
 
   await fillUntilPortalAccepts(page, {
     stepName: 'Part A',
@@ -1288,8 +1378,8 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     stepName: 'Part B',
     onLog,
     fillFn: async () => {
-      await fillPartBSection4(page, null, onLog);
-      await fillPartBSection5(page, null, onLog);
+      await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
+      await fillPartBSection5(page, data.partBTransactions, onLog);
     },
     saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
   });

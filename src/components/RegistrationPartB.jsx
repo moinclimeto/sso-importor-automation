@@ -1,65 +1,197 @@
-import React, { useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { INDIAN_STATES } from '../utils/registrationGeneralInfo.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import {
+  fetchComputedPartBSection4,
+  mergePartBSection4ForOperatingStates,
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../utils/registrationPartBSection4.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import {
+  fetchComputedPartBSection5,
+  mergePartBSection5b,
+  mergePartBSection5d,
+} from '../utils/registrationPartBSection5.js';
+import { PART_B_SECTION4_CATEGORY_LABELS } from '../../shared/partBSection4.js';
 
 const inputClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm';
 const selectClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-white';
 const labelClass = 'block text-xs font-medium text-slate-700 mb-1';
 
-const PLASTIC_CATEGORIES = [
-  'Rigid Plastic (Cat-I)',
-  'Flexible Plastic (Cat-II)',
-  'MLP (Cat-III)',
-  'Compostable Plastic (Cat-IV)'
-];
+const PLASTIC_CATEGORIES = PART_B_SECTION4_CATEGORY_LABELS;
 
 const FINANCIAL_YEARS = ['2023-24', '2024-25', '2025-26'];
 
-export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
+export default function RegistrationPartB({
+  generalInfo,
+  setGeneralInfo,
+  gstin = '',
+}) {
   const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState({});
+  const operatingStatesKey = JSON.stringify(generalInfo.operatingStates || []);
+  const hydrateRef = useRef('');
 
-  const openModal = (secKey, title, existingData = null) => {
-    setModalData(existingData ? { ...existingData, _title: title, _secKey: secKey, _isView: true } : { _title: title, _secKey: secKey, _isView: false });
+  const section4PartAIssues = useMemo(
+    () => validateSection4AgainstPlasticConsumed(
+      generalInfo.partBSection4 || [],
+      generalInfo.plasticConsumed || {},
+      getImporterReportingFinancialYears(),
+    ),
+    [generalInfo.partBSection4, generalInfo.plasticConsumed],
+  );
+
+  useEffect(() => {
+    const operatingStates = generalInfo.operatingStates || [];
+    if (!operatingStates.length) {
+      if ((generalInfo.partBSection4 || []).length) {
+        setGeneralInfo((prev) => ({ ...prev, partBSection4: [] }));
+      }
+      return undefined;
+    }
+
+    const hydrateKey = `${operatingStatesKey}::${gstin || ''}`;
+    if (hydrateRef.current === hydrateKey) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await fetchComputedPartBSection4({
+          gstin,
+          operatingStates,
+        });
+        if (cancelled || !result) return;
+
+        setGeneralInfo((prev) => {
+          const merged = mergePartBSection4ForOperatingStates(
+            prev.partBSection4,
+            result.groups,
+            operatingStates,
+          );
+          const same = JSON.stringify(prev.partBSection4 || []) === JSON.stringify(merged);
+          if (same) return prev;
+          return { ...prev, partBSection4: merged };
+        });
+        hydrateRef.current = hydrateKey;
+      } catch (err) {
+        console.error('Failed to hydrate Part B Section 4:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [operatingStatesKey, gstin, setGeneralInfo]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await fetchComputedPartBSection5({ gstin });
+        if (cancelled || !result) return;
+
+        setGeneralInfo((prev) => {
+          const existing5b = prev.partBTransactions?.sec5b || [];
+          const existing5d = prev.partBTransactions?.sec5d || [];
+          const sec5b = mergePartBSection5b(existing5b, result.sec5b || []);
+          const sec5d = mergePartBSection5d(existing5d, result.sec5d || []);
+          const same = JSON.stringify(existing5b) === JSON.stringify(sec5b)
+            && JSON.stringify(existing5d) === JSON.stringify(sec5d);
+          if (same) return prev;
+          return {
+            ...prev,
+            partBTransactions: {
+              ...(prev.partBTransactions || {}),
+              sec5b,
+              sec5d,
+            },
+          };
+        });
+      } catch (err) {
+        console.error('Failed to hydrate Part B Section 5:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [gstin, setGeneralInfo]);
+
+  const updateSection4Cell = (groupIndex, catIndex, field, value) => {
+    setGeneralInfo((prev) => {
+      const groups = [...(prev.partBSection4 || [])];
+      const group = { ...groups[groupIndex], categories: [...(groups[groupIndex]?.categories || [])] };
+      group.categories[catIndex] = { ...group.categories[catIndex], [field]: value };
+      groups[groupIndex] = group;
+      return { ...prev, partBSection4: groups };
+    });
+  };
+
+  const openModal = (secKey, title, existingData = null, editIndex = null) => {
+    setModalData(
+      existingData
+        ? {
+            ...existingData,
+            _title: title,
+            _secKey: secKey,
+            _isView: false,
+            _editIndex: editIndex,
+          }
+        : {
+            _title: title,
+            _secKey: secKey,
+            _isView: false,
+            _editIndex: null,
+            ...(secKey === 'sec5b'
+              ? {
+                  regType: 'UnRegistered',
+                  country: 'India',
+                  recycledPercent: '0',
+                  materialType: 'Packaging',
+                }
+              : secKey === 'sec5d'
+                ? {
+                    regType: 'UnRegistered',
+                    recycledPercent: '0',
+                    materialType: 'Packaging',
+                    entityType: 'Producer',
+                  }
+                : {}),
+          },
+    );
     setActiveModal(secKey);
   };
 
   const saveModalData = () => {
-    if (modalData._secKey === 'sec4') {
-      if (!modalData.state || !modalData.year) {
-        alert("State and Year are required");
+    if (modalData._secKey === 'sec5b' || modalData._secKey === 'sec5d') {
+      if (!modalData.entityName?.trim()) {
+        alert('Name of the Entity is required');
         return;
       }
-      const { _secKey, _title, _isView, ...data } = modalData;
-      setGeneralInfo(prev => ({
-        ...prev,
-        partBSection4: [...(prev.partBSection4 || []), data]
-      }));
-      setActiveModal(null);
+      if (!modalData.quantity) {
+        alert('Total Plastic Quantity is required');
+        return;
+      }
+    } else if (!modalData.quantity) {
+      alert('Quantity is required');
       return;
     }
 
-    // Basic validation for Section 5
-    if (!modalData.quantity) {
-      alert("Quantity is required");
-      return;
-    }
-    
-    const { _secKey, _title, _isView, ...data } = modalData;
-    
-    if (_isView) {
-      setActiveModal(null);
-      return;
-    }
-    
-    setGeneralInfo(prev => ({
-      ...prev,
-      partBTransactions: {
-        ...(prev.partBTransactions || {}),
-        [_secKey]: [...(prev.partBTransactions?.[_secKey] || []), data]
+    const { _secKey, _title, _isView, _editIndex, ...data } = modalData;
+
+    setGeneralInfo((prev) => {
+      const currentRows = [...(prev.partBTransactions?.[_secKey] || [])];
+      if (_editIndex != null && _editIndex >= 0) {
+        currentRows[_editIndex] = data;
+      } else {
+        currentRows.push(data);
       }
-    }));
+      return {
+        ...prev,
+        partBTransactions: {
+          ...(prev.partBTransactions || {}),
+          [_secKey]: currentRows,
+        },
+      };
+    });
     setActiveModal(null);
   };
 
@@ -232,6 +364,182 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
     </div>
   );
 
+  const renderSec5bTable = () => {
+    const rows = generalInfo.partBTransactions?.sec5b || [];
+    return (
+      <div className="mb-6 border rounded-lg overflow-hidden bg-white">
+        <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
+          <div>
+            <h4 className="font-semibold text-sm">5 b) Details of Plastic Raw Material/Packaging Procured from Non-Registered Entity</h4>
+            <p className="text-[11px] text-white/80 mt-1">Prefilled from published Unregistered procurement invoices — review, edit, then upload via automation.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openModal('sec5b', 'Add Section 5b Entry')}
+            className="flex items-center justify-center bg-white/20 hover:bg-white/30 rounded-full w-6 h-6"
+            title="Add manually"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          {rows.length === 0 ? (
+            <div className="text-center text-sm text-slate-500 py-8 bg-slate-50 italic">
+              No Unregistered procurement records found. Publish procurement documents with Registration Type = Unregistered.
+            </div>
+          ) : (
+            <table className="w-full text-sm text-left min-w-[960px]">
+              <thead className="bg-[#0b6c7a] text-white">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Sr.</th>
+                  <th className="px-3 py-2 font-medium">Entity Name</th>
+                  <th className="px-3 py-2 font-medium">Entity Type</th>
+                  <th className="px-3 py-2 font-medium">Date</th>
+                  <th className="px-3 py-2 font-medium">Quantity (Ton)</th>
+                  <th className="px-3 py-2 font-medium">Category</th>
+                  <th className="px-3 py-2 font-medium">Financial Year</th>
+                  <th className="px-3 py-2 font-medium">Invoice PDF</th>
+                  <th className="px-3 py-2 font-medium text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {rows.map((row, i) => (
+                  <tr key={row.sourceRecordId || i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2">{i + 1}</td>
+                    <td className="px-3 py-2">{row.entityName || '—'}</td>
+                    <td className="px-3 py-2">{row.entityType || '—'}</td>
+                    <td className="px-3 py-2">{row.date || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums">{row.quantity || '—'}</td>
+                    <td className="px-3 py-2">{row.category || '—'}</td>
+                    <td className="px-3 py-2">{row.financialYear || '—'}</td>
+                    <td className="px-3 py-2 text-xs text-emerald-700">
+                      {row.invoiceDoc ? row.invoiceDoc.split(/[/\\]/).pop() : '—'}
+                    </td>
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openModal('sec5b', 'Edit Section 5b Entry', row, i)}
+                          className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGeneralInfo((prev) => ({
+                              ...prev,
+                              partBTransactions: {
+                                ...prev.partBTransactions,
+                                sec5b: prev.partBTransactions.sec5b.filter((_, idx) => idx !== i),
+                              },
+                            }));
+                          }}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  const renderSec5dTable = () => {
+    const rows = generalInfo.partBTransactions?.sec5d || [];
+    return (
+      <div className="mb-6 border rounded-lg overflow-hidden bg-white">
+        <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
+          <div>
+            <h4 className="font-semibold text-sm">5 d) Details of Plastic Raw Material/Packaging Sold to UnRegistered PIBOs</h4>
+            <p className="text-[11px] text-white/80 mt-1">Prefilled from published Unregistered sales invoices — review, edit, then upload via automation.</p>
+          </div>
+          <button
+            type="button"
+            onClick={() => openModal('sec5d', 'Add Section 5d Entry')}
+            className="flex items-center justify-center bg-white/20 hover:bg-white/30 rounded-full w-6 h-6"
+            title="Add manually"
+          >
+            <Plus size={16} />
+          </button>
+        </div>
+        <div className="overflow-x-auto">
+          {rows.length === 0 ? (
+            <div className="text-center text-sm text-slate-500 py-8 bg-slate-50 italic">
+              No Unregistered sales records found. Publish sales documents with Registration Type = Unregistered.
+            </div>
+          ) : (
+            <table className="w-full text-sm text-left min-w-[1100px]">
+              <thead className="bg-[#0b6c7a] text-white">
+                <tr>
+                  <th className="px-3 py-2 font-medium">Sr.</th>
+                  <th className="px-3 py-2 font-medium">Entity Name</th>
+                  <th className="px-3 py-2 font-medium">Entity Type</th>
+                  <th className="px-3 py-2 font-medium">State</th>
+                  <th className="px-3 py-2 font-medium">Quantity (Ton)</th>
+                  <th className="px-3 py-2 font-medium">Category</th>
+                  <th className="px-3 py-2 font-medium">Financial Year</th>
+                  <th className="px-3 py-2 font-medium">GST</th>
+                  <th className="px-3 py-2 font-medium">E-Invoice No.</th>
+                  <th className="px-3 py-2 font-medium text-center">Action</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200">
+                {rows.map((row, i) => (
+                  <tr key={row.sourceRecordId || i} className="hover:bg-slate-50">
+                    <td className="px-3 py-2">{i + 1}</td>
+                    <td className="px-3 py-2">{row.entityName || '—'}</td>
+                    <td className="px-3 py-2">{row.entityType || '—'}</td>
+                    <td className="px-3 py-2">{row.state || '—'}</td>
+                    <td className="px-3 py-2 tabular-nums">{row.quantity || '—'}</td>
+                    <td className="px-3 py-2">{row.category || '—'}</td>
+                    <td className="px-3 py-2">{row.financialYear || '—'}</td>
+                    <td className="px-3 py-2 text-xs">{row.gst || '—'}</td>
+                    <td className="px-3 py-2 text-xs">{row.invoiceNo || '—'}</td>
+                    <td className="px-3 py-2 text-center">
+                      <div className="flex justify-center gap-2">
+                        <button
+                          type="button"
+                          onClick={() => openModal('sec5d', 'Edit Section 5d Entry', row, i)}
+                          className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setGeneralInfo((prev) => ({
+                              ...prev,
+                              partBTransactions: {
+                                ...prev.partBTransactions,
+                                sec5d: prev.partBTransactions.sec5d.filter((_, idx) => idx !== i),
+                              },
+                            }));
+                          }}
+                          className="text-red-500 hover:text-red-700 p-1"
+                          title="Delete"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+        </div>
+      </div>
+    );
+  };
+
   const renderTransactionTable = (title, secKey) => {
     const rows = generalInfo.partBTransactions?.[secKey] || [];
     return (
@@ -301,20 +609,29 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
         <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part B: Pertaining to Liquid Effluent and Gaseous Emissions</h3>
         
         <div className="bg-white border rounded-xl shadow-sm p-5 mb-6">
-          <div className="flex justify-between items-center mb-2">
-            <h4 className="font-semibold text-slate-700 text-sm">4. State-wise, Category-wise Quantity of PW generated (TPA)</h4>
-            <button type="button" onClick={() => {
-              setModalData({
-                _secKey: 'sec4',
-                _title: 'Add Section 4 Entry',
-                state: '',
-                year: '2024-25',
-                categories: PLASTIC_CATEGORIES.map(c => ({ category: c, preConsumer: '0', postConsumer: '0', exportQuantity: '0' }))
-              });
-              setActiveModal('sec4');
-            }} className="flex items-center gap-1 text-sm bg-[#0b6c7a] text-white px-3 py-1.5 rounded-lg hover:bg-teal-800 transition-colors font-medium">
-              <Plus size={16} /> Add Entry
-            </button>
+          <div className="mb-3">
+            <h4 className="font-semibold text-slate-700 text-sm">
+              4. State-wise, Category-wise Quantity of PW generated (TPA)
+            </h4>
+            <p className="text-xs text-slate-500 mt-1">
+              Rows are created from Part A <strong>Operating States</strong>. Post-consumer values come from published sales MT by state; pre-consumer from procurement MT. Edit before upload if needed.
+            </p>
+            {!generalInfo.operatingStates?.length ? (
+              <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mt-2">
+                Select operating states in Part A to show state-wise rows here.
+              </p>
+            ) : null}
+            {section4PartAIssues.length > 0 ? (
+              <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 space-y-1">
+                <p className="font-semibold">Part A 3c aur Section 4 match nahi kar rahe (CPCB ±40% rule)</p>
+                {section4PartAIssues.map((issue) => (
+                  <p key={`${issue.year}-${issue.catKey}`}>{formatSection4PartAIssue(issue)}</p>
+                ))}
+                <p className="text-amber-800">
+                  Part A → Plastic Consumed (3c) aur Part B → Section 4 totals ko align karein, phir Register/automation chalayein.
+                </p>
+              </div>
+            ) : null}
           </div>
           
           <div className="overflow-x-auto border border-slate-300">
@@ -328,7 +645,6 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
                   <th className="px-3 py-2 border-r border-b font-medium text-center">Pre Consumer Waste</th>
                   <th className="px-3 py-2 border-r border-b font-medium text-center">Plastic Packaging put in market (Post Consumer)</th>
                   <th className="px-3 py-2 border-b font-medium text-center">Export Quantity(TPA)</th>
-                  <th className="px-3 py-2 border-l border-b font-medium text-center w-10" rowSpan={2}>Action</th>
                 </tr>
                 <tr>
                   <th className="px-3 py-2 border-r font-medium text-center">Plastic Quantity (TPA)</th>
@@ -339,7 +655,7 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
               <tbody>
                 {(generalInfo.partBSection4 || []).length === 0 ? (
                   <tr>
-                    <td colSpan={8} className="text-center py-8 text-slate-500 italic bg-slate-50">No data available</td>
+                    <td colSpan={7} className="text-center py-8 text-slate-500 italic bg-slate-50">No data available</td>
                   </tr>
                 ) : (
                   (generalInfo.partBSection4 || []).map((group, groupIndex) => (
@@ -354,23 +670,35 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
                         )}
                         <td className="px-3 py-2 border-r">{cat.category}</td>
                         <td className="px-3 py-2 border-r">
-                          <input type="text" readOnly className="w-full px-2 py-1 border border-slate-200 rounded text-slate-600 bg-slate-50 outline-none" value={cat.preConsumer} />
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                            value={cat.preConsumer ?? '0'}
+                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'preConsumer', e.target.value)}
+                          />
                         </td>
                         <td className="px-3 py-2 border-r">
-                          <input type="text" readOnly className="w-full px-2 py-1 border border-slate-200 rounded text-slate-600 bg-slate-50 outline-none" value={cat.postConsumer} />
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                            value={cat.postConsumer ?? '0'}
+                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'postConsumer', e.target.value)}
+                          />
                         </td>
-                        <td className="px-3 py-2 border-r">
-                          <input type="text" readOnly className="w-full px-2 py-1 border border-slate-200 rounded text-slate-600 bg-slate-50 outline-none" value={cat.exportQuantity} />
+                        <td className="px-3 py-2">
+                          <input
+                            type="number"
+                            min="0"
+                            step="any"
+                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                            value={cat.exportQuantity ?? '0'}
+                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'exportQuantity', e.target.value)}
+                          />
                         </td>
-                        {catIndex === 0 && (
-                          <td className="px-3 py-2 text-center" rowSpan={4}>
-                            <button type="button" onClick={() => {
-                              setGeneralInfo(prev => ({ ...prev, partBSection4: prev.partBSection4.filter((_, i) => i !== groupIndex) }));
-                            }} className="text-red-500 hover:text-red-700 p-1">
-                              <Trash2 size={16} />
-                            </button>
-                          </td>
-                        )}
                       </tr>
                     ))
                   ))
@@ -384,9 +712,9 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
           <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
           
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity', 'sec5a')}
-          {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Non-Registered Entity', 'sec5b')}
+          {renderSec5bTable()}
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
-          {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to UnRegistered PIBOs', 'sec5d')}
+          {renderSec5dTable()}
         </div>
       </div>
 
@@ -412,7 +740,9 @@ export default function RegistrationPartB({ generalInfo, setGeneralInfo }) {
               ) : (
                 <>
                   <button type="button" onClick={() => setActiveModal(null)} className="px-4 py-2 border rounded-lg hover:bg-white text-sm font-medium">Cancel</button>
-                  <button type="button" onClick={saveModalData} className="px-6 py-2 bg-[#0b6c7a] text-white rounded-lg hover:bg-teal-800 text-sm font-medium">Save & Add</button>
+                  <button type="button" onClick={saveModalData} className="px-6 py-2 bg-[#0b6c7a] text-white rounded-lg hover:bg-teal-800 text-sm font-medium">
+                    {modalData._editIndex != null ? 'Save Changes' : 'Save & Add'}
+                  </button>
                 </>
               )}
             </div>

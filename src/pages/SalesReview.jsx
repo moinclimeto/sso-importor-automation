@@ -426,6 +426,8 @@ export default function SalesReview() {
       ...baseExtraction,
       district: (header.district || '').trim() || baseExtraction.district,
       dist: (header.district || '').trim() || baseExtraction.dist,
+      buyer_state: (header.state || '').trim() || baseExtraction.buyer_state,
+      buyerState: (header.state || '').trim() || baseExtraction.buyerState,
       ...(Number.isFinite(gstCharges) && gstCharges !== 0
         ? { totalInvoiceAmount: gstCharges, tot: gstCharges, gst_other_charges: gstCharges }
         : {}),
@@ -439,6 +441,7 @@ export default function SalesReview() {
       invoice_date: header.invoice_date,
       financial_year: (header.financial_year || '').trim(),
       district: (header.district || '').trim(),
+      state: (header.state || '').trim(),
       gst_other_charges: gstCharges,
       total_amount: Number.isFinite(gstCharges) ? gstCharges : record.total_amount,
       extraction,

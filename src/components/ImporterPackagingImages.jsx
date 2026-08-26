@@ -98,9 +98,9 @@ export default function ImporterPackagingImages({
     <div className="space-y-4 rounded-xl border border-slate-200 bg-white p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h4 className="text-sm font-semibold text-slate-800">Section 3b — Representative Packaging Images</h4>
+          <h4 className="text-sm font-semibold text-slate-800">3b) Representative picture of Plastic Packaging *</h4>
           <p className="text-xs text-slate-500 mt-1 max-w-xl">
-            Upload representative images of the plastic packaging used for imported products and select the applicable EPR category for each image.
+            Upload representative images of plastic packaging, then generate the PDF required by CPCB portal upload.
           </p>
         </div>
         <label className="inline-flex items-center gap-1 text-xs font-medium px-3 py-1.5 rounded-lg bg-teal-700 text-white hover:bg-teal-800 cursor-pointer shrink-0">
@@ -171,7 +171,7 @@ export default function ImporterPackagingImages({
           className="inline-flex items-center gap-1.5 text-sm font-medium px-4 py-2 rounded-lg bg-[#0b6c7a] text-white hover:bg-teal-800 disabled:opacity-50"
         >
           {generating ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />}
-          Generate 3b PDF
+          {pdfPath ? 'Regenerate 3b PDF' : 'Generate 3b PDF *'}
         </button>
         {pdfPath && (
           <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2">

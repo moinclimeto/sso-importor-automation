@@ -308,7 +308,10 @@ export function buildSalesHeaderFromRow(row = {}) {
     customer_name: row.customer_name || row.entity_name || ext.buyerName || ext.buyer_name || '',
     customer_gstin: customerGst,
     address: resolveSalesAddress(row),
-    state: buyerFields.state || resolveState(row.buyer_state || ext.buyer_state, customerGst),
+    state:
+      row.state ||
+      buyerFields.state ||
+      resolveState(row.buyer_state || ext.buyer_state, customerGst),
     district: buyerFields.district || resolveSalesDistrict(row),
     mobile_number: row.mobile_number || ext.mobile || ext.mob || '',
     invoice_number: resolveInvoiceNumberFromRecord(row) || row.invoice_no || row.application_number || '',
@@ -355,6 +358,7 @@ export function enrichSaleRecord(row = {}) {
     customer_gstin: customerGst,
     address: resolveSalesAddress(row) || row.address || buyerFields.address || '',
     state:
+      row.state ||
       buyerFields.state ||
       resolveState(row.buyer_state || ext.buyer_state, customerGst) ||
       '',

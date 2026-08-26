@@ -11,6 +11,8 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
+  validateCpcbPortalFileName,
+  validateCpcbPortalFilePath,
 } from '../utils/registrationDataMapper.js';
 import {
   normalizeCompanyDocumentExtraction,
@@ -168,6 +170,10 @@ function ProgressPanel({ progress }) {
 }
 
 function DocListRow({ item, onRemove, removing }) {
+  const storedName = item.filePath?.split(/[/\\]/).pop() || item.fileName || '';
+  const nameIssue = storedName
+    ? validateCpcbPortalFilePath(item.filePath || storedName, item.docType || 'document')
+    : validateCpcbPortalFileName(item.fileName || '', item.docType || 'document');
   const tone =
     item.status === 'done'
       ? 'text-green-600'
@@ -218,6 +224,11 @@ function DocListRow({ item, onRemove, removing }) {
           )}
           {item.status === 'failed' && (item.error || 'Extraction failed')}
           {item.status === 'processing' && 'Extracting…'}
+          {item.status === 'done' && !nameIssue.valid && (
+            <span className="block text-amber-700 mt-1">
+              CPCB naam issue: &quot;{nameIssue.fileName}&quot; → &quot;{nameIssue.suggestedName}&quot; rakhein
+            </span>
+          )}
         </p>
       </div>
       {onRemove && item.status !== 'processing' && (
@@ -362,6 +373,17 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
     if (!targets.length) {
       showToast?.('No valid file paths found. Use Browse inside the Electron app.', 'error');
       return;
+    }
+
+    for (const file of targets) {
+      const check = validateCpcbPortalFileName(file.name, 'document');
+      if (!check.valid) {
+        showToast?.(
+          `"${file.name}" CPCB portal par reject ho sakta hai. App save karte waqt "${check.suggestedName}" naam use karegi — ya pehle khud rename kar dein.`,
+          'warning',
+          { duration: 12000 }
+        );
+      }
     }
 
     if (!window.pwp?.ocr?.extractBatch) {
@@ -707,7 +729,8 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
             </button>
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
-            Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically
+            Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically.
+            CPCB portal simple file names accept karta hai (jaise <strong>person_pan.pdf</strong>) — spaces/brackets avoid karein.
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">

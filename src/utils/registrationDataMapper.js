@@ -273,6 +273,14 @@ export const REQUIRED_REGISTRATION_DOCS = [
 
 export const OPTIONAL_REGISTRATION_DOCS = ['cin', 'self_declaration', 'udyam', 'cto'];
 
+export {
+  collectRegistrationUploadFileIssues,
+  formatCpcbFileNameIssue,
+  formatCpcbFileNameIssueShort,
+  validateCpcbPortalFileName,
+  validateCpcbPortalFilePath,
+} from '../../shared/cpcbPortalFileName.js';
+
 export function getRegistrationReadiness(docs = []) {
   const types = new Set((docs || []).map((d) => d.doc_type));
   const gstDoc = docs.find((d) => d.doc_type === 'gst');
