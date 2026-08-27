@@ -6,9 +6,26 @@ import {
 import {
   buildSec5bFromPurchases,
   buildSec5dFromSales,
-  sec5bRowHasData,
-  sec5dRowHasData,
+  normalizeSec5bRowForPortal,
+  reconcileSec5bForAutomation,
+  reconcileSec5dForAutomation,
 } from '../../shared/partBSection5.js';
+
+async function resolveCompanyIdForAutomation({ companyId = null, gstin = '' } = {}) {
+  if (companyId != null && companyId !== '') return companyId;
+  const normalized = String(gstin || '').trim().toUpperCase();
+  if (!normalized) return null;
+  try {
+    const db = getDb();
+    const row = await db.get(
+      'SELECT id FROM companies WHERE UPPER(TRIM(gstin)) = ? LIMIT 1',
+      [normalized],
+    );
+    return row?.id ?? null;
+  } catch {
+    return null;
+  }
+}
 
 function parseLineItems(row = {}) {
   if (!row.line_items) return [];
@@ -18,6 +35,22 @@ function parseLineItems(row = {}) {
   } catch {
     return [];
   }
+}
+
+function enrichRecordRow(row = {}) {
+  let sourceFields = row._source_fields;
+  if (typeof sourceFields === 'string') {
+    try {
+      sourceFields = JSON.parse(sourceFields);
+    } catch {
+      sourceFields = {};
+    }
+  }
+  return {
+    ...row,
+    line_items: parseLineItems(row),
+    _source_fields: sourceFields && typeof sourceFields === 'object' ? sourceFields : {},
+  };
 }
 
 async function loadCompanyRecords(companyId = null) {
@@ -35,8 +68,8 @@ async function loadCompanyRecords(companyId = null) {
     companyId ? [companyId] : [],
   );
   return {
-    purchases: (purchases || []).map((row) => ({ ...row, line_items: parseLineItems(row) })),
-    sales: (sales || []).map((row) => ({ ...row, line_items: parseLineItems(row) })),
+    purchases: (purchases || []).map(enrichRecordRow),
+    sales: (sales || []).map(enrichRecordRow),
   };
 }
 
@@ -75,6 +108,7 @@ export async function resolvePartBSection4ForAutomation({
 export async function resolvePartBTransactionsForAutomation({
   partBTransactions = {},
   companyId = null,
+  gstin = '',
   onLog,
 } = {}) {
   const base = {
@@ -86,27 +120,44 @@ export async function resolvePartBTransactionsForAutomation({
   };
   const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
   const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
-  const has5b = existing5b.some(sec5bRowHasData);
-  const has5d = existing5d.some(sec5dRowHasData);
-  if (has5b && has5d) return base;
+  const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
 
   try {
-    const { purchases, sales } = await loadCompanyRecords(companyId);
-    const computed5b = buildSec5bFromPurchases(purchases, { companyId, docStatus: 'published' });
-    const computed5d = buildSec5dFromSales(sales, { companyId, docStatus: 'published' });
+    const { purchases, sales } = await loadCompanyRecords(resolvedCompanyId);
+    const computed5b = buildSec5bFromPurchases(purchases, { companyId: resolvedCompanyId, docStatus: 'all' });
+    const computed5d = buildSec5dFromSales(sales, { companyId: resolvedCompanyId, docStatus: 'all' });
 
-    const sec5b = has5b ? existing5b : (computed5b.length ? computed5b : existing5b);
-    const sec5d = has5d ? existing5d : (computed5d.length ? computed5d : existing5d);
+    const sec5b = reconcileSec5bForAutomation(existing5b, computed5b);
+    const sec5d = reconcileSec5dForAutomation(existing5d, computed5d);
 
     if (onLog) {
-      if (!has5b && sec5b.length) onLog(`Computed ${sec5b.length} Section 5b row(s) from unregistered purchases.`);
-      if (!has5d && sec5d.length) onLog(`Computed ${sec5d.length} Section 5d row(s) from unregistered sales.`);
-      if (!has5d && !sec5d.length) onLog('No unregistered sales found for Section 5d.');
+      const unregisteredPurchases = purchases.filter((row) =>
+        String(row.registration_type || '').toLowerCase().replace(/\s+/g, '') === 'unregistered',
+      ).length;
+      if (sec5b.length) {
+        onLog(`Section 5b rows ready: ${sec5b.length} (computed ${computed5b.length}, companyId=${resolvedCompanyId ?? 'all'}).`);
+        for (const row of sec5b) {
+          onLog(`  5b → ${row.entityName}: entity=${row.entityType}, material=${row.materialType}`);
+        }
+      }
+      if (!sec5b.length) {
+        onLog(`No Section 5b rows — ${unregisteredPurchases} unregistered purchase(s) in DB (${purchases.length} total).`);
+      }
+      if (computed5d.length) onLog(`Computed ${computed5d.length} Section 5d row(s) from unregistered sales.`);
+      else if (!sec5d.length) {
+        const unregisteredSales = sales.filter((row) =>
+          String(row.registration_type || '').toLowerCase().replace(/\s+/g, '') === 'unregistered',
+        ).length;
+        onLog(`No Section 5d rows — ${unregisteredSales} unregistered sale(s) in DB (${sales.length} total).`);
+      }
     }
 
     return { ...base, sec5b, sec5d };
   } catch (err) {
     if (onLog) onLog(`Failed to compute Part B Section 5 transactions: ${err.message}`);
-    return base;
+    return {
+      ...base,
+      sec5b: existing5b.map(normalizeSec5bRowForPortal),
+    };
   }
 }

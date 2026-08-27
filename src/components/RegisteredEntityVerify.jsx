@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import { AlertTriangle, Loader2, RefreshCw, ShieldCheck } from 'lucide-react';
 import { entityOptionLabel } from '../../shared/entityRegistrationTypes.js';
+import { formatPercentBadge, resolveEntityVerifyBadges } from '../../shared/entityVerifyBadges.js';
 import { PIBO_NOT_FOUND_WARNING } from '../../shared/piboEntityMasterData.js';
 
 async function checkPiboWarning({ gst, entity, entityType, state }) {
@@ -50,6 +51,9 @@ export default function RegisteredEntityVerify({
   const [error, setError] = useState('');
   const [requiresSelection, setRequiresSelection] = useState(false);
   const [registrationType, setRegistrationType] = useState('');
+  const [activeEntity, setActiveEntity] = useState(null);
+
+  const badges = useMemo(() => resolveEntityVerifyBadges(activeEntity || {}), [activeEntity]);
 
   const runLookup = useCallback(async () => {
     const normalized = String(gst || '').replace(/[^A-Za-z0-9]/g, '');
@@ -71,6 +75,7 @@ export default function RegisteredEntityVerify({
     setPiboWarning('');
     setRequiresSelection(false);
     setRegistrationType('');
+    setActiveEntity(null);
 
     try {
       const res = await window.pwp.entityVerify.lookupByGst({ gst: normalized, companyId });
@@ -90,13 +95,21 @@ export default function RegisteredEntityVerify({
       setPiboWarning(res.piboWarning || '');
       setRequiresSelection(Boolean(res.requiresUserSelection));
       setRegistrationType(res.gstVerified?.registration_type || res.bestEntity?.registration_type || '');
+      const verifyConfidence = res.gstVerified?.confidence ?? res.gstVerified?.raw?.confidence ?? null;
 
       const needsPick = res.requiresUserSelection || selectable.length > 1;
 
       if (needsPick) {
         setSelectedId('');
+        const fallback = res.bestEntity || res.gstProfile || null;
+        if (fallback) {
+          setActiveEntity({
+            ...fallback,
+            confidence: fallback.confidence ?? verifyConfidence,
+          });
+        }
         if (!selectable.length && res.gstVerified?.registration_type === 'Unregistered') {
-          onApply?.(res.bestEntity || res.gstProfile);
+          onApply?.(fallback);
         }
         return;
       }
@@ -107,11 +120,17 @@ export default function RegisteredEntityVerify({
         || null;
 
       if (best) {
-        setSelectedId(best.id);
-        setRegistrationType(best.registration_type || '');
-        onApply?.(best);
+        const enriched = {
+          ...best,
+          confidence: best.confidence ?? verifyConfidence,
+        };
+        setSelectedId(enriched.id);
+        setRegistrationType(enriched.registration_type || '');
+        setActiveEntity(enriched);
+        onApply?.(enriched);
       } else {
         setSelectedId('');
+        setActiveEntity(null);
       }
 
       if (!res.piboWarning && best?.registration_type === 'Registered') {
@@ -140,6 +159,7 @@ export default function RegisteredEntityVerify({
     setError('');
     setRequiresSelection(false);
     setRegistrationType('');
+    setActiveEntity(null);
   }, [gst]);
 
   const handleSelect = async (entityId) => {
@@ -147,6 +167,7 @@ export default function RegisteredEntityVerify({
     const entity = entities.find((item) => item.id === entityId);
     if (entity) {
       setRegistrationType(entity.registration_type || '');
+      setActiveEntity(entity);
       setPiboWarning('');
       onApply?.(entity);
       if (companyId && window.pwp?.entityVerify?.applySelection) {
@@ -169,9 +190,25 @@ export default function RegisteredEntityVerify({
   return (
     <div className={`md:col-span-2 rounded-lg border border-slate-200 bg-slate-50/80 p-3 ${className}`}>
       <div className="flex flex-wrap items-center justify-between gap-2 mb-2">
-        <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
+        <div className="flex flex-wrap items-center gap-2 text-xs font-semibold uppercase tracking-wide text-slate-600">
           <ShieldCheck size={14} className="text-indigo-600" />
-          PIBO Registered Verify
+          <span>PIBO Registered Verify</span>
+          {badges.recycledPercent != null ? (
+            <span
+              className="normal-case tracking-normal text-[10px] font-semibold px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200"
+              title="Recycled plastic % from GST / master API"
+            >
+              Recycled {formatPercentBadge(badges.recycledPercent)}
+            </span>
+          ) : null}
+          {badges.matchPercent != null ? (
+            <span
+              className="normal-case tracking-normal text-[10px] font-semibold px-2 py-0.5 rounded-full bg-indigo-100 text-indigo-800 border border-indigo-200"
+              title="Master-data match score from GST API"
+            >
+              Match {formatPercentBadge(badges.matchPercent)}
+            </span>
+          ) : null}
         </div>
         <button
           type="button"
@@ -190,7 +227,9 @@ export default function RegisteredEntityVerify({
           <span className={registrationType === 'Registered' ? 'text-emerald-700 font-medium' : 'text-amber-700 font-medium'}>
             {registrationType}
           </span>
-          {registrationType === 'Registered' ? (
+          {badges.matchPercent != null && badges.matchPercent < 90 ? (
+            <span className="text-slate-500"> — GST verified only; no master registration match — select Entity Type manually</span>
+          ) : registrationType === 'Registered' ? (
             <span className="text-slate-500"> — from Supplier/Customer Master or GST API</span>
           ) : null}
         </p>
@@ -214,6 +253,9 @@ export default function RegisteredEntityVerify({
               <option key={entity.id} value={entity.id}>
                 {entityOptionLabel(entity)}
                 {entity.epr_registration_number ? ` · EPR ${entity.epr_registration_number}` : ''}
+                {entity.recycled_plastic_percent != null && entity.recycled_plastic_percent !== ''
+                  ? ` · Recycled ${formatPercentBadge(entity.recycled_plastic_percent)}`
+                  : ''}
                 {entity.gst ? ` — ${entity.gst}` : ''}
               </option>
             ))}

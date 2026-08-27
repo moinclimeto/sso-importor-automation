@@ -1,4 +1,5 @@
 import { normalizeGstin } from '../shared/entityRegistrationTypes.js';
+import { shouldApplyEntityTypeFromVerify } from '../shared/entityVerifyBadges.js';
 
 export function supplierMasterCacheComplete(row) {
   if (!row) return false;
@@ -29,7 +30,10 @@ export async function upsertSupplierFromEntity(db, companyId, entity, { verified
   ).trim();
   const address = String(entity.address || verified?.address || '').trim();
   const mobile = String(entity.mobile || '').trim();
-  const entityType = String(entity.entity_type || verified?.entity_type || '').trim();
+  const canApplyEntityType = shouldApplyEntityTypeFromVerify(verified, entity);
+  const entityType = canApplyEntityType
+    ? String(entity.entity_type || verified?.entity_type || '').trim()
+    : '';
   const registrationType = String(
     entity.registration_type || verified?.registration_type || 'Unregistered',
   ).trim();
@@ -57,7 +61,7 @@ export async function upsertSupplierFromEntity(db, companyId, entity, { verified
         legalName || existing.legal_name || '',
         address || existing.address || '',
         mobile || existing.mobile || '',
-        entityType || existing.entity_type || '',
+        canApplyEntityType ? entityType : '',
         registrationType || existing.registration_type || 'Unregistered',
         source || existing.source || 'gst_api',
         now,

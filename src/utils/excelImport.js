@@ -24,7 +24,7 @@ export const PURCHASE_EXCEL_HEADERS = [
 export const PURCHASE_TABLE_COLUMNS = [
   { key: 'registration_type', label: 'Registration Type' },
   { key: 'entity_type', label: 'Entity Type' },
-  { key: 'supplier_gst', label: 'GST Number' },
+  { key: 'supplier_gst_number', label: 'GST Number' },
   { key: 'supplier_name', label: 'Name Of The Entity' },
   { key: 'country', label: 'Country' },
   { key: 'address_line_1', label: 'Address' },
@@ -41,7 +41,7 @@ export const PURCHASE_TABLE_COLUMNS = [
 const PURCHASE_HEADER_TO_KEY = {
   registration_type: 'registration_type',
   entity_type: 'entity_type',
-  gst_number: 'supplier_gst',
+  gst_number: 'supplier_gst_number',
   name_of_the_entity: 'supplier_name',
   country: 'country',
   address: 'address_line_1',
@@ -304,7 +304,7 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     return null;
   }
 
-  const supplier_gst = str(flat.supplier_gst).toUpperCase();
+  const supplier_gst = str(flat.supplier_gst_number || flat.supplier_gst).toUpperCase();
   const is_gst = supplier_gst ? 'Yes' : 'No';
 
   return {
@@ -319,7 +319,6 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     plastic_type: str(flat.plastic_type),
     country: str(flat.country),
     financial_year: str(flat.financial_year),
-    buyer_gst: supplier_gst,
     is_supplier_gst_available: is_gst,
     supplier_gst_number: supplier_gst,
     quantity_mt,
@@ -481,6 +480,8 @@ export async function exportExcelData(type, rows) {
         mapped[col.label] = r.invoice_date;
       } else if (col.key === 'supplier_gst_number' && !r[col.key] && r.vendor_gstin) {
         mapped[col.label] = r.vendor_gstin;
+      } else if (col.key === 'supplier_gst_number' && !r[col.key] && r.supplier_gst) {
+        mapped[col.label] = r.supplier_gst;
       } else {
         mapped[col.label] = r[col.key];
       }

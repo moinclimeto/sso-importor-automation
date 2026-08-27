@@ -9,6 +9,7 @@ import {
 } from './procurementConversionFactor.js';
 import { sanitizePlasticMaterial } from './packagingMasterSync.js';
 import { resolveState } from './gstStateCodes.js';
+import { resolveProcurementSource } from './importerPurchaseSaleMatch.js';
 import { fillLineItemsHsn, normalizeHsnCode, resolveLineHsn, resolveReviewLineHsn, splitHsnFromDescription } from './hsnUtils.js';
 import { normalizePlasticCategory } from './plasticCategories.js';
 
@@ -513,7 +514,7 @@ export function buildProcurementHeaderFromRow(row = {}) {
       row.extraction?.mobile ||
       '',
     country: row.country || row.extraction?.country || '',
-    procurement_source: row.procurement_source || '',
+    procurement_source: resolveProcurementSource(row),
   };
 }
 

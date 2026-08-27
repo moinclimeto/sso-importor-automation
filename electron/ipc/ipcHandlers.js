@@ -26,6 +26,7 @@ import {
   generateImporter3bFromImages,
 } from '../reports/importerEprService.js';
 import { buildImporter3aDraft } from '../../shared/importerSection3a.js';
+import { resolveProcurementSource } from '../../shared/importerPurchaseSaleMatch.js';
 import { registrationDocFileName } from '../utils/registrationDocFileName.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -60,6 +61,7 @@ import {
   submitLoginCaptcha,
   refreshLoginCaptcha,
   submitLoginOtp,
+  runApplicationOnboardingAfterLogin,
   resendLoginOtp,
 } from '../automation/cpcbLogin.js';
 import { runEprExtraction } from '../automation/cpcbEprScraper.js';
@@ -253,6 +255,31 @@ export function registerIpcHandlers() {
       return false;
     }
   });
+
+  async function getGlobalBankDetails(db) {
+    try {
+      const row = await db.get(`SELECT value FROM app_settings WHERE key = ?`, 'global_bank_details');
+      if (!row?.value) return null;
+      const parsed = JSON.parse(row.value);
+      const account_number = String(parsed?.account_number || '').trim();
+      const ifsc_code = String(parsed?.ifsc_code || '').trim().toUpperCase();
+      if (!account_number || !ifsc_code) return null;
+      return { account_number, ifsc_code };
+    } catch {
+      return null;
+    }
+  }
+
+  function applyGlobalBankToRecord(record = {}, globalBank = null) {
+    if (!globalBank) return record;
+    const account = String(record.account_number || '').trim();
+    const ifsc = String(record.ifsc_code || '').trim();
+    return {
+      ...record,
+      account_number: account || globalBank.account_number,
+      ifsc_code: ifsc || globalBank.ifsc_code,
+    };
+  }
 
   ipcMain.handle('eprData:getInventory', async () => {
     const sqliteDb = getDb();
@@ -759,6 +786,7 @@ async function syncSupplierMasterFromRecord(
       await storeInvoicePdfLocally({ ...data })
     );
     processedData = syncRecordMtFromLines(processedData, 'purchase');
+    processedData.procurement_source = resolveProcurementSource(processedData);
 
     await autoPopulatePackagingMaster(
       db,
@@ -790,8 +818,8 @@ async function syncSupplierMasterFromRecord(
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
         _source_fields, _routing, file_hash, created_at, registration_type, entity_type,
         financial_year, plastic_type, recycled_plastic_percent, country, irn_no, account_number, ifsc_code,
-        conversion_factor, doc_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        conversion_factor, doc_status, procurement_source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -837,7 +865,8 @@ async function syncSupplierMasterFromRecord(
       processedData.account_number || null,
       processedData.ifsc_code || null,
       processedData.conversion_factor ?? null,
-      processedData.doc_status || 'inbox'
+      processedData.doc_status || 'inbox',
+      processedData.procurement_source || 'domestic'
     );
     await stmt.finalize();
 
@@ -861,6 +890,7 @@ async function syncSupplierMasterFromRecord(
 
     const oldData = await db.get('SELECT file_hash FROM purchases WHERE id = ?', data.id);
     const synced = syncRecordMtFromLines(data, 'purchase');
+    synced.procurement_source = resolveProcurementSource(synced);
 
     const stmt = await db.prepare(`
       UPDATE purchases SET
@@ -871,7 +901,8 @@ async function syncSupplierMasterFromRecord(
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
         _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?,
         financial_year = ?, plastic_type = ?, recycled_plastic_percent = ?, country = ?,
-        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?, doc_status = ?
+        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?, doc_status = ?,
+        procurement_source = ?
       WHERE id = ?
     `);
 
@@ -918,6 +949,7 @@ async function syncSupplierMasterFromRecord(
       synced.ifsc_code || null,
       synced.conversion_factor ?? null,
       synced.doc_status || 'inbox',
+      synced.procurement_source || 'domestic',
       synced.id
     );
     await stmt.finalize();
@@ -1061,6 +1093,8 @@ async function syncSupplierMasterFromRecord(
       await storeInvoicePdfLocally({ ...data })
     );
     processedData = syncRecordMtFromLines(processedData, 'sale');
+    const globalBank = await getGlobalBankDetails(db);
+    processedData = applyGlobalBankToRecord(processedData, globalBank);
 
     await autoPopulatePackagingMaster(
       db,
@@ -1157,7 +1191,8 @@ async function syncSupplierMasterFromRecord(
     await assertNoDuplicateSale(db, data, { excludeId: data.id });
 
     const oldData = await db.get('SELECT file_hash FROM sales WHERE id = ?', data.id);
-    const synced = syncRecordMtFromLines(data, 'sale');
+    const globalBank = await getGlobalBankDetails(db);
+    const synced = applyGlobalBankToRecord(syncRecordMtFromLines(data, 'sale'), globalBank);
 
     const stmt = await db.prepare(`
       UPDATE sales SET
@@ -1254,15 +1289,27 @@ async function syncSupplierMasterFromRecord(
     };
   });
 
-  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {
+  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code, overwriteAll = true }) => {
     try {
+      const account = String(account_number || '').trim();
+      const ifsc = String(ifsc_code || '').trim().toUpperCase();
+      if (!account || !ifsc) {
+        return { success: false, error: 'Account number and IFSC code are required' };
+      }
       const db = getDb();
-      const result = await db.run(
-        `UPDATE sales SET account_number = ?, ifsc_code = ?
-         WHERE (account_number IS NULL OR account_number = '')
-           AND (ifsc_code IS NULL OR ifsc_code = '')`,
-        account_number, ifsc_code
-      );
+      const result = overwriteAll
+        ? await db.run(
+          `UPDATE sales SET account_number = ?, ifsc_code = ?`,
+          account,
+          ifsc,
+        )
+        : await db.run(
+          `UPDATE sales SET account_number = ?, ifsc_code = ?
+           WHERE (account_number IS NULL OR account_number = '')
+             AND (ifsc_code IS NULL OR ifsc_code = '')`,
+          account,
+          ifsc,
+        );
       console.log(`[Bank] Applied bank details to ${result.changes} sales records.`);
       return { success: true, updated: result.changes };
     } catch (err) {
@@ -1429,7 +1476,14 @@ async function syncSupplierMasterFromRecord(
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const otp = typeof payload === 'string' ? payload : payload?.otp;
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
-    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg), { autoScrape });
+    const runOnboarding = Boolean(typeof payload === 'object' && payload?.runOnboarding);
+    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg), { autoScrape, runOnboarding });
+  });
+
+  ipcMain.handle('scraper:runApplicationOnboardingAfterLogin', async (event, payload) => {
+    setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
+    const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
+    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), { autoScrape });
   });
 
   ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {

@@ -3,6 +3,7 @@ import {
   normalizeGstin,
   normalizeRegistrationType,
 } from '../shared/entityRegistrationTypes.js';
+import { extractRecycledPercentFromPayload, sanitizeVerifiedEntity, shouldApplyEntityTypeFromVerify } from '../shared/entityVerifyBadges.js';
 import { verifyGstComplete } from './gstVerifyService.js';
 import { PIBO_NOT_FOUND_WARNING } from '../shared/piboEntityMasterData.js';
 import { searchPiboEntities } from './piboEntitiesService.js';
@@ -22,12 +23,16 @@ function mapLookupRow(row, source, idPrefix) {
     registration_type: normalizeRegistrationType(row.registrationType || row.registration_type) || 'Unregistered',
     entity_type: normalizeEntityType(row.entityType || row.entity_type || row.applicantType) || '',
     epr_registration_number: row.eprRegistrationNumber || row.eprNo || row.epr_registration_number || '',
+    recycled_plastic_percent: extractRecycledPercentFromPayload(row),
+    confidence: row.confidence ?? row.matchScore ?? row.match_score ?? null,
     source,
   };
 }
 
 function mapGstProfileEntity(verified) {
   if (!verified?.success) return null;
+  const firstMaster = verified.masterDataMatches?.[0] || null;
+  const hasMaster = hasMasterRegistrationMatch(verified);
   return {
     id: `climeto-gst-${verified.gst}`,
     gst: verified.gst,
@@ -36,9 +41,15 @@ function mapGstProfileEntity(verified) {
     address: verified.address || '',
     mobile: '',
     registration_type: verified.registration_type || 'Unregistered',
-    entity_type: verified.entity_type || '',
+    entity_type: hasMaster ? (firstMaster?.entity_type || verified.entity_type || '') : '',
     gst_status: verified.status || '',
+    recycled_plastic_percent:
+      firstMaster?.recycled_plastic_percent
+      ?? extractRecycledPercentFromPayload(verified.raw)
+      ?? null,
+    confidence: verified.confidence ?? verified.raw?.confidence ?? firstMaster?.confidence ?? null,
     source: 'climeto_gst',
+    raw: verified.raw,
   };
 }
 
@@ -61,8 +72,8 @@ async function lookupSupplierMaster(db, gst, companyId) {
 export function pickBestRegisteredEntity(entities = []) {
   if (!entities.length) return null;
   const score = (entity) => {
+    if (entity.source === 'climeto_master_data') return 50;
     if (entity.source === 'supplier_master') return 40;
-    if (entity.source === 'climeto_master_data') return 35;
     if (entity.source === 'climeto_api') return 30;
     if (entity.source === 'climeto_gst') return 20;
     if (entity.source === 'cpcb_gst') return 15;
@@ -98,11 +109,12 @@ async function persistCounterparty(db, companyId, entity, verified, { force = fa
   if (!companyId || !entity?.gst) return;
   const key = `${companyId}:${normalizeGstin(entity.gst)}`;
   if (!force && batchSupplierPersisted?.has(key)) return;
-  await upsertSupplierFromEntity(db, companyId, entity, { verified });
+  const safeEntity = sanitizeVerifiedEntity(entity, verified);
+  await upsertSupplierFromEntity(db, companyId, safeEntity, { verified });
   batchSupplierPersisted?.add(key);
 }
 
-export function applyVerifiedEntityToExtractedRow(row, entity, invoiceType) {
+export function applyVerifiedEntityToExtractedRow(row, entity, invoiceType, verified = null) {
   if (!row || !entity) return row;
   const out = { ...row };
   if (!out._source_fields || typeof out._source_fields !== 'object') out._source_fields = {};
@@ -123,7 +135,13 @@ export function applyVerifiedEntityToExtractedRow(row, entity, invoiceType) {
   ].includes(entity.source);
 
   setField('registration_type', entity.registration_type, { force: trusted });
-  setField('entity_type', entity.entity_type, { force: trusted && entity.entity_type });
+
+  if (shouldApplyEntityTypeFromVerify(verified, entity)) {
+    setField('entity_type', entity.entity_type, { force: true });
+  } else {
+    out.entity_type = '';
+    out._source_fields.entity_type = 'gst_api';
+  }
 
   const displayName = entity.trade_name || entity.legal_name || '';
 
@@ -134,6 +152,7 @@ export function applyVerifiedEntityToExtractedRow(row, entity, invoiceType) {
     setField('supplier_mobile_number', entity.mobile);
     setField('supplier_gst_number', entity.gst);
     setField('vendor_gstin', entity.gst);
+    setField('recycled_plastic_percent', entity.recycled_plastic_percent);
     out.is_supplier_gst_available = entity.registration_type === 'Registered';
     out._source_fields.is_supplier_gst_available = 'gst_api';
   } else if (invoiceType === 'sale') {
@@ -173,7 +192,7 @@ export async function enrichExtractedRowWithEntityVerify(db, row, invoiceType, c
   const lookup = await lookupCached(db, gst, companyId);
   const entity = lookup?.bestEntity || lookup?.gstProfile;
   if (!entity) return row;
-  return applyVerifiedEntityToExtractedRow(row, entity, invoiceType);
+  return applyVerifiedEntityToExtractedRow(row, entity, invoiceType, lookup?.gstVerified);
 }
 
 function dedupeEntities(entities = []) {
@@ -240,7 +259,10 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
       [companyId, normalized],
     );
     if (supplierMasterCacheComplete(cachedRow)) {
-      const entity = mapLookupRow(cachedRow, 'supplier_master', 'supplier');
+      const entity = sanitizeVerifiedEntity(
+        mapLookupRow(cachedRow, 'supplier_master', 'supplier'),
+        null,
+      );
       const piboWarning = await resolvePiboWarning(db, entity);
       return {
         success: true,
@@ -273,15 +295,18 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
   let message = verified?.message || '';
 
   if (!masterRows.length && !supplierRows.length) {
-    bestEntity = gstProfile || {
-      id: 'unregistered-fallback',
-      gst: normalized,
-      trade_name: '',
-      legal_name: '',
-      registration_type: 'Unregistered',
-      entity_type: '',
-      source: 'fallback',
-    };
+    bestEntity = sanitizeVerifiedEntity(
+      gstProfile || {
+        id: 'unregistered-fallback',
+        gst: normalized,
+        trade_name: '',
+        legal_name: '',
+        registration_type: 'Unregistered',
+        entity_type: '',
+        source: 'fallback',
+      },
+      verified,
+    );
     message = message || 'GST verified — not registered in master/PIBO records (Unregistered).';
     if (companyId && bestEntity?.gst) {
       await persistCounterparty(db, companyId, bestEntity, verified);
@@ -304,13 +329,15 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
       await persistCounterparty(db, companyId, gstProfile, verified);
     }
   } else if (registrationEntities.length === 1) {
-    bestEntity = registrationEntities[0];
-    message = 'Registration matched — Registered entity applied.';
+    bestEntity = sanitizeVerifiedEntity(registrationEntities[0], verified);
+    message = bestEntity.entity_type
+      ? 'Registration matched — Registered entity applied.'
+      : 'GST verified — select Entity Type manually (no master registration match).';
     if (companyId && bestEntity) {
       await persistCounterparty(db, companyId, bestEntity, verified);
     }
   } else {
-    bestEntity = pickBestRegisteredEntity(registrationEntities);
+    bestEntity = sanitizeVerifiedEntity(pickBestRegisteredEntity(registrationEntities), verified);
     message = `Found ${registrationEntities.length} registered entity match(es).`;
     if (companyId && bestEntity) {
       await persistCounterparty(db, companyId, bestEntity, verified);
@@ -323,8 +350,8 @@ export async function lookupRegisteredEntities(db, { gst, companyId, forceApi = 
 
   return {
     success: true,
-    entities: registrationEntities,
-    selectableEntities: selectableEntities(registrationEntities),
+    entities: registrationEntities.map((item) => sanitizeVerifiedEntity(item, verified)),
+    selectableEntities: selectableEntities(registrationEntities).map((item) => sanitizeVerifiedEntity(item, verified)),
     gstProfile,
     bestEntity: requiresUserSelection ? null : bestEntity,
     requiresUserSelection,

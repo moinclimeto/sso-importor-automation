@@ -132,13 +132,24 @@ test('some domestic sales unmatched → Finalize blocked', () => {
   assert.equal(finalizeImporter3a(draft).success, false);
 });
 
-test('unknown / unset procurement source → not in import pool', () => {
-  const unknownPurchase = purchaseRow({ procurement_source: '', country: 'China' });
-  const importLines = filterImportPurchaseLines([unknownPurchase], [FY]);
+test('foreign country purchase auto-detected as import → in import pool', () => {
+  const importPurchase = purchaseRow({ procurement_source: '', country: 'China' });
+  const importLines = filterImportPurchaseLines([importPurchase], [FY]);
+  assert.equal(importLines.length, 1);
+  const issues = collectUnclassifiedProcurementIssues([importPurchase], [FY]);
+  assert.equal(issues.length, 0);
+});
+
+test('Indian GST purchase auto-detected as domestic → not in import pool', () => {
+  const domesticPurchase = purchaseRow({
+    procurement_source: '',
+    country: '',
+    supplier_gst_number: '06AAXFB4240J1Z7',
+    state: 'Haryana',
+    city: 'Faridabad',
+  });
+  const importLines = filterImportPurchaseLines([domesticPurchase], [FY]);
   assert.equal(importLines.length, 0);
-  const issues = collectUnclassifiedProcurementIssues([unknownPurchase], [FY]);
-  assert.equal(issues.length, 1);
-  assert.equal(issues[0].type, 'unclassified_procurement');
 });
 
 test('explicit import procurement → included in import pool', () => {
@@ -242,13 +253,11 @@ test('multiple sales → no double counting', () => {
   assert.equal(draft.summaryByFy[FY].cat2, '0.3');
 });
 
-test('unclassified procurement blocks finalize when sales exist', () => {
+test('auto-detected procurement source does not block finalize for classification', () => {
   const draft = buildImporter3aDraft({
     purchases: [purchaseRow({ procurement_source: '' })],
     sales: [saleRow()],
     reportingYears: [FY],
   });
-  const check = importer3aCanFinalize(draft);
-  assert.equal(check.ok, false);
-  assert.match(check.reason, /Procurement Source/i);
+  assert.equal(draft.stats.unclassifiedProcurementCount, 0);
 });

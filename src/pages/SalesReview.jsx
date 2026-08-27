@@ -173,7 +173,7 @@ export default function SalesReview() {
     if (!entity) return;
     patchHeader({
       registration_type: entity.registration_type || header.registration_type,
-      entity_type: entity.entity_type || header.entity_type,
+      entity_type: entity.entity_type || '',
       entity_name: entity.trade_name || header.entity_name,
       address: entity.address || header.address,
       mobile_number: entity.mobile || header.mobile_number,
@@ -651,7 +651,7 @@ export default function SalesReview() {
                 value={header.customer_gstin}
                 onChange={(v) => patchHeader({
                   customer_gstin: v.toUpperCase(),
-                  state: header.state || resolveState('', v),
+                  state: resolveState('', v),
                 })}
                 readOnly={readOnly}
               />

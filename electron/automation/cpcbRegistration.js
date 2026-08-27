@@ -10,6 +10,7 @@ import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
   refreshCaptcha,
+  attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
 import {
   evaluateGstDetailsResponse,
@@ -1586,6 +1587,7 @@ export async function startRegistrationFlow(data, onLog) {
     regBrowser = await chromium.launch({ headless: false, args: ['--start-maximized'] }); // Visible to user for transparency if needed
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
+    attachCaptchaNetworkListenerToContext(regContext);
     const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
     await attachPortalToastWatcherToContext(regContext).catch(() => {});
     

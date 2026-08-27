@@ -9,6 +9,8 @@ import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
   refreshCaptcha,
+  attachCaptchaNetworkListener,
+  attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
 import { runEprExtraction } from './cpcbEprScraper.js';
 import {
@@ -97,6 +99,8 @@ async function ensureLoginPage(onLog) {
 
   const pages = loginBrowser.pages();
   loginPage = pages.length > 0 ? pages[0] : await loginBrowser.newPage();
+  attachCaptchaNetworkListenerToContext(loginBrowser);
+  attachCaptchaNetworkListener(loginPage);
   const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
   await attachPortalToastWatcherToContext(loginBrowser).catch(() => {});
   loginBrowser.on('close', () => {
@@ -444,14 +448,43 @@ async function fillLoginOtp(page, otp, onLog) {
   await clickVerifyLoginOtp(page, onLog);
 }
 
+async function isLoginOtpVerified(page) {
+  const successVisible = await page
+    .getByText(/User Verified Successfully/i)
+    .first()
+    .isVisible({ timeout: 4000 })
+    .catch(() => false);
+  if (successVisible) return true;
+
+  if (isAuthenticatedUrl(page.url())) return true;
+
+  const otpModalVisible = await page
+    .locator('app-otp-modal')
+    .first()
+    .isVisible({ timeout: 1500 })
+    .catch(() => false);
+  if (!otpModalVisible && isAuthenticatedUrl(page.url())) return true;
+
+  try {
+    await page.waitForURL(/\/(onboarding|dashboard|home)/i, { timeout: 12000 });
+    return isAuthenticatedUrl(page.url());
+  } catch {
+    return false;
+  }
+}
+
 async function clickContinueAfterLoginVerify(page, onLog) {
   const verified = await page
     .getByText(/User Verified Successfully/i)
     .first()
-    .isVisible({ timeout: 15000 })
+    .isVisible({ timeout: 8000 })
     .catch(() => false);
 
   if (!verified) {
+    if (isAuthenticatedUrl(page.url())) {
+      if (onLog) onLog('Already on dashboard — skipping Continue after OTP.');
+      return;
+    }
     throw new Error('User verification success screen not shown');
   }
 
@@ -1192,7 +1225,7 @@ export async function submitLoginCaptcha(captchaText, onLog) {
 }
 
 export async function submitLoginOtp(otp, onLog, options = {}) {
-  const { autoScrape = false } = options;
+  const { autoScrape = false, runOnboarding = false } = options;
   try {
     let { page } = getLoginSession();
     if (!page) {
@@ -1215,12 +1248,7 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
       return { success: false, error: portalErrAfterVerify };
     }
 
-    const verified = await page
-      .getByText(/User Verified Successfully/i)
-      .first()
-      .isVisible({ timeout: 8000 })
-      .catch(() => false);
-
+    const verified = await isLoginOtpVerified(page);
     if (!verified) {
       const portalErr = await checkLoginPortalError(page);
       if (portalErr) {
@@ -1232,8 +1260,43 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
       };
     }
 
+    if (onLog) onLog('Login OTP verified on CPCB portal.');
     await clickContinueAfterLoginVerify(page, onLog);
     await waitForCpcbLoaderGone(page, 40000);
+    await waitForDashboard(page, onLog).catch(() => {});
+
+    const verifiedResult = {
+      success: true,
+      step: 'LOGIN_OTP_VERIFIED',
+      url: page.url() || '',
+      authenticated: isAuthenticatedUrl(page.url()),
+    };
+
+    if (!runOnboarding) {
+      return verifiedResult;
+    }
+
+    return await runApplicationOnboardingAfterLogin(onLog, { autoScrape });
+  } catch (err) {
+    if (onLog) onLog('Login OTP error: ' + err.message);
+    let portalErr;
+    try {
+      const { page } = getLoginSession();
+      if (page) portalErr = await checkLoginPortalError(page);
+    } catch {
+      /* ignore */
+    }
+    return { success: false, error: portalErr || err.message };
+  }
+}
+
+export async function runApplicationOnboardingAfterLogin(onLog, options = {}) {
+  const { autoScrape = false } = options;
+  try {
+    const { page } = getLoginSession();
+    if (!page) {
+      return { success: false, error: 'Browser session not active' };
+    }
 
     let onboardingResult = null;
     try {
@@ -1273,15 +1336,8 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
       scrape: scrapeResult,
     };
   } catch (err) {
-    if (onLog) onLog('Login OTP error: ' + err.message);
-    let portalErr;
-    try {
-      const { page } = getLoginSession();
-      if (page) portalErr = await checkLoginPortalError(page);
-    } catch {
-      /* ignore */
-    }
-    return { success: false, error: portalErr || err.message };
+    if (onLog) onLog('Application onboarding error: ' + err.message);
+    return { success: false, error: err.message };
   }
 }
 

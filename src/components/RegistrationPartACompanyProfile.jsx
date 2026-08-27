@@ -1,4 +1,4 @@
-import LocalFilePreview from './LocalFilePreview.jsx';
+import UploadedFilePreview from './UploadedFilePreview.jsx';
 import { TYPE_OF_BUSINESS_OPTIONS, TYPE_OF_COMPANY_OPTIONS, INDIAN_STATES } from '../utils/registrationGeneralInfo.js';
 
 export default function RegistrationPartACompanyProfile({
@@ -101,12 +101,7 @@ export default function RegistrationPartACompanyProfile({
               className={inputClass}
             />
             {autoData.typeOfCompanyDoc ? (
-              <div className="mt-1 flex flex-wrap items-center gap-2">
-                <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
-                  Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                </p>
-                <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
-              </div>
+              <UploadedFilePreview filePath={autoData.typeOfCompanyDoc} />
             ) : null}
           </div>
         ) : null}

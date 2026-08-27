@@ -19,6 +19,7 @@ import {
   resolveGstDocType,
 } from '../utils/companyDocNormalize.js';
 import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
+import UploadedFilePreview from './UploadedFilePreview.jsx';
 
 const REGISTRATION_DOC_TYPES = new Set([
   'gst', 'person_pan', 'company_pan', 'cto', 'cin', 'udyam', 'iec',
@@ -230,6 +231,13 @@ function DocListRow({ item, onRemove, removing }) {
             </span>
           )}
         </p>
+        {item.filePath && item.status === 'done' && (
+          <UploadedFilePreview
+            filePath={item.filePath}
+            fileName={item.fileName}
+            className="mt-1.5"
+          />
+        )}
       </div>
       {onRemove && item.status !== 'processing' && (
         <button

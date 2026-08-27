@@ -16,6 +16,7 @@ const navLinks = [
     icon: LayoutDashboard,
     label: 'Overview',
     subLinks: [
+      { to: '/dashboard', label: 'Dashboard' },
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },
@@ -37,6 +38,7 @@ const navLinks = [
 ];
 
 const pageHeaders = {
+  '/dashboard': { title: 'Dashboard', subtitle: 'Overview, bank details & purchase/sale activity' },
   '/cpcb-dashboard': { title: 'CPCB EPR Dashboard', subtitle: 'Automated scraped data from Central Pollution Control Board', showSync: true },
   '/master-data': { title: 'Master Data', subtitle: 'Company, supplier, packaging & MT reports' },
   '/companies': { title: 'Company Profile', subtitle: 'Manage company details' },

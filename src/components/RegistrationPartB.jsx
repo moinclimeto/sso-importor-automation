@@ -2,6 +2,7 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Trash2, X } from 'lucide-react';
 import { INDIAN_STATES } from '../utils/registrationGeneralInfo.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import UploadedFilePreview from './UploadedFilePreview.jsx';
 import {
   fetchComputedPartBSection4,
   mergePartBSection4ForOperatingStates,
@@ -13,8 +14,16 @@ import {
   fetchComputedPartBSection5,
   mergePartBSection5b,
   mergePartBSection5d,
+  refreshSec5RowFromSource,
 } from '../utils/registrationPartBSection5.js';
 import { PART_B_SECTION4_CATEGORY_LABELS } from '../../shared/partBSection4.js';
+import {
+  PORTAL_PLASTIC_MATERIALS,
+  PORTAL_SEC5_ENTITY_TYPES,
+  normalizeSec5bRowForPortal,
+  normalizeSec5dRowForPortal,
+  toPortalInputDate,
+} from '../../shared/partBSection5.js';
 
 const inputClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm';
 const selectClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-white';
@@ -125,11 +134,34 @@ export default function RegistrationPartB({
     });
   };
 
-  const openModal = (secKey, title, existingData = null, editIndex = null) => {
+  const openModal = async (secKey, title, existingData = null, editIndex = null) => {
+    let row = existingData;
+    if (row?.sourceRecordId && (secKey === 'sec5b' || secKey === 'sec5d')) {
+      try {
+        const fresh = await refreshSec5RowFromSource({
+          secKey,
+          sourceRecordId: row.sourceRecordId,
+          gstin,
+        });
+        if (fresh) {
+          row = {
+            ...row,
+            ...fresh,
+            invoiceDoc: row.invoiceDoc || fresh.invoiceDoc || '',
+          };
+        }
+      } catch (err) {
+        console.error('Failed to refresh Section 5 row from Doc Processor:', err);
+      }
+    }
+    if (row) {
+      if (secKey === 'sec5b') row = normalizeSec5bRowForPortal(row);
+      if (secKey === 'sec5d') row = normalizeSec5dRowForPortal(row);
+    }
     setModalData(
-      existingData
+      row
         ? {
-            ...existingData,
+            ...row,
             _title: title,
             _secKey: secKey,
             _isView: false,
@@ -145,14 +177,15 @@ export default function RegistrationPartB({
                   regType: 'UnRegistered',
                   country: 'India',
                   recycledPercent: '0',
-                  materialType: 'Packaging',
+                  entityType: 'Importer',
+                  materialType: 'Others',
                 }
               : secKey === 'sec5d'
                 ? {
                     regType: 'UnRegistered',
                     recycledPercent: '0',
-                    materialType: 'Packaging',
-                    entityType: 'Producer',
+                    entityType: 'Brand Owner',
+                    materialType: 'Others',
                   }
                 : {}),
           },
@@ -289,12 +322,12 @@ export default function RegistrationPartB({
   const renderModal5b = () => (
     <div className="grid grid-cols-2 gap-4">
       {renderSelect('Registration Type', 'regType', ['UnRegistered'])}
-      {renderSelect('Entity Type', 'entityType', ['Producer', 'Importer'])}
+      {renderSelect('Entity Type', 'entityType', PORTAL_SEC5_ENTITY_TYPES)}
       {renderInput('Name Of The Entity', 'entityName')}
       {renderSelect('Country', 'country', ['India', 'Other'])}
       {renderInput('Address', 'address')}
       {renderInput('Mobile Number', 'mobile')}
-      {renderSelect('Plastic Material Type', 'materialType', ['Raw Material', 'Packaging'])}
+      {renderSelect('Plastic Material Type', 'materialType', PORTAL_PLASTIC_MATERIALS)}
       {renderSelect('Category Of Plastic', 'category', PLASTIC_CATEGORIES)}
       {renderSelect('Financial Year', 'financialYear', FINANCIAL_YEARS)}
       {renderInput('Date', 'date', 'date')}
@@ -310,7 +343,9 @@ export default function RegistrationPartB({
             setModalData({ ...modalData, invoiceDoc: stored.filePath });
           }
         }} disabled={modalData._isView} />
-        {modalData.invoiceDoc && <p className="text-xs text-green-600 mt-1">{modalData.invoiceDoc.split(/[/\\]/).pop()}</p>}
+        {modalData.invoiceDoc && (
+          <UploadedFilePreview filePath={modalData.invoiceDoc} />
+        )}
       </div>
     </div>
   );
@@ -346,12 +381,12 @@ export default function RegistrationPartB({
   const renderModal5d = () => (
     <div className="grid grid-cols-2 gap-4">
       {renderSelect('Registration Type', 'regType', ['UnRegistered'])}
-      {renderSelect('Entity Type', 'entityType', ['Producer', 'Brand Owner'])}
+      {renderSelect('Entity Type', 'entityType', PORTAL_SEC5_ENTITY_TYPES)}
       {renderInput('Name of the Entity', 'entityName')}
       {renderInput('Address', 'address')}
       {renderSelect('State', 'state', INDIAN_STATES)}
       {renderInput('Mobile Number', 'mobile')}
-      {renderSelect('Plastic Material Type', 'materialType', ['Raw Material', 'Packaging'])}
+      {renderSelect('Plastic Material Type', 'materialType', PORTAL_PLASTIC_MATERIALS)}
       {renderSelect('Category Of Plastic', 'category', PLASTIC_CATEGORIES)}
       {renderSelect('Financial Year', 'financialYear', FINANCIAL_YEARS)}
       {renderInput('GST', 'gst')}
@@ -365,7 +400,7 @@ export default function RegistrationPartB({
   );
 
   const renderSec5bTable = () => {
-    const rows = generalInfo.partBTransactions?.sec5b || [];
+    const rows = (generalInfo.partBTransactions?.sec5b || []).map(normalizeSec5bRowForPortal);
     return (
       <div className="mb-6 border rounded-lg overflow-hidden bg-white">
         <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
@@ -408,12 +443,16 @@ export default function RegistrationPartB({
                     <td className="px-3 py-2">{i + 1}</td>
                     <td className="px-3 py-2">{row.entityName || '—'}</td>
                     <td className="px-3 py-2">{row.entityType || '—'}</td>
-                    <td className="px-3 py-2">{row.date || '—'}</td>
+                    <td className="px-3 py-2">{toPortalInputDate(row.date) || row.date || '—'}</td>
                     <td className="px-3 py-2 tabular-nums">{row.quantity || '—'}</td>
                     <td className="px-3 py-2">{row.category || '—'}</td>
                     <td className="px-3 py-2">{row.financialYear || '—'}</td>
                     <td className="px-3 py-2 text-xs text-emerald-700">
-                      {row.invoiceDoc ? row.invoiceDoc.split(/[/\\]/).pop() : '—'}
+                      {row.invoiceDoc ? (
+                        <UploadedFilePreview filePath={row.invoiceDoc} className="mt-0" />
+                      ) : (
+                        '—'
+                      )}
                     </td>
                     <td className="px-3 py-2 text-center">
                       <div className="flex justify-center gap-2">
@@ -453,7 +492,7 @@ export default function RegistrationPartB({
   };
 
   const renderSec5dTable = () => {
-    const rows = generalInfo.partBTransactions?.sec5d || [];
+    const rows = (generalInfo.partBTransactions?.sec5d || []).map(normalizeSec5dRowForPortal);
     return (
       <div className="mb-6 border rounded-lg overflow-hidden bg-white">
         <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">

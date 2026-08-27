@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react';
-import LocalFilePreview from './LocalFilePreview.jsx';
+import UploadedFilePreview from './UploadedFilePreview.jsx';
 
 const FIELDS = [
   {
@@ -61,12 +61,10 @@ export default function RegistrationPartAPdfUploads({
               </label>
 
               {filePath ? (
-                <div className="flex flex-wrap items-center gap-2 text-xs text-emerald-800 bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 min-w-0 flex-1">
-                  <span className="truncate" title={filePath}>
-                    Selected: <strong>{filePath.split(/[/\\]/).pop()}</strong>
-                  </span>
-                  <LocalFilePreview filePath={filePath} />
-                </div>
+                <UploadedFilePreview
+                  filePath={filePath}
+                  className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 min-w-0 flex-1 mt-0"
+                />
               ) : (
                 <span className="text-xs text-slate-400 italic">No file selected</span>
               )}

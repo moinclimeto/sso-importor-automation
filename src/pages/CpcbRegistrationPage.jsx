@@ -5,7 +5,7 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
-import LocalFilePreview from '../components/LocalFilePreview.jsx';
+import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
@@ -1158,6 +1158,43 @@ export default function CpcbRegistrationPage() {
     }
   };
 
+  const handleLoginOnboardingResult = (res) => {
+    if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      showToast(
+        `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
+        'success',
+        { duration: 15000 },
+      );
+      return true;
+    }
+
+    if (
+      res.success &&
+      (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE')
+    ) {
+      const scrapeOk = res.scrape?.success !== false;
+      showToast(
+        scrapeOk
+          ? 'Registration pipeline complete! Application started and portal data synced to the app.'
+          : `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}.`,
+        scrapeOk ? 'success' : 'error',
+        { duration: 15000 },
+      );
+      return true;
+    }
+
+    if (res.success && res.step === 'LOGIN_COMPLETE') {
+      setAutomationLogs((prev) => [
+        ...prev,
+        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
+      ]);
+      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      return true;
+    }
+
+    return false;
+  };
+
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
@@ -1170,35 +1207,39 @@ export default function CpcbRegistrationPage() {
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
 
-      if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        showToast(
-          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-          'success',
-          { duration: 15000 }
-        );
+        setLoginOtpSubmitting(false);
+        setLoading(true);
+        setLoadingMsg('Filling application on CPCB portal...');
+        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
+        try {
+          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: false });
+          handleLoginOnboardingResult(onboard);
+          if (!onboard.success) {
+            const errMsg = onboard.error || 'Application onboarding failed.';
+            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          }
+        } finally {
+          setLoading(false);
+          setLoadingMsg('');
+        }
         return;
       }
 
-      if (res.success && res.step === 'LOGIN_COMPLETE') {
+      if (handleLoginOnboardingResult(res)) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error }]);
-        showToast(
-          `Login successful, but onboarding failed. See logs for details.`,
-          'error',
-          { duration: 15000 }
-        );
         return;
       }
 
       const errMsg = res.error || 'Invalid OTP. Please try again.';
       setLoginOtpError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
     } catch (err) {
       setLoginOtpError(err.message);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -1496,9 +1537,11 @@ export default function CpcbRegistrationPage() {
                     required
                   />
                   {autoData.unitGstDoc ? (
-                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
-                      Certificate from documents: {autoData.unitGstDoc.split(/[/\\]/).pop()} — uploaded automatically in Part A
-                    </p>
+                    <UploadedFilePreview
+                      filePath={autoData.unitGstDoc}
+                      prefix="Certificate from documents"
+                      suffix="— uploaded automatically in Part A"
+                    />
                   ) : null}
                 </div>
                 {/* Already captured by the document extractor — no manual upload needed. */}
@@ -1788,12 +1831,7 @@ export default function CpcbRegistrationPage() {
                   className={inputClass}
                 />
                 {autoData.typeOfCompanyDoc && (
-                  <div className="mt-1 flex items-center gap-3">
-                    <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
-                      Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                    </p>
-                    <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
-                  </div>
+                  <UploadedFilePreview filePath={autoData.typeOfCompanyDoc} />
                 )}
               </div>
             </div>

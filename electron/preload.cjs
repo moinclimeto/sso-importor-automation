@@ -124,6 +124,7 @@ contextBridge.exposeInMainWorld('pwp', {
     submitLoginCaptcha: (payload) => ipcRenderer.invoke('scraper:submitLoginCaptcha', payload),
     refreshLoginCaptcha: () => ipcRenderer.invoke('scraper:refreshLoginCaptcha'),
     submitLoginOtp: (payload) => ipcRenderer.invoke('scraper:submitLoginOtp', payload),
+    runApplicationOnboardingAfterLogin: (payload) => ipcRenderer.invoke('scraper:runApplicationOnboardingAfterLogin', payload),
     resendLoginOtp: () => ipcRenderer.invoke('scraper:resendLoginOtp'),
     answerPaymentBypass: (payload) => ipcRenderer.invoke('scraper:answerPaymentBypass', payload),
     onPaymentBypassPrompt: (callback) => {
