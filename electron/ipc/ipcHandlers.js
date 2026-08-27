@@ -6,7 +6,12 @@ import { getRegistrationDetails, saveRegistrationDetails } from '../db/registrat
 import { createLogger } from '../utils/logger.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
 import { chromium } from 'playwright';
-import { lineItemsToPackagingSyncRows } from '../../shared/packagingMasterSync.js';
+import {
+  lineItemsToPackagingSyncRows,
+  normalizePackagingMasterRecord,
+  sanitizePlasticCategory,
+  sanitizePlasticMaterial,
+} from '../../shared/packagingMasterSync.js';
 import { buildProductMatchKey, normalizeLineUom, syncRecordMtFromLines } from '../../shared/procurementConversionFactor.js';
 import {
   assertNoDuplicatePurchase,
@@ -15,6 +20,13 @@ import {
 } from '../invoiceDuplicateCheck.js';
 import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
 import { storeProcessedUpload } from '../utils/storeUploadFile.js';
+import {
+  computeImporter3aDraft,
+  finalizeAndGenerateImporter3a,
+  generateImporter3bFromImages,
+} from '../reports/importerEprService.js';
+import { buildImporter3aDraft } from '../../shared/importerSection3a.js';
+import { resolveProcurementSource } from '../../shared/importerPurchaseSaleMatch.js';
 import { registrationDocFileName } from '../utils/registrationDocFileName.js';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -49,10 +61,12 @@ import {
   submitLoginCaptcha,
   refreshLoginCaptcha,
   submitLoginOtp,
+  runApplicationOnboardingAfterLogin,
   resendLoginOtp,
 } from '../automation/cpcbLogin.js';
 import { runEprExtraction } from '../automation/cpcbEprScraper.js';
 import { upsertSupplierMasterRow } from '../supplierMasterService.js';
+import { upsertPackagingMasterRow } from '../packagingMasterService.js';
 import { setPaymentBypassNotifier, resolvePaymentBypass } from '../automation/paymentBypassBridge.js';
 import { setPortalToastEmitter, attachPortalToastWatcherToContext } from '../automation/portalToastWatcher.js';
 
@@ -241,6 +255,31 @@ export function registerIpcHandlers() {
       return false;
     }
   });
+
+  async function getGlobalBankDetails(db) {
+    try {
+      const row = await db.get(`SELECT value FROM app_settings WHERE key = ?`, 'global_bank_details');
+      if (!row?.value) return null;
+      const parsed = JSON.parse(row.value);
+      const account_number = String(parsed?.account_number || '').trim();
+      const ifsc_code = String(parsed?.ifsc_code || '').trim().toUpperCase();
+      if (!account_number || !ifsc_code) return null;
+      return { account_number, ifsc_code };
+    } catch {
+      return null;
+    }
+  }
+
+  function applyGlobalBankToRecord(record = {}, globalBank = null) {
+    if (!globalBank) return record;
+    const account = String(record.account_number || '').trim();
+    const ifsc = String(record.ifsc_code || '').trim();
+    return {
+      ...record,
+      account_number: account || globalBank.account_number,
+      ifsc_code: ifsc || globalBank.ifsc_code,
+    };
+  }
 
   ipcMain.handle('eprData:getInventory', async () => {
     const sqliteDb = getDb();
@@ -562,15 +601,22 @@ async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, s
   for (const item of lineItems) {
     if (!item.productDescription && !item.product && !item.item_name) continue;
 
-    const productDesc = item.productDescription || item.product || item.item_name || '';
-    const uomFields = normalizeLineUom(item);
-    const uom = uomFields.unit || item.uom || item.unit || '';
-    const hsn = String(item.hsn || item.hsn_code || '').replace(/\D/g, '') || String(item.hsn || item.hsn_code || '').trim();
-    const productMatchKey = buildProductMatchKey(productDesc, hsn);
+    const normalized = normalizePackagingMasterRecord({
+      company_id: companyId,
+      list_type: listType || 'purchase',
+      product_description: item.productDescription || item.product || item.item_name || '',
+      hsn: item.hsn || item.hsn_code || '',
+      uom: normalizeLineUom(item).unit || item.uom || item.unit || '',
+      supplier_gst: supplierGst || '',
+      supplier_name: partyName,
+      plastic_category: item.plasticCategory || item.category_of_plastic || '',
+      plastic_material: item.plasticMaterial || item.plastic_material || item.plastic_type || '',
+      source: 'upload',
+    });
 
     const existing = await db.get(
       'SELECT id FROM packaging_master WHERE company_id = ? AND list_type = ? AND product_match_key = ?',
-      [companyId, listType, productMatchKey]
+      [companyId, normalized.list_type, normalized.product_match_key],
     );
 
     if (!existing) {
@@ -581,14 +627,14 @@ async function autoPopulatePackagingMaster(db, companyId, listType, lineItems, s
           is_active, source, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, 'upload', ?, ?)
       `, [
-        companyId, listType, productDesc, productMatchKey, hsn, uom,
-        supplierGst || '', partyName, item.plasticCategory || '', item.plasticMaterial || '',
-        now, now
+        companyId, normalized.list_type, normalized.product_description, normalized.product_match_key,
+        normalized.hsn, normalized.uom, normalized.supplier_gst, normalized.supplier_name,
+        normalized.plastic_category, normalized.plastic_material, now, now,
       ]);
     } else if (partyName) {
       await db.run(
         `UPDATE packaging_master SET supplier_name = ?, supplier_gst = COALESCE(NULLIF(?, ''), supplier_gst), updated_at = ? WHERE id = ?`,
-        [partyName, supplierGst || '', now, existing.id]
+        [partyName, supplierGst || '', now, existing.id],
       );
     }
   }
@@ -600,7 +646,7 @@ async function syncReviewLinesToPackagingMaster(db, companyId, listType, lineIte
 
   const rows = lineItemsToPackagingSyncRows(lineItems, {
     companyId,
-    listType: listType || 'gpl',
+    listType: listType || 'purchase',
     supplierGst,
     supplierName,
     source: 'review',
@@ -740,11 +786,12 @@ async function syncSupplierMasterFromRecord(
       await storeInvoicePdfLocally({ ...data })
     );
     processedData = syncRecordMtFromLines(processedData, 'purchase');
+    processedData.procurement_source = resolveProcurementSource(processedData);
 
     await autoPopulatePackagingMaster(
       db,
       processedData.company_id,
-      'gpl',
+      'purchase',
       processedData.lineItems,
       processedData.supplier_gst_number || processedData.vendor_gstin,
       processedData.supplier_name || processedData.vendor_name
@@ -771,8 +818,8 @@ async function syncSupplierMasterFromRecord(
         invoice_date, item_name, quantity, unit, total_amount, line_items, extraction,
         _source_fields, _routing, file_hash, created_at, registration_type, entity_type,
         financial_year, plastic_type, recycled_plastic_percent, country, irn_no, account_number, ifsc_code,
-        conversion_factor, doc_status
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        conversion_factor, doc_status, procurement_source
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
 
     const result = await stmt.run(
@@ -818,7 +865,8 @@ async function syncSupplierMasterFromRecord(
       processedData.account_number || null,
       processedData.ifsc_code || null,
       processedData.conversion_factor ?? null,
-      processedData.doc_status || 'inbox'
+      processedData.doc_status || 'inbox',
+      processedData.procurement_source || 'domestic'
     );
     await stmt.finalize();
 
@@ -842,6 +890,7 @@ async function syncSupplierMasterFromRecord(
 
     const oldData = await db.get('SELECT file_hash FROM purchases WHERE id = ?', data.id);
     const synced = syncRecordMtFromLines(data, 'purchase');
+    synced.procurement_source = resolveProcurementSource(synced);
 
     const stmt = await db.prepare(`
       UPDATE purchases SET
@@ -852,7 +901,8 @@ async function syncSupplierMasterFromRecord(
         invoice_date = ?, item_name = ?, quantity = ?, unit = ?, total_amount = ?, line_items = ?, extraction = ?,
         _source_fields = ?, _routing = ?, file_hash = ?, entity_type = ?, registration_type = ?,
         financial_year = ?, plastic_type = ?, recycled_plastic_percent = ?, country = ?,
-        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?, doc_status = ?
+        irn_no = ?, account_number = ?, ifsc_code = ?, conversion_factor = ?, doc_status = ?,
+        procurement_source = ?
       WHERE id = ?
     `);
 
@@ -899,6 +949,7 @@ async function syncSupplierMasterFromRecord(
       synced.ifsc_code || null,
       synced.conversion_factor ?? null,
       synced.doc_status || 'inbox',
+      synced.procurement_source || 'domestic',
       synced.id
     );
     await stmt.finalize();
@@ -916,7 +967,7 @@ async function syncSupplierMasterFromRecord(
     const packagingResult = await syncReviewLinesToPackagingMaster(
       db,
       synced.company_id,
-      'gpl',
+      'purchase',
       synced.lineItems || [],
       synced.supplier_gst_number || synced.vendor_gstin,
       synced.supplier_name || synced.vendor_name,
@@ -1042,11 +1093,13 @@ async function syncSupplierMasterFromRecord(
       await storeInvoicePdfLocally({ ...data })
     );
     processedData = syncRecordMtFromLines(processedData, 'sale');
+    const globalBank = await getGlobalBankDetails(db);
+    processedData = applyGlobalBankToRecord(processedData, globalBank);
 
     await autoPopulatePackagingMaster(
       db,
       processedData.company_id,
-      'gpl',
+      'sales',
       processedData.lineItems,
       processedData.customer_gstin || processedData.buyer_gst,
       processedData.customer_name || processedData.entity_name
@@ -1138,7 +1191,8 @@ async function syncSupplierMasterFromRecord(
     await assertNoDuplicateSale(db, data, { excludeId: data.id });
 
     const oldData = await db.get('SELECT file_hash FROM sales WHERE id = ?', data.id);
-    const synced = syncRecordMtFromLines(data, 'sale');
+    const globalBank = await getGlobalBankDetails(db);
+    const synced = applyGlobalBankToRecord(syncRecordMtFromLines(data, 'sale'), globalBank);
 
     const stmt = await db.prepare(`
       UPDATE sales SET
@@ -1208,7 +1262,7 @@ async function syncSupplierMasterFromRecord(
     const packagingResult = await syncReviewLinesToPackagingMaster(
       db,
       synced.company_id,
-      'gpl',
+      'sales',
       synced.lineItems || [],
       synced.customer_gstin || synced.buyer_gst,
       synced.customer_name || synced.entity_name,
@@ -1235,15 +1289,27 @@ async function syncSupplierMasterFromRecord(
     };
   });
 
-  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code }) => {
+  ipcMain.handle('sales:applyBankDetailsToAll', async (_, { account_number, ifsc_code, overwriteAll = true }) => {
     try {
+      const account = String(account_number || '').trim();
+      const ifsc = String(ifsc_code || '').trim().toUpperCase();
+      if (!account || !ifsc) {
+        return { success: false, error: 'Account number and IFSC code are required' };
+      }
       const db = getDb();
-      const result = await db.run(
-        `UPDATE sales SET account_number = ?, ifsc_code = ?
-         WHERE (account_number IS NULL OR account_number = '')
-           AND (ifsc_code IS NULL OR ifsc_code = '')`,
-        account_number, ifsc_code
-      );
+      const result = overwriteAll
+        ? await db.run(
+          `UPDATE sales SET account_number = ?, ifsc_code = ?`,
+          account,
+          ifsc,
+        )
+        : await db.run(
+          `UPDATE sales SET account_number = ?, ifsc_code = ?
+           WHERE (account_number IS NULL OR account_number = '')
+             AND (ifsc_code IS NULL OR ifsc_code = '')`,
+          account,
+          ifsc,
+        );
       console.log(`[Bank] Applied bank details to ${result.changes} sales records.`);
       return { success: true, updated: result.changes };
     } catch (err) {
@@ -1410,7 +1476,14 @@ async function syncSupplierMasterFromRecord(
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const otp = typeof payload === 'string' ? payload : payload?.otp;
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
-    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg), { autoScrape });
+    const runOnboarding = Boolean(typeof payload === 'object' && payload?.runOnboarding);
+    return await submitLoginOtp(otp, (msg) => sendScraperLog(event, msg), { autoScrape, runOnboarding });
+  });
+
+  ipcMain.handle('scraper:runApplicationOnboardingAfterLogin', async (event, payload) => {
+    setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
+    const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
+    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), { autoScrape });
   });
 
   ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {
@@ -2885,6 +2958,7 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
     const db = getDb();
     const created_at = new Date().toISOString();
     try {
+      const normalized = normalizePackagingMasterRecord(data);
       const result = await db.run(
         `INSERT INTO packaging_master (
           company_id, list_type, product_description, product_match_key, hsn, uom,
@@ -2893,12 +2967,16 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
           cf_date_from, cf_date_to, total_quantity, value_in_mt, match_type, source, is_active, created_at, updated_at
         ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
         [
-          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
-          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
-          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
-          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type || 'exact',
-          data.source || 'manual', 1, created_at, created_at
-        ]
+          normalized.company_id, normalized.list_type || 'purchase', normalized.product_description,
+          normalized.product_match_key, normalized.hsn, normalized.uom,
+          normalized.supplier_gst, normalized.supplier_name, normalized.plastic_category,
+          normalized.plastic_material, normalized.other_plastic_material,
+          normalized.cat1, normalized.recycled_percent, normalized.conversion_factor_id,
+          normalized.cf_base_source, normalized.conversion_factor,
+          normalized.cf_date_from, normalized.cf_date_to, normalized.total_quantity,
+          normalized.value_in_mt, normalized.match_type || 'exact',
+          normalized.source || 'manual', 1, created_at, created_at,
+        ],
       );
       return { success: true, id: result.lastID };
     } catch (e) {
@@ -2911,6 +2989,7 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
     const db = getDb();
     const updated_at = new Date().toISOString();
     try {
+      const normalized = normalizePackagingMasterRecord({ ...data, id });
       await db.run(
         `UPDATE packaging_master SET
           company_id = COALESCE(?, company_id),
@@ -2938,15 +3017,18 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
           updated_at = ?
         WHERE id = ?`,
         [
-          data.company_id, data.list_type, data.product_description, data.product_match_key, data.hsn, data.uom,
-          data.supplier_gst, data.supplier_name, data.plastic_category, data.plastic_material, data.other_plastic_material,
-          data.cat1, data.recycled_percent, data.conversion_factor_id, data.cf_base_source, data.conversion_factor,
-          data.cf_date_from, data.cf_date_to, data.total_quantity, data.value_in_mt, data.match_type, data.is_active,
-          updated_at, id
-        ]
+          normalized.company_id, normalized.list_type, normalized.product_description,
+          normalized.product_match_key, normalized.hsn, normalized.uom,
+          normalized.supplier_gst, normalized.supplier_name, normalized.plastic_category,
+          normalized.plastic_material, normalized.other_plastic_material,
+          normalized.cat1, normalized.recycled_percent, normalized.conversion_factor_id,
+          normalized.cf_base_source, normalized.conversion_factor,
+          normalized.cf_date_from, normalized.cf_date_to, normalized.total_quantity,
+          normalized.value_in_mt, normalized.match_type, normalized.is_active,
+          updated_at, id,
+        ],
       );
 
-      // Cascade to invoices
       const updated = await db.get('SELECT * FROM packaging_master WHERE id = ?', [id]);
       if (updated) {
         await cascadePackagingMasterUpdates(db, updated.company_id, updated);
@@ -2959,11 +3041,197 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
     }
   });
 
+  ipcMain.handle('packagingMaster:repair', async (_, { company_id = null } = {}) => {
+    const db = getDb();
+    const params = [];
+    let query = 'SELECT * FROM packaging_master';
+    if (company_id) {
+      query += ' WHERE company_id = ?';
+      params.push(company_id);
+    }
+    const rows = await db.all(query, ...params);
+    const now = new Date().toISOString();
+    let repaired = 0;
+
+    for (const row of rows) {
+      const normalized = normalizePackagingMasterRecord({
+        ...row,
+        list_type: row.list_type === 'gpl' ? 'purchase' : row.list_type,
+        plastic_material: sanitizePlasticMaterial(row.plastic_material),
+        plastic_category: sanitizePlasticCategory(row.plastic_category),
+      });
+
+      const changed =
+        normalized.product_description !== row.product_description ||
+        normalized.product_match_key !== row.product_match_key ||
+        normalized.hsn !== (row.hsn || '') ||
+        normalized.plastic_category !== (row.plastic_category || '') ||
+        normalized.plastic_material !== (row.plastic_material || '') ||
+        normalized.list_type !== row.list_type;
+
+      if (!changed) continue;
+
+      await db.run(
+        `UPDATE packaging_master SET
+          list_type = ?,
+          product_description = ?,
+          product_match_key = ?,
+          hsn = ?,
+          uom = COALESCE(NULLIF(?, ''), uom),
+          plastic_category = ?,
+          plastic_material = ?,
+          updated_at = ?
+        WHERE id = ?`,
+        [
+          normalized.list_type,
+          normalized.product_description,
+          normalized.product_match_key,
+          normalized.hsn,
+          normalized.uom,
+          normalized.plastic_category,
+          normalized.plastic_material,
+          now,
+          row.id,
+        ],
+      );
+      repaired += 1;
+    }
+
+    return { success: true, repaired, total: rows.length };
+  });
+
   ipcMain.handle('packagingMaster:delete', async (_, id) => {
     const db = getDb();
     try {
       await db.run('DELETE FROM packaging_master WHERE id=?', [id]);
       return { success: true };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:deleteMany', async (_, ids) => {
+    const db = getDb();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { success: false, error: 'No records selected' };
+    }
+    try {
+      const placeholders = ids.map(() => '?').join(',');
+      const result = await db.run(
+        `DELETE FROM packaging_master WHERE id IN (${placeholders})`,
+        ids,
+      );
+      return { success: true, deleted: result?.changes ?? ids.length };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:updateMany', async (_, { ids, updates }) => {
+    const db = getDb();
+    if (!Array.isArray(ids) || ids.length === 0) {
+      return { success: false, error: 'No records selected' };
+    }
+
+    const allowed = [
+      'plastic_category', 'plastic_material', 'conversion_factor',
+      'hsn', 'uom', 'list_type', 'recycled_percent', 'cf_base_source',
+    ];
+    const patch = {};
+    for (const key of allowed) {
+      const value = updates?.[key];
+      if (value !== undefined && value !== null && String(value).trim() !== '') {
+        patch[key] = value;
+      }
+    }
+    if (!Object.keys(patch).length) {
+      return { success: false, error: 'Select at least one field to update' };
+    }
+
+    const updated_at = new Date().toISOString();
+    let updated = 0;
+
+    try {
+      for (const id of ids) {
+        const existing = await db.get('SELECT * FROM packaging_master WHERE id = ?', [id]);
+        if (!existing) continue;
+
+        const merged = { ...existing, ...patch };
+        if (patch.hsn !== undefined) {
+          merged.product_match_key = buildProductMatchKey(merged.product_description, patch.hsn);
+        }
+        const normalized = normalizePackagingMasterRecord({ ...merged, id });
+
+        await db.run(
+          `UPDATE packaging_master SET
+            list_type = COALESCE(?, list_type),
+            product_match_key = COALESCE(?, product_match_key),
+            hsn = COALESCE(?, hsn),
+            uom = COALESCE(?, uom),
+            plastic_category = COALESCE(?, plastic_category),
+            plastic_material = COALESCE(?, plastic_material),
+            recycled_percent = COALESCE(?, recycled_percent),
+            cf_base_source = COALESCE(?, cf_base_source),
+            conversion_factor = COALESCE(?, conversion_factor),
+            updated_at = ?
+          WHERE id = ?`,
+          [
+            normalized.list_type,
+            normalized.product_match_key,
+            normalized.hsn,
+            normalized.uom,
+            normalized.plastic_category,
+            normalized.plastic_material,
+            normalized.recycled_percent,
+            normalized.cf_base_source,
+            normalized.conversion_factor,
+            updated_at,
+            id,
+          ],
+        );
+
+        const saved = await db.get('SELECT * FROM packaging_master WHERE id = ?', [id]);
+        if (saved) {
+          await cascadePackagingMasterUpdates(db, saved.company_id, saved);
+        }
+        updated += 1;
+      }
+
+      return { success: true, updated };
+    } catch (e) {
+      console.error(e);
+      return { success: false, error: e.message, updated };
+    }
+  });
+
+  ipcMain.handle('packagingMaster:bulkUpsert', async (_, { rows }) => {
+    const db = getDb();
+    try {
+      let added = 0;
+      let updated = 0;
+      const errors = [];
+      for (let i = 0; i < (rows || []).length; i++) {
+        const row = rows[i];
+        try {
+          const result = await upsertPackagingMasterRow(db, row, {
+            cascadeFn: cascadePackagingMasterUpdates,
+            fromImport: true,
+          });
+          if (result.action === 'added') added += 1;
+          else updated += 1;
+        } catch (e) {
+          errors.push(`Row ${i + 2}: ${e.message}`);
+        }
+      }
+      return {
+        success: added + updated > 0,
+        added,
+        updated,
+        failed: errors.length,
+        errors,
+      };
     } catch (e) {
       console.error(e);
       return { success: false, error: e.message };
@@ -3006,6 +3274,44 @@ async function cascadePackagingMasterUpdates(db, companyId, updatedRecord) {
       if (canceled || !filePath) return { success: false, canceled: true };
       fs.writeFileSync(filePath, zipped.buffer);
       return { success: true, filePath };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('importerEpr:compute3aDraft', async (_, payload = {}) => {
+    try {
+      const { companyId, purchases, sales, packagingRows } = payload;
+      if (purchases && sales) {
+        const draft = buildImporter3aDraft({ purchases, sales, packagingRows: packagingRows || [] });
+        return { success: true, draft };
+      }
+      const draft = await computeImporter3aDraft({ companyId: companyId || null });
+      return { success: true, draft };
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('importerEpr:finalize3a', async (_, payload = {}) => {
+    try {
+      const result = await finalizeAndGenerateImporter3a({
+        companyId: payload.companyId || null,
+        companyName: payload.companyName || 'Importer',
+        draft: payload.draft || null,
+      });
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('importerEpr:generate3bPdf', async (_, payload = {}) => {
+    try {
+      return await generateImporter3bFromImages({
+        companyName: payload.companyName || 'Importer',
+        images: payload.images || [],
+      });
     } catch (err) {
       return { success: false, error: err.message };
     }

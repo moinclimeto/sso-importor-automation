@@ -8,18 +8,42 @@ import {
   extractPanNumbersFromText,
   normalizeGstin,
   panFromGstin,
+  resolveSellerGstFromInvoiceText,
 } from './gstPartyUtils.js';
 import { verifyGstComplete } from './gstVerifyService.js';
 
-async function extractTextFromPdfFirstPage(filePath) {
+async function extractTextFromPdfPage(filePath, pageNumber = 1) {
   try {
     const data = new Uint8Array(fs.readFileSync(filePath));
     const doc = await getDocument({ data, useSystemFonts: true }).promise;
-    const page = await doc.getPage(1);
+    const pageNo = Math.min(Math.max(1, pageNumber), doc.numPages);
+    const page = await doc.getPage(pageNo);
     const content = await page.getTextContent();
     return content.items.map((item) => item.str).join(' ');
   } catch {
     return '';
+  }
+}
+
+async function extractTextFromPdfFirstPage(filePath) {
+  return extractTextFromPdfPage(filePath, 1);
+}
+
+/** First + last page text — footer seller GST often appears on the last page. */
+export async function extractPdfTextForGstFallback(filePath) {
+  try {
+    const data = new Uint8Array(fs.readFileSync(filePath));
+    const doc = await getDocument({ data, useSystemFonts: true }).promise;
+    const pages = doc.numPages > 1 ? [1, doc.numPages] : [1];
+    const chunks = [];
+    for (const pageNo of pages) {
+      const page = await doc.getPage(pageNo);
+      const content = await page.getTextContent();
+      chunks.push(content.items.map((item) => item.str).join(' '));
+    }
+    return chunks.join('\n');
+  } catch {
+    return extractTextFromPdfFirstPage(filePath);
   }
 }
 
@@ -48,15 +72,19 @@ function partyFromQr(qrData = {}) {
   return parties;
 }
 
-function partiesFromText(text) {
+function partiesFromText(text, buyerGstHint = '') {
+  const footerSeller = resolveSellerGstFromInvoiceText(text, { buyerGst: buyerGstHint });
   const gsts = extractGstNumbersFromText(text);
+  const ordered = footerSeller
+    ? [footerSeller, ...gsts.filter((g) => g !== footerSeller)]
+    : gsts;
   const pans = extractPanNumbersFromText(text);
-  return gsts.map((gst, idx) => ({
+  return ordered.map((gst, idx) => ({
     role: idx === 0 ? 'seller' : 'buyer',
     gst,
     name: '',
     pan: panFromGstin(gst) || pans[idx] || '',
-    source: 'text',
+    source: idx === 0 && footerSeller ? 'footer' : 'text',
   }));
 }
 

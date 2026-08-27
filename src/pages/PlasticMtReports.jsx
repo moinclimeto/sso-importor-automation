@@ -8,6 +8,9 @@ import {
   formatMt,
   mergeAggregates,
 } from '../../shared/plasticMtAggregation.js';
+import { buildPlasticConsumed3cForReports } from '../../shared/plasticConsumed3cReports.js';
+import { plasticConsumed3cHasData } from '../../shared/plasticConsumed3c.js';
+import PlasticConsumed3cTable from '../components/PlasticConsumed3cTable.jsx';
 import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
 
 const DOC_TYPE_OPTIONS = [
@@ -72,6 +75,10 @@ export default function PlasticMtReports({ embedded = false }) {
   const [loading, setLoading] = useState(true);
   const [purchases, setPurchases] = useState([]);
   const [sales, setSales] = useState([]);
+  const [packagingRows, setPackagingRows] = useState([]);
+  const [savedImporter3a, setSavedImporter3a] = useState(null);
+  const [companies, setCompanies] = useState([]);
+  const [companyFilter, setCompanyFilter] = useState('');
 
   useEffect(() => {
     if (embedded) return undefined;
@@ -86,12 +93,21 @@ export default function PlasticMtReports({ embedded = false }) {
     if (!window.pwp) return;
     setLoading(true);
     try {
-      const [p, s] = await Promise.all([
+      const [p, s, pm, reg, comps] = await Promise.all([
         window.pwp.purchases.getAll(),
         window.pwp.sales.getAll(),
+        window.pwp.packagingMaster?.getAll?.() ?? [],
+        window.pwp.registration?.get?.() ?? { success: false },
+        window.pwp.companies.getAll(),
       ]);
       setPurchases(p || []);
       setSales(s || []);
+      setPackagingRows(pm || []);
+      const importer3a = reg?.success && reg?.data?.formData?.autoData?.importer3a
+        ? reg.data.formData.autoData.importer3a
+        : null;
+      setSavedImporter3a(importer3a);
+      setCompanies(comps || []);
     } finally {
       setLoading(false);
     }
@@ -104,6 +120,19 @@ export default function PlasticMtReports({ embedded = false }) {
   const filters = useMemo(
     () => ({ docStatus, financialYear: fyFilter }),
     [docStatus, fyFilter],
+  );
+
+  const plasticConsumed3c = useMemo(
+    () => buildPlasticConsumed3cForReports({
+      purchases,
+      sales,
+      packagingRows,
+      docStatus,
+      financialYear: fyFilter,
+      companyId: companyFilter || null,
+      savedImporter3a,
+    }),
+    [purchases, sales, packagingRows, docStatus, fyFilter, companyFilter, savedImporter3a],
   );
 
   const fyRows = useMemo(() => {
@@ -205,22 +234,36 @@ export default function PlasticMtReports({ embedded = false }) {
           <MapPin size={16} />
           State Wise
         </button>
+        <button
+          type="button"
+          onClick={() => setView('3c')}
+          className={`inline-flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+            view === '3c'
+              ? 'bg-[#0b6c7a] text-white shadow-sm'
+              : 'bg-white border border-slate-200 text-slate-600 hover:bg-slate-50'
+          }`}
+        >
+          <BarChart3 size={16} />
+          3c Packaging (TPA)
+        </button>
       </div>
 
       <div className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
         <div className="flex flex-wrap gap-4 items-end">
-          <div>
-            <label className="label text-xs text-slate-500">Data type</label>
-            <select
-              className="input text-sm min-w-[10rem]"
-              value={docType}
-              onChange={(e) => setDocType(e.target.value)}
-            >
-              {DOC_TYPE_OPTIONS.map((o) => (
-                <option key={o.value} value={o.value}>{o.label}</option>
-              ))}
-            </select>
-          </div>
+          {view !== '3c' ? (
+            <div>
+              <label className="label text-xs text-slate-500">Data type</label>
+              <select
+                className="input text-sm min-w-[10rem]"
+                value={docType}
+                onChange={(e) => setDocType(e.target.value)}
+              >
+                {DOC_TYPE_OPTIONS.map((o) => (
+                  <option key={o.value} value={o.value}>{o.label}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
           <div>
             <label className="label text-xs text-slate-500">Status</label>
             <select
@@ -247,9 +290,57 @@ export default function PlasticMtReports({ embedded = false }) {
               ))}
             </select>
           </div>
+          {view === '3c' ? (
+            <div>
+              <label className="label text-xs text-slate-500">Company</label>
+              <select
+                className="input text-sm min-w-[12rem]"
+                value={companyFilter}
+                onChange={(e) => setCompanyFilter(e.target.value)}
+              >
+                <option value="">All companies</option>
+                {companies.map((c) => (
+                  <option key={c.id} value={c.id}>{c.name}</option>
+                ))}
+              </select>
+            </div>
+          ) : null}
         </div>
       </div>
 
+      {loading ? (
+        <div className="flex justify-center py-16">
+          <div className="w-8 h-8 border-4 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
+        </div>
+      ) : view === '3c' ? (
+        <div className="space-y-3">
+          <div className="rounded-lg border border-teal-100 bg-teal-50/60 px-4 py-3 text-sm text-teal-900">
+            <p className="font-medium">Section 3c — Plastic packaging consumed (confirmation)</p>
+            <p className="mt-1 text-xs text-teal-800 leading-relaxed">
+              Totals use <strong>Importer 3a</strong> when import–sale matches exist; otherwise
+              <strong> Sales + Packaging Master</strong> MT, then procurement. Values are category-wise and
+              financial-year-wise in Tonnes — confirm before CPCB upload.
+            </p>
+            {plasticConsumed3c.sourceLabel ? (
+              <p className="mt-2 text-xs font-medium text-teal-900">
+                Data source: {plasticConsumed3c.sourceLabel}
+              </p>
+            ) : null}
+          </div>
+          <PlasticConsumed3cTable
+            title=""
+            years={plasticConsumed3c.years}
+            plasticConsumed={plasticConsumed3c.plasticConsumed}
+            readOnly
+          />
+          {!plasticConsumed3cHasData(plasticConsumed3c.plasticConsumed) ? (
+            <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2">
+              No packaging MT found for selected filters. Publish sales or procurement records with plastic category and conversion factor, or finalize Importer 3a.
+            </p>
+          ) : null}
+        </div>
+      ) : (
+        <>
       <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
         {PLASTIC_CATEGORIES.map((cat) => (
           <div key={cat} className="bg-white rounded-xl border border-slate-200 p-4 shadow-sm">
@@ -267,11 +358,7 @@ export default function PlasticMtReports({ embedded = false }) {
         </div>
       </div>
 
-      {loading ? (
-        <div className="flex justify-center py-16">
-          <div className="w-8 h-8 border-4 border-green-500/30 border-t-green-500 rounded-full animate-spin" />
-        </div>
-      ) : view === 'fy' ? (
+      {view === 'fy' ? (
         <div>
           <h3 className="text-sm font-bold text-slate-800 mb-3">Financial Year → Category (MT)</h3>
           <ReportTable
@@ -289,6 +376,8 @@ export default function PlasticMtReports({ embedded = false }) {
             emptyMessage="No published records found for the selected filters."
           />
         </div>
+      )}
+        </>
       )}
     </div>
   );

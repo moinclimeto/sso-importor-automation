@@ -1,5 +1,7 @@
 /** Shared procurement CF / MT logic (Climeto-aligned). */
 
+import { normalizeHsnCode, resolveLineHsn, splitHsnFromDescription } from './hsnUtils.js';
+
 export const CF_MODE_OPTIONS = [
   { value: 'default', label: 'Default' },
   { value: 'manual', label: 'Manual' },
@@ -379,6 +381,19 @@ export function lookupPackagingMasterRow(rows = [], line, listType = 'gpl') {
   );
 }
 
+/** Try common packaging master list types, then any active row with the same match key. */
+export function lookupPackagingMasterRowAny(rows = [], line) {
+  for (const listType of ['gpl', 'sales', 'purchase']) {
+    const match = lookupPackagingMasterRow(rows, line, listType);
+    if (match) return match;
+  }
+  const key = buildProductMatchKey(
+    line.productDescription ?? line.product ?? line.item_name,
+    line.hsn ?? line.hsn_code,
+  );
+  return rows.find((r) => r.product_match_key === key && r.is_active !== 0) || null;
+}
+
 /** Only auto-apply packaging master on first pass — never overwrite saved/manual CF. */
 export function shouldAutoApplyPackagingMaster(draft = {}) {
   const mode = String(draft.quantityDerivationType || 'default').trim().toLowerCase();
@@ -507,6 +522,18 @@ export function itemToLineDraft(item, idx = 0) {
     amount ??
     (qtyNum != null && rateVal != null ? Number((qtyNum * rateVal).toFixed(2)) : null);
 
+  let productDescription = item.productDescription ?? item.product ?? item.item_name ?? '';
+  let hsn = normalizeHsnCode(item.hsn ?? item.hsn_code ?? '');
+  if (!hsn) {
+    const split = splitHsnFromDescription(productDescription);
+    if (split.hsn) {
+      hsn = split.hsn;
+      productDescription = split.description;
+    } else {
+      hsn = resolveLineHsn(item) || '';
+    }
+  }
+
   const cfMode = String(
     item.quantityDerivationType ?? item.quantity_derivation_type ?? 'default',
   ).trim().toLowerCase();
@@ -534,8 +561,8 @@ export function itemToLineDraft(item, idx = 0) {
 
   const draft = {
     lineNo: item.lineNo ?? item.line_no ?? idx + 1,
-    productDescription: item.productDescription ?? item.product ?? item.item_name ?? '',
-    hsn: item.hsn ?? item.hsn_code ?? '',
+    productDescription,
+    hsn,
     unit,
     uom: unit,
     unitInInvoice: unit,

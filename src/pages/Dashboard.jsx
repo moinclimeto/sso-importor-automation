@@ -28,6 +28,7 @@ export default function Dashboard() {
   const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
   const [isEditingBank, setIsEditingBank] = useState(false);
   const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
+  const [bankSaveMessage, setBankSaveMessage] = useState('');
 
   useEffect(() => {
     if (window.pwp) {
@@ -72,10 +73,34 @@ export default function Dashboard() {
   }
 
   const handleSaveBankDetails = async () => {
-    if (window.pwp?.settings) {
-      await window.pwp.settings.set('global_bank_details', editBankDetails);
-      setBankDetails(editBankDetails);
-      setIsEditingBank(false);
+    const account_number = String(editBankDetails.account_number || '').trim();
+    const ifsc_code = String(editBankDetails.ifsc_code || '').trim().toUpperCase();
+    if (!account_number || !ifsc_code) {
+      setBankSaveMessage('Account Number and IFSC Code are both required.');
+      return;
+    }
+    const payload = { account_number, ifsc_code };
+    if (!window.pwp?.settings) {
+      setBankSaveMessage('Settings API not available.');
+      return;
+    }
+    await window.pwp.settings.set('global_bank_details', payload);
+    setBankDetails(payload);
+    setIsEditingBank(false);
+    setBankSaveMessage('');
+
+    if (window.pwp.sales?.applyBankDetailsToAll) {
+      const res = await window.pwp.sales.applyBankDetailsToAll({
+        ...payload,
+        overwriteAll: true,
+      });
+      if (res?.success) {
+        setBankSaveMessage(`Saved. Applied to ${res.updated ?? 0} sale record(s).`);
+      } else {
+        setBankSaveMessage(res?.error || 'Saved globally, but failed to update sale records.');
+      }
+    } else {
+      setBankSaveMessage('Saved globally.');
     }
   };
 
@@ -117,7 +142,11 @@ export default function Dashboard() {
             <CreditCard size={22} className="text-white" />
           </div>
           <div>
-            <p className="text-sm text-slate-500 font-medium">Sale Auto-Apply Bank Details</p>
+            <p className="text-sm text-slate-500 font-medium">Global Sale Bank Details</p>
+            <p className="text-xs text-slate-400 mt-0.5">Account No & IFSC auto-fill all Post Consumer (Sale) entries</p>
+            {bankSaveMessage && (
+              <p className="text-xs text-emerald-600 mt-1">{bankSaveMessage}</p>
+            )}
             {isEditingBank ? (
               <div className="flex items-center gap-3 mt-1">
                 <input
@@ -131,7 +160,10 @@ export default function Dashboard() {
                   type="text"
                   placeholder="IFSC Code"
                   value={editBankDetails.ifsc_code}
-                  onChange={(e) => setEditBankDetails({ ...editBankDetails, ifsc_code: e.target.value })}
+                  onChange={(e) => setEditBankDetails({
+                    ...editBankDetails,
+                    ifsc_code: e.target.value.toUpperCase(),
+                  })}
                   className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-32"
                 />
               </div>
@@ -153,11 +185,11 @@ export default function Dashboard() {
               </button>
             </div>
           ) : (
-            <button 
-              onClick={() => {
+              <button onClick={() => {
                 setEditBankDetails(bankDetails);
+                setBankSaveMessage('');
                 setIsEditingBank(true);
-              }} 
+              }}
               className="p-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 transition"
               title="Edit Bank Details"
             >

@@ -1,4 +1,5 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn } from 'child_process';
@@ -12,6 +13,49 @@ import {
   fillUntilPortalAccepts,
   waitForPortalBusy,
 } from './portalErrorGuard.js';
+import {
+  fillPlasticConsumedGrid,
+  resolvePlasticConsumedYears,
+} from './portalPlasticConsumed.js';
+import { fillPartBSection4Grid } from './portalPartBSection4.js';
+import { fillPartBSection5bRows, fillPartBSection5dRows, forceCloseAllEntryModals } from './portalPartBSection5.js';
+import { resolvePartBSection4ForAutomation, resolvePartBTransactionsForAutomation } from './registrationPartBData.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../../shared/partBSection4.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
+
+const UPLOAD_LABEL_BASE_NAMES = {
+  'Company PAN': 'company_pan',
+  'Unit GST': 'unit_gst',
+  '^\\s*GST\\s*\\*?': 'gst',
+  'CIN': 'cin',
+  'Supporting document for company category': 'supporting_category_doc',
+  'Authorized person PAN': 'person_pan',
+  '^\\s*PAN\\s*\\*?': 'person_pan',
+  'Details \\(Type & Quantity\\) of products produced/marketed': 'operations_details',
+  'Representative picture of Plastic Packaging': 'plastic_packaging_picture',
+  'Covering Letter': 'covering_letter',
+  'Signature': 'signature',
+  'Any Other Information': 'self_declaration',
+};
+
+function resolveUploadBaseName(labelPattern) {
+  return UPLOAD_LABEL_BASE_NAMES[labelPattern] || '';
+}
+
+function prepareUploadFile(filePath, uploadBaseName = '') {
+  if (!filePath || !fs.existsSync(filePath)) return filePath;
+  const ext = path.extname(filePath).toLowerCase() || '.pdf';
+  const safeName = uploadBaseName
+    ? registrationDocFileName(uploadBaseName, ext)
+    : sanitizeCpcbPortalFileName(path.basename(filePath), 'upload');
+  const safePath = path.join(os.tmpdir(), safeName.replace(/[<>:"/\\|?*]/g, '_'));
+  fs.copyFileSync(filePath, safePath);
+  return safePath;
+}
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const DUMMY_PDF = path.resolve(__dirname, '../../data/dummy_pan.pdf');
@@ -57,7 +101,9 @@ export function normalizeApplicationData(raw = {}) {
     hasProductionFacility: src.hasProductionFacility || '',
     capitalInvested: src.capitalInvested || '',
     yearOfCommencement: src.yearOfCommencement || '2026',
-    plasticConsumed: ZERO_PLASTIC,
+    plasticConsumed: src.plasticConsumed && typeof src.plasticConsumed === 'object'
+      ? src.plasticConsumed
+      : ZERO_PLASTIC,
     complianceStatus: src.complianceStatus || '',
     thicknessOfPlastic: src.thicknessOfPlastic || '',
     isSameAsRegisteredAddress: src.isSameAsRegisteredAddress ?? true,
@@ -97,6 +143,10 @@ export function normalizeApplicationData(raw = {}) {
       nested.partCAuditedStatement,
       nested.partCAuditedStatement
     ),
+    partBSection4: Array.isArray(src.partBSection4) ? src.partBSection4 : [],
+    partBTransactions: src.partBTransactions && typeof src.partBTransactions === 'object'
+      ? src.partBTransactions
+      : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
   };
 }
 
@@ -214,6 +264,9 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
     return false;
   }
 
+  const uploadBaseName = resolveUploadBaseName(labelPattern);
+  const uploadFile = prepareUploadFile(file, uploadBaseName);
+
   // Re-fill passes must only retry the slots that are still empty.
   if (await isAlreadyUploadedNearLabel(page, labelPattern)) {
     if (onLog) onLog(`${labelPattern} already has a document on the portal — skipping.`);
@@ -232,7 +285,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
 
   for (let attempt = 1; attempt <= retries; attempt += 1) {
     try {
-      await uploadDocumentByLabel(page, labelPattern, file, onLog);
+      await uploadDocumentByLabel(page, labelPattern, uploadFile, onLog, { uploadBaseName });
       await page.waitForTimeout(700);
       const alerts = await collectPortalAlerts(page);
       if (alerts.length) {
@@ -257,7 +310,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
     const box = label.locator('xpath=ancestor::div[contains(@class,"col") or contains(@class,"form") or contains(@class,"row")][1]');
     const fileInput = box.locator('input[type="file"]').first();
     if (await fileInput.count()) {
-      await fileInput.setInputFiles(file);
+      await fileInput.setInputFiles(uploadFile);
       await page.waitForTimeout(1200);
       if (onLog) onLog(`Uploaded ${labelPattern} via nearby file input`);
       return true;
@@ -268,7 +321,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
         page.waitForEvent('filechooser', { timeout: 10000 }),
         uploadBtn.click(),
       ]);
-      await chooser.setFiles(file);
+      await chooser.setFiles(uploadFile);
       await page.waitForTimeout(1200);
       if (onLog) onLog(`Uploaded ${labelPattern} via Upload link`);
       return true;
@@ -279,27 +332,35 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
   return false;
 }
 
+function partASection2StateField(page) {
+  return page.locator('app-form-field-renderer').filter({
+    hasText: /2\s*a\)\s*Select States\/UTs in which the Importer is Operating/i,
+  }).first();
+}
+
 async function fillVisibleInput(page, selectors, value, onLog, name) {
   if (value === undefined || value === null || value === '') return false;
-  const wanted = String(value);
+  const wanted = String(value).trim();
   for (const sel of selectors) {
-    const loc = page.locator(sel).first();
+    const loc = page.locator(`${sel}:visible`).first();
     if (!(await loc.isVisible({ timeout: 1500 }).catch(() => false))) continue;
     if (onLog) onLog(`Filling ${name}: ${wanted}`);
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await loc.scrollIntoViewIfNeeded().catch(() => {});
       await loc.click({ force: true }).catch(() => {});
+      await loc.press('Control+A').catch(() => {});
+      await loc.press('Backspace').catch(() => {});
       await loc.fill('').catch(() => {});
-      await loc.fill(wanted).catch(() => {});
+      await loc.pressSequentially(wanted, { delay: 25 }).catch(() => loc.fill(wanted).catch(() => {}));
       await loc.dispatchEvent('input').catch(() => {});
       await loc.dispatchEvent('change').catch(() => {});
       await loc.blur().catch(() => {});
-      const actual = String(await loc.inputValue().catch(() => '')).trim();
-      if (actual === wanted.trim()) return true;
+      const actual = String(await loc.inputValue().catch(() => '')).trim().toUpperCase();
+      if (actual === wanted.toUpperCase()) return true;
       if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${actual}"). Retrying.`);
-      await page.waitForTimeout(400);
+      await page.waitForTimeout(250);
     }
-    return true;
+    return false;
   }
   return false;
 }
@@ -349,10 +410,27 @@ async function chooseOption(page, { labelRegex, placeholders = [], option, onLog
   return false;
 }
 
+function portalStateMatchRegex(stateName) {
+  const words = String(stateName || '').trim().split(/\s+/).filter(Boolean)
+    .map((w) => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+  if (!words.length) return /^$/;
+  return new RegExp(words.join('\\s+'), 'i');
+}
+
 function stateNameVariants(state) {
   const raw = String(state || '').trim();
   const titled = raw.toLowerCase().replace(/\b\w/g, (c) => c.toUpperCase());
-  return [...new Set([raw, titled, 'Madhya Pradesh', 'MADHYA PRADESH', 'Madhya pradesh'])];
+  return [...new Set([raw, titled])];
+}
+
+async function isOperatingStatesReady(page, states) {
+  const field = operatingStatesField(page);
+  if (!(await field.isVisible({ timeout: 2000 }).catch(() => false))) return false;
+  const wanted = normalizeOperatingStates(states);
+  for (const stateName of wanted) {
+    if (!(await isOperatingStateSelected(field, stateName))) return false;
+  }
+  return wanted.length > 0;
 }
 
 function toPortalStateName(name) {
@@ -361,182 +439,179 @@ function toPortalStateName(name) {
   return raw.replace(/\b\w/g, (c) => c.toUpperCase());
 }
 
-async function isStateListOpen(page) {
-  return page.getByText('Andaman And Nicobar Islands', { exact: true }).isVisible({ timeout: 2000 }).catch(() => false);
+function normalizeOperatingStates(states) {
+  const raw = Array.isArray(states) ? states.filter(Boolean).map((s) => toPortalStateName(s)) : [];
+  if (raw.length) return [...new Set(raw)];
+  return ['Madhya Pradesh'];
 }
 
-function partASection2StateField(page) {
-  return page.locator('app-form-field-renderer').filter({
-    hasText: /2\s*a\)\s*Select States\/UTs in which the Importer is Operating/i,
-  }).first();
+function operatingStatesField(page) {
+  return partASection2StateField(page).locator('.custom-multiselect-wrapper').first();
 }
 
-async function clickOnlyOperatingStatesField(page, onLog) {
-  const field = partASection2StateField(page);
-  await field.waitFor({ state: 'visible', timeout: 15000 });
-  await field.scrollIntoViewIfNeeded();
-  if (onLog) onLog('Found Part A 2a via app-form-field-renderer — clicking it');
-
-  const label = field.locator('label.multiselect-label').first();
-  if (await label.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await label.click({ timeout: 4000 });
-    await page.waitForTimeout(600);
-    if (await isStateListOpen(page)) return true;
+async function isStateDropdownOpen(page, field) {
+  const scoped = field || page.locator('.custom-multiselect-wrapper').first();
+  if (await scoped.locator('.multiselect-display.multiselect-open').isVisible({ timeout: 400 }).catch(() => false)) {
+    return true;
   }
-
-  const chips = field.locator('.chips-container, .multiselect-container, .dropdown-btn').first();
-  if (await chips.isVisible({ timeout: 2000 }).catch(() => false)) {
-    await chips.click({ timeout: 4000 });
-    await page.waitForTimeout(600);
-    if (await isStateListOpen(page)) return true;
-    const box = await chips.boundingBox();
-    if (box) {
-      await page.mouse.click(box.x + box.width - 10, box.y + box.height / 2);
-      await page.waitForTimeout(600);
-      if (await isStateListOpen(page)) return true;
-    }
+  if (await scoped.locator('.multiselect-dropdown').isVisible({ timeout: 400 }).catch(() => false)) {
+    return true;
   }
-
-  await field.click({ timeout: 4000 }).catch(() => {});
-  await page.waitForTimeout(600);
-  return isStateListOpen(page);
+  const panel = scoped.locator(
+    '.dropdown-panel, .options-container, .multiselect-dropdown-list, .options-list, .dropdown-list, .multiselect-options, .dropdown-content'
+  ).first();
+  if (await panel.isVisible({ timeout: 400 }).catch(() => false)) return true;
+  const search = scoped.locator('input.search-input, input[placeholder*="Select states" i]').first();
+  return search.isVisible({ timeout: 400 }).catch(() => false);
 }
 
-async function openStateCheckboxDropdown(page, onLog) {
-  const label = page.getByText(/2\s*a\).*Importer is Operating/i).first();
-  await label.scrollIntoViewIfNeeded().catch(() => {});
-  await page.waitForTimeout(300);
+async function openOperatingStatesDropdown(page, field, onLog) {
+  await field.scrollIntoViewIfNeeded().catch(() => {});
+  const display = field.locator('.multiselect-display').first();
+  const icon = field.locator('svg.dropdown-icon').first();
+  const selectedItems = field.locator('.selected-items').first();
+  const placeholder = field.getByText(/^Select states$/i).first();
 
-  const chips = label.locator('xpath=following::div[contains(@class,"chips-container")][1]').or(
-    page.locator('.chips-container').first()
-  );
-  const field = chips.locator('xpath=..');
-  const arrow = field.locator('[class*="arrow"], [class*="caret"], [class*="chevron"], svg, i.fa, .dropdown-icon').last();
-  const placeholder = page.getByText('Select states', { exact: true }).first();
-
-  const clicks = [
-    async () => { if (await arrow.isVisible({ timeout: 800 }).catch(() => false)) await arrow.click({ timeout: 2000 }); },
-    async () => { await field.click({ timeout: 2000 }); },
-    async () => { await chips.click({ timeout: 2000 }); },
-    async () => { if (await placeholder.isVisible({ timeout: 800 }).catch(() => false)) await placeholder.click({ timeout: 2000 }); },
-    async () => {
-      await chips.evaluate((el) => {
-        const host = el.closest('app-multiselect, app-chips-select, ng-multiselect-dropdown, .form-control, .form-group') || el.parentElement || el;
-        host.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
-        host.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
-        host.click();
-      });
-    },
+  const openers = [
+    () => display.click({ timeout: 2500 }),
+    () => icon.click({ timeout: 2500 }),
+    () => field.locator('input.search-input').first().click({ timeout: 2500 }),
+    () => selectedItems.click({ timeout: 2500 }),
+    () => placeholder.click({ timeout: 2500 }),
+    () => field.locator('.multiselect-container').first().click({ timeout: 2500 }),
+    () => field.locator('.chips-container').first().click({ timeout: 2500 }),
   ];
 
-  for (let i = 0; i < clicks.length; i += 1) {
-    if (await isStateListOpen(page)) {
-      if (onLog) onLog('States checkbox dropdown opened');
-      return true;
-    }
-    if (onLog) onLog(`Clicking state field (try ${i + 1}/${clicks.length})...`);
-    await clicks[i]().catch(() => {});
-    await page.waitForTimeout(450);
-    if (await isStateListOpen(page)) {
-      if (onLog) onLog('States checkbox dropdown opened');
-      return true;
-    }
+  for (let i = 0; i < openers.length; i += 1) {
+    if (await isStateDropdownOpen(page, field)) return true;
+    if (onLog) onLog(`Opening states dropdown (try ${i + 1}/${openers.length})...`);
+    await openers[i]().catch(() => {});
+    await page.waitForTimeout(180);
+    if (await isStateDropdownOpen(page, field)) return true;
   }
 
-  throw new Error('States dropdown did not open — list not visible after clicks');
+  return isStateDropdownOpen(page, field);
 }
 
-async function checkStateInOpenList(page, stateName, onLog) {
-  const panel = page.locator('div, ul').filter({ hasText: 'Andaman And Nicobar Islands' }).filter({ hasText: 'Andhra Pradesh' }).last();
+async function isOperatingStateSelected(field, stateName) {
+  const escaped = stateName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const chip = field.locator('.chip').filter({ hasText: new RegExp(`^\\s*${escaped}\\s*$`, 'i') }).first();
+  if (await chip.isVisible({ timeout: 400 }).catch(() => false)) return true;
 
-  for (let i = 0; i < 45; i += 1) {
-    const row = panel.locator('label, li, div').filter({ hasText: new RegExp(`^\\s*${stateName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i') }).last();
-    if (await row.isVisible().catch(() => false)) {
-      const cb = row.locator('input[type="checkbox"]').first();
-      if (await cb.count()) {
-        if (!(await cb.isChecked().catch(() => false))) {
-          await cb.check({ force: true }).catch(() => row.click({ force: true }));
-        }
-      } else {
-        await row.click({ force: true });
-      }
-      if (onLog) onLog(`Checked state checkbox: ${stateName}`);
-      return true;
-    }
-    await panel.evaluate((el) => {
-      let node = el;
-      while (node) {
-        const style = getComputedStyle(node);
-        if ((style.overflowY === 'auto' || style.overflowY === 'scroll') && node.scrollHeight > node.clientHeight + 5) {
-          node.scrollTop += 100;
-          return;
-        }
-        node = node.parentElement;
-      }
-      el.scrollTop += 100;
-    }).catch(() => {});
-    await page.waitForTimeout(90);
+  const selected = field.locator('.selected-items').first();
+  const text = String(await selected.innerText().catch(() => '')).replace(/\s+/g, ' ').trim();
+  if (!text || /select states/i.test(text)) return false;
+  return new RegExp(escaped, 'i').test(text);
+}
+
+async function pickStateInOpenDropdown(page, field, stateName, onLog) {
+  await field.locator('.multiselect-dropdown, .dropdown-content').first()
+    .waitFor({ state: 'visible', timeout: 3000 }).catch(() => {});
+
+  const search = field.locator('input.search-input, input[placeholder*="Select states" i]').first();
+  if (await search.isVisible({ timeout: 800 }).catch(() => false)) {
+    await search.click({ timeout: 1000 }).catch(() => {});
+    await search.fill('');
+    const filterToken = String(stateName).split(/\s+/).slice(0, 2).join(' ') || stateName;
+    await search.pressSequentially(filterToken, { delay: 25 }).catch(() => search.fill(filterToken).catch(() => {}));
+    await page.waitForTimeout(250);
   }
+
+  const statePattern = portalStateMatchRegex(stateName);
+  const option = field.locator('label.dropdown-option').filter({ hasText: statePattern }).first();
+
+  if (await option.isVisible({ timeout: 1500 }).catch(() => false)) {
+    const checkbox = option.locator('input.option-checkbox').first();
+    const checked = await checkbox.isChecked().catch(() => false);
+    if (!checked) {
+      await checkbox.check({ force: true }).catch(() => option.click({ force: true }));
+    }
+    await page.waitForTimeout(200);
+    if (onLog) onLog(`Selected state: ${stateName}`);
+    return true;
+  }
+
+  const picked = await field.evaluate((root, state) => {
+    const norm = (value) => String(value || '').replace(/\s+/g, ' ').trim().toLowerCase();
+    const want = norm(state);
+    const labels = [...root.querySelectorAll('label.dropdown-option')];
+    const match = labels.find((label) => {
+      const text = norm(label.querySelector('.option-label')?.textContent || label.textContent);
+      return text === want || text.includes(want) || want.includes(text);
+    });
+    if (!match) return false;
+    match.scrollIntoView({ block: 'center' });
+    const cb = match.querySelector('input.option-checkbox');
+    if (cb && !cb.checked) {
+      cb.click();
+      cb.dispatchEvent(new Event('change', { bubbles: true }));
+      cb.dispatchEvent(new Event('input', { bubbles: true }));
+    } else {
+      match.click();
+    }
+    return true;
+  }, stateName).catch(() => false);
+
+  if (picked) {
+    await page.waitForTimeout(200);
+    if (onLog) onLog(`Selected state via dropdown list: ${stateName}`);
+    return true;
+  }
+
+  const escaped = stateName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const checkbox = field.locator('label.dropdown-option').filter({ hasText: new RegExp(escaped, 'i') })
+    .locator('input.option-checkbox').first();
+  if (await checkbox.isVisible({ timeout: 800 }).catch(() => false)) {
+    await checkbox.check({ force: true }).catch(() => checkbox.click({ force: true }));
+    if (onLog) onLog(`Selected state via checkbox: ${stateName}`);
+    return true;
+  }
+
   return false;
 }
 
-async function isMadhyaChipVisible(page) {
-  return page.locator('.chip, .chips-container').filter({ hasText: /Madhya Pradesh/i }).first()
-    .isVisible({ timeout: 1500 }).catch(() => false);
-}
+async function selectOperatingStates(page, states, onLog) {
+  const wanted = normalizeOperatingStates(states);
+  if (onLog) onLog(`Part A 2a — selecting operating states: ${wanted.join(', ')}`);
 
-async function selectOperatingStates(page, _states, onLog) {
-  const STATE = 'Madhya Pradesh';
-  if (onLog) onLog(`Part A section 2 (2a) — selecting state: ${STATE}`);
+  const field = operatingStatesField(page);
+  await field.waitFor({ state: 'visible', timeout: 12000 });
+  await field.scrollIntoViewIfNeeded().catch(() => {});
 
-  for (let attempt = 1; attempt <= 3; attempt += 1) {
-    if (await isMadhyaChipVisible(page)) {
-      if (onLog) onLog('Madhya Pradesh chip already present');
-      return true;
-    }
-    if (onLog) onLog(`2a states open+select attempt ${attempt}/3`);
-    await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(250);
-
-    let opened = false;
-    try {
-      opened = await clickOnlyOperatingStatesField(page, onLog);
-    } catch (err) {
-      if (onLog) onLog(`2a click failed: ${err.message}`);
-    }
-    if (!opened) {
-      const field = partASection2StateField(page);
-      await field.click({ timeout: 4000 }).catch(() => {});
-      await page.waitForTimeout(500);
-      opened = await isStateListOpen(page);
-    }
-    if (!opened) continue;
-
-    const search = page.locator('input[placeholder*="Search" i], input[placeholder*="Filter" i]').last();
-    if (await search.isVisible({ timeout: 800 }).catch(() => false)) {
-      await search.fill(STATE);
-      await page.waitForTimeout(400);
+  for (const stateName of wanted) {
+    if (await isOperatingStateSelected(field, stateName)) {
+      if (onLog) onLog(`${stateName} already selected`);
+      continue;
     }
 
-    let checked = await checkStateInOpenList(page, STATE, onLog);
-    if (!checked) {
-      const box = page.getByRole('checkbox', { name: /Madhya Pradesh/i }).first();
-      if (await box.isVisible({ timeout: 1500 }).catch(() => false)) {
-        await box.click({ timeout: 3000 }).catch(() => box.check({ force: true }));
-        checked = true;
+    let selected = false;
+    for (let attempt = 1; attempt <= 3 && !selected; attempt += 1) {
+      if (attempt > 1) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(150);
+      }
+      const opened = await openOperatingStatesDropdown(page, field, onLog);
+      if (!opened && onLog) onLog('States dropdown panel not detected — trying selection anyway');
+
+      selected = await pickStateInOpenDropdown(page, field, stateName, onLog);
+      await page.waitForTimeout(250);
+
+      if (!selected) {
+        selected = await isOperatingStateSelected(field, stateName);
+      }
+
+      if (selected) {
+        await page.keyboard.press('Escape').catch(() => {});
+        await page.waitForTimeout(120);
       }
     }
-    await page.keyboard.press('Escape').catch(() => {});
-    await page.waitForTimeout(400);
 
-    if (await isMadhyaChipVisible(page)) {
-      if (onLog) onLog('State chip selected: Madhya Pradesh');
-      return true;
+    if (!selected) {
+      throw new Error(`Required Part A 2a state (${stateName}) was not selected`);
     }
   }
 
-  if (onLog) onLog('FAILED: Madhya Pradesh was not selected after 3 attempts');
-  throw new Error('Required Part A 2a state (Madhya Pradesh) was not selected');
+  return true;
 }
 
 async function selectOperatingStatesUnused(page, states, onLog) {
@@ -881,12 +956,18 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await uploadNearLabel(page, 'products produced/marketed', productsFile, onLog);
   await uploadNearLabel(page, 'Representative picture of Plastic Packaging', pictureFile, onLog);
 
-  await fillAgGridZeros(
-    page,
-    /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
-    onLog,
-    'Part A 3c'
-  );
+  const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
+    ? resolvePlasticConsumedYears(data.plasticConsumed)
+    : getImporterReportingFinancialYears();
+  const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
+  if (!filled3c) {
+    await fillAgGridZeros(
+      page,
+      /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
+      onLog,
+      'Part A 3c fallback zeros'
+    );
+  }
 
   await chooseOption(page, {
     labelRegex: /Status of compliance with PWM Rules/i,
@@ -914,7 +995,26 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   }
 }
 
-export async function fillPartBSection4(page, _section4Data, onLog) {
+export async function fillPartBSection4(page, section4Data, onLog, plasticConsumed = {}) {
+  const groups = Array.isArray(section4Data) ? section4Data : [];
+  const validationIssues = validateSection4AgainstPlasticConsumed(
+    groups,
+    plasticConsumed,
+    getImporterReportingFinancialYears(),
+  );
+  if (validationIssues.length && onLog) {
+    onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4PartAIssue(validationIssues[0])}`);
+  }
+
+  if (groups.length) {
+    if (onLog) onLog(`Filling Part B Section 4 for ${groups.length} state-year group(s)...`);
+    const filled = await fillPartBSection4Grid(page, groups, onLog);
+    if (filled) return true;
+    if (onLog) onLog('Part B Section 4 grid fill did not confirm — retrying once after scroll.');
+    await page.waitForTimeout(800);
+    const retry = await fillPartBSection4Grid(page, groups, onLog);
+    if (retry) return true;
+  }
   if (onLog) onLog('Filling Part B Section 4 with 0...');
   await fillAgGridZeros(
     page,
@@ -924,8 +1024,26 @@ export async function fillPartBSection4(page, _section4Data, onLog) {
   );
 }
 
-export async function fillPartBSection5(page, _transactions, onLog) {
-  if (onLog) onLog('Skipping Part B Section 5 — leaving transaction tables empty.');
+export async function fillPartBSection5(page, transactions = {}, onLog) {
+  const sec5b = transactions?.sec5b || [];
+  const sec5d = transactions?.sec5d || [];
+  let filled = false;
+
+  if (sec5b.length) {
+    if (onLog) onLog(`Filling Part B Section 5b (${sec5b.length} row(s))...`);
+    filled = await fillPartBSection5bRows(page, sec5b, onLog) || filled;
+    await forceCloseAllEntryModals(page, onLog);
+  }
+
+  if (sec5d.length) {
+    await forceCloseAllEntryModals(page, onLog);
+    if (onLog) onLog(`Filling Part B Section 5d (${sec5d.length} row(s))...`);
+    filled = await fillPartBSection5dRows(page, sec5d, onLog) || filled;
+  }
+
+  if (!filled && onLog) {
+    onLog('No Part B Section 5b/5d rows prepared — skipping Section 5 transactions.');
+  }
 }
 
 async function fillPartCDocuments(page, data, onLog) {
@@ -1262,12 +1380,22 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
 
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
+  data.partBSection4 = await resolvePartBSection4ForAutomation({
+    partBSection4: data.partBSection4,
+    operatingStates: data.operatingStates,
+    onLog,
+  });
+  data.partBTransactions = await resolvePartBTransactionsForAutomation({
+    partBTransactions: data.partBTransactions,
+    gstin: data.unitGst,
+    onLog,
+  });
 
   await fillUntilPortalAccepts(page, {
     stepName: 'Part A',
     onLog,
     fillFn: () => fillRemainingPartA(page, data, data, onLog),
-    isReadyFn: () => isMadhyaChipVisible(page),
+    isReadyFn: () => isOperatingStatesReady(page, data.operatingStates),
     saveFn: () => clickSaveAndNext(page, onLog, 'Part A'),
   });
 
@@ -1275,8 +1403,8 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     stepName: 'Part B',
     onLog,
     fillFn: async () => {
-      await fillPartBSection4(page, null, onLog);
-      await fillPartBSection5(page, null, onLog);
+      await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
+      await fillPartBSection5(page, data.partBTransactions, onLog);
     },
     saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
   });

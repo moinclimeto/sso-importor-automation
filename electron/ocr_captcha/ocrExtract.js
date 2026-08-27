@@ -7,6 +7,7 @@
  */
 
 import path from 'path';
+import { resolveSellerGstFromInvoiceText } from '../gstPartyUtils.js';
 import {
   deriveProcessedQuantityMT,
   isWeightUom,
@@ -19,6 +20,7 @@ import {
   resolveLineRate,
 } from '../../shared/procurementConversionFactor.js';
 import { resolveState } from '../../shared/gstStateCodes.js';
+import { resolveProcurementSource } from '../../shared/importerPurchaseSaleMatch.js';
 import { fillLineItemsHsn, resolveLineHsn } from '../../shared/hsnUtils.js';
 import { normalizePlasticCategory } from '../../shared/plasticCategories.js';
 
@@ -444,6 +446,7 @@ ${fyHint}
 {"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"buyer_address":null,"buyer_state":null,"buyer_city":null,"buyer_pin_code":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
 CRITICAL PARTY RULES:
 - supplier_name / supplier_gst / supplier_address / supplier_mobile = SELLER/VENDOR party ONLY (Bill From, Sold By, Dispatched From, Supplier, Party Name on purchase side).
+- supplier_gst also appears in invoice footer as "Company's GST No.", "Our GSTIN", "GSTIN/UIN" near signature — that is the SELLER GST (issuer), not the buyer.
 - buyer_name / buyer_gst / buyer_address / buyer_state / buyer_city / buyer_pin_code = BUYER party ONLY (Bill To, Buyer, Consignee, Ship To — full address block of customer).
 - NEVER put buyer name/address/GST into supplier_* fields.
 - NEVER put seller/supplier address into buyer_* fields.
@@ -626,7 +629,7 @@ export function mapProductsToLineItems(products = []) {
 
     productDescription: nf(p.productDescription),
 
-    hsn: nf(p.hsn),
+    hsn: nf(p.hsn) || resolveLineHsn(p),
 
     plasticMaterial: nf(p.plasticMaterial),
 
@@ -672,6 +675,32 @@ function firstLine(lineItems) {
 
 
 
+/** Fill missing seller GST from raw PDF text or OCR JSON (footer "Company's GST No." etc.). */
+export function fillMissingSupplierGst(row = {}, invoiceText = '', raw = {}) {
+  const existing = row.supplier_gst_number || row.vendor_gstin || row.seller_gst;
+  if (existing) return row;
+
+  const buyerGst = row.buyer_gst || raw.buyer_gst || raw.buyerGst || '';
+  const sources = [invoiceText, JSON.stringify(raw || {})].filter(Boolean);
+
+  let inferred = '';
+  for (const text of sources) {
+    inferred = resolveSellerGstFromInvoiceText(text, { buyerGst });
+    if (inferred) break;
+  }
+  if (!inferred) return row;
+
+  const next = {
+    ...row,
+    supplier_gst_number: inferred,
+    vendor_gstin: inferred,
+    seller_gst: inferred,
+    is_supplier_gst_available: 'Yes',
+  };
+  next.state = resolveState(row.state, inferred) || next.state;
+  return next;
+}
+
 /** Map → procurement EPR row (registration-style fields + line items). */
 export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
   const lineItems = fillLineItemsHsn(
@@ -688,7 +717,7 @@ export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
     raw.supplier_state ?? raw.supplierState ?? raw.state ?? raw.st ?? null;
   const invoiceDate = nullVal(toIsoDate(raw.date ?? raw.procurement_date ?? raw.invoice_date ?? raw.dt));
 
-  return {
+  const row = {
     company_id: null,
     record_type: 'purchase_epr',
     registration_type: nullVal(raw.registration_type ?? raw.registrationType ?? raw.reg),
@@ -757,6 +786,8 @@ export function mapPurchaseFromOcr(raw, fileName, financialYear = 'all') {
     extraction: raw,
     _source_fields: {},
   };
+  row.procurement_source = resolveProcurementSource(row);
+  return row;
 }
 
 

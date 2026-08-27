@@ -13,7 +13,9 @@
     "preelectron:build": "node scripts/setup-ghostscript.mjs",
     "db:sync": "node sync_to_sqlite.js",
     "qr:docker:build": "docker build -t pwp-qr-scanner:latest ./scripts/qr_scanner",
-    "qr:scan": "node scripts/test-qr-scan.mjs"
+    "qr:scan": "node scripts/test-qr-scan.mjs",
+    "test:importer-3a": "node --test shared/importerSection3a.test.js",
+    "test:packaging-master": "node --test shared/packagingMasterSync.test.js"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",

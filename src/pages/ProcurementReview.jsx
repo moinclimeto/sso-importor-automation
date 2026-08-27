@@ -40,6 +40,7 @@ import {
   REGISTRATION_TYPE_OPTIONS,
 } from '../components/ReviewDocumentHeaderFields';
 import { resolveState } from '../../shared/gstStateCodes';
+import { resolveProcurementSource } from '../../shared/importerPurchaseSaleMatch';
 import {
   buildProcurementHeaderFromRow,
   enrichReviewLines,
@@ -129,13 +130,17 @@ export default function ProcurementReview() {
     if (!entity) return;
     patchHeader({
       registration_type: entity.registration_type || header.registration_type,
-      entity_type: entity.entity_type || header.entity_type,
+      entity_type: entity.entity_type || '',
       supplier_name: entity.trade_name || header.supplier_name,
       address_line_1: entity.address || header.address_line_1,
       supplier_mobile_number: entity.mobile || header.supplier_mobile_number,
+      state: resolveState('', header.supplier_gst_number) || header.state,
+      ...(entity.recycled_plastic_percent != null && entity.recycled_plastic_percent !== ''
+        ? { recycled_plastic_percent: entity.recycled_plastic_percent }
+        : {}),
     });
     showToast('Fields updated from verification — click Save to persist.', 'success');
-  }, [patchHeader, header.registration_type, header.entity_type, header.supplier_name, header.address_line_1, header.supplier_mobile_number, showToast]);
+  }, [patchHeader, header.registration_type, header.entity_type, header.supplier_name, header.address_line_1, header.supplier_mobile_number, header.supplier_gst_number, header.state, showToast]);
 
   const isLineEditable = useCallback(
     (idx) => {
@@ -261,11 +266,12 @@ export default function ProcurementReview() {
   const applyMasterToLine = async (idx) => {
     const line = lines[idx];
     const master =
-      lookupPackagingMasterRow(packagingRows, line) ||
+      lookupPackagingMasterRow(packagingRows, line, 'purchase') ||
       (await window.pwp?.packagingMaster?.lookup?.({
         company_id: record?.company_id,
         product_description: line.productDescription,
         hsn: line.hsn,
+        list_type: 'purchase',
       }));
     if (!master) {
       showToast('No packaging master match for this line', 'info');
@@ -362,6 +368,7 @@ export default function ProcurementReview() {
       hsn_code: first?.hsn || record.hsn_code,
       category_of_plastic: bulkCat || first?.plasticCategory || record.category_of_plastic,
       plastic_type: bulkMaterial || first?.plasticMaterial || record.plastic_type,
+      procurement_source: resolveProcurementSource({ ...record, ...header }),
       doc_status: docStatus || record.doc_status || tab,
     };
   };
@@ -561,7 +568,7 @@ export default function ProcurementReview() {
                 value={header.supplier_gst_number}
                 onChange={(v) => patchHeader({
                   supplier_gst_number: v.toUpperCase(),
-                  state: header.state || resolveState('', v),
+                  state: resolveState('', v),
                 })}
                 readOnly={readOnly}
               />
@@ -609,6 +616,24 @@ export default function ProcurementReview() {
                 disabled={readOnly}
                 placeholder="Select Entity Type"
               />
+              <ReadonlyHeaderField
+                label="Procurement Source"
+                value={
+                  (header.procurement_source || 'domestic') === 'import'
+                    ? 'Import'
+                    : 'Domestic'
+                }
+              />
+              {header.procurement_source === 'import' && (
+                <p className="text-[11px] text-teal-800 bg-teal-50 border border-teal-100 rounded-md px-2 py-1.5 md:col-span-2">
+                  Auto-detected as <strong>Import</strong> from invoice address/country — this purchase can be matched to domestic sales in Importer Section 3a.
+                </p>
+              )}
+              {header.procurement_source === 'domestic' && (
+                <p className="text-[11px] text-slate-600 bg-slate-50 border border-slate-100 rounded-md px-2 py-1.5 md:col-span-2">
+                  Auto-detected as <strong>Domestic</strong> from Indian supplier GST, address, or country on the invoice.
+                </p>
+              )}
               <ReadonlyHeaderField label="Financial Year" value={header.financial_year} />
               <EditableHeaderSelect
                 label="State"
@@ -820,7 +845,9 @@ export default function ProcurementReview() {
               </table>
             </div>
             {!readOnly && (
-              <p className="text-[11px] text-slate-400 px-4 py-2 border-t border-slate-100">Double-click a row to edit. Total Plastic Weight = sum of line Qty (MT).</p>
+              <p className="text-[11px] text-slate-400 px-4 py-2 border-t border-slate-100">
+                Double-click a row to edit. CF is <strong>kg per invoice unit</strong> (MT = qty × CF ÷ 1000). Total Plastic Weight = sum of line Qty (MT).
+              </p>
             )}
           </section>
 

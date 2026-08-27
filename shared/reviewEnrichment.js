@@ -7,8 +7,10 @@ import {
   formatLineRate,
   resolveLineMt,
 } from './procurementConversionFactor.js';
+import { sanitizePlasticMaterial } from './packagingMasterSync.js';
 import { resolveState } from './gstStateCodes.js';
-import { fillLineItemsHsn, normalizeHsnCode, resolveLineHsn } from './hsnUtils.js';
+import { resolveProcurementSource } from './importerPurchaseSaleMatch.js';
+import { fillLineItemsHsn, normalizeHsnCode, resolveLineHsn, resolveReviewLineHsn, splitHsnFromDescription } from './hsnUtils.js';
 import { normalizePlasticCategory } from './plasticCategories.js';
 
 /** Resolve invoice / document number from row + OCR extraction + filename. */
@@ -307,7 +309,10 @@ export function buildSalesHeaderFromRow(row = {}) {
     customer_name: row.customer_name || row.entity_name || ext.buyerName || ext.buyer_name || '',
     customer_gstin: customerGst,
     address: resolveSalesAddress(row),
-    state: buyerFields.state || resolveState(row.buyer_state || ext.buyer_state, customerGst),
+    state:
+      row.state ||
+      buyerFields.state ||
+      resolveState(row.buyer_state || ext.buyer_state, customerGst),
     district: buyerFields.district || resolveSalesDistrict(row),
     mobile_number: row.mobile_number || ext.mobile || ext.mob || '',
     invoice_number: resolveInvoiceNumberFromRecord(row) || row.invoice_no || row.application_number || '',
@@ -354,6 +359,7 @@ export function enrichSaleRecord(row = {}) {
     customer_gstin: customerGst,
     address: resolveSalesAddress(row) || row.address || buyerFields.address || '',
     state:
+      row.state ||
       buyerFields.state ||
       resolveState(row.buyer_state || ext.buyer_state, customerGst) ||
       '',
@@ -361,10 +367,12 @@ export function enrichSaleRecord(row = {}) {
 }
 
 export function normalizePlasticMaterial(value) {
+  const cleaned = sanitizePlasticMaterial(value);
+  if (cleaned) return cleaned;
   const v = String(value || '').trim();
   if (!v) return '';
   if (v.toLowerCase() === 'other') return 'Others';
-  return v;
+  return v.length <= 32 ? v : '';
 }
 
 /** Apply bulk category/material to every review line. */
@@ -430,15 +438,24 @@ export function enrichReviewLines(drafts = [], row = {}, packagingRows = []) {
       if (rateVal != null) line.rate = formatLineRate(rateVal);
     }
     if (!String(line.hsn || '').trim()) {
-      const extLine = extractionLines[idx];
-      const parsedHsn = resolveLineHsn(extLine || line);
-      if (parsedHsn) {
-        line.hsn = parsedHsn;
+      const split = splitHsnFromDescription(line.productDescription);
+      if (split.hsn) {
+        line.hsn = split.hsn;
+        line.productDescription = split.description;
       } else {
-        const headerHsn = normalizeHsnCode(
-          row.hsn_code || row.extraction?.hsn_code || row.extraction?.MainHsnCode,
-        );
-        if (headerHsn && drafts.length === 1) line.hsn = headerHsn;
+        const extLine = extractionLines[idx];
+        const parsedHsn = resolveReviewLineHsn(line, extLine, row, idx);
+        if (parsedHsn) line.hsn = parsedHsn;
+      }
+    } else {
+      const split = splitHsnFromDescription(line.productDescription);
+      if (
+        split.hsn &&
+        normalizeHsnCode(line.hsn) === normalizeHsnCode(split.hsn) &&
+        split.description &&
+        split.description !== line.productDescription
+      ) {
+        line.productDescription = split.description;
       }
     }
     const master = lookupPackagingMasterRow(packagingRows, line);
@@ -496,6 +513,8 @@ export function buildProcurementHeaderFromRow(row = {}) {
       row.extraction?.supplier_mobile_number ||
       row.extraction?.mobile ||
       '',
+    country: row.country || row.extraction?.country || '',
+    procurement_source: resolveProcurementSource(row),
   };
 }
 

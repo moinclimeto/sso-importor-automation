@@ -16,6 +16,74 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
+const portalCaptchaCache = new WeakMap();
+
+function getPortalCaptchaCache(page) {
+  return portalCaptchaCache.get(page) || null;
+}
+
+function setPortalCaptchaCache(page, payload) {
+  portalCaptchaCache.set(page, payload);
+}
+
+function normalizeCaptchaImageData(imageData) {
+  const raw = String(imageData || '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('data:')) return raw;
+  const base64 = raw.includes(',') ? raw.split(',')[1] : raw;
+  return base64 ? `data:image/png;base64,${base64}` : '';
+}
+
+/** Listen to CPCB portal captcha API responses — same image/key the page validates. */
+export function attachCaptchaNetworkListener(page) {
+  if (!page || page.__captchaNetworkListenerAttached) return;
+  page.__captchaNetworkListenerAttached = true;
+
+  page.on('response', async (response) => {
+    const url = response.url();
+    if (!url.includes('/api/v1/captcha')) return;
+    if (!response.ok()) return;
+    try {
+      const data = await response.json();
+      const captchaImage = normalizeCaptchaImageData(data?.image);
+      if (!captchaImage) return;
+      setPortalCaptchaCache(page, {
+        captchaKey: data.captchaKey || null,
+        captchaImage,
+        fetchedAt: Date.now(),
+      });
+    } catch {
+      /* ignore parse errors */
+    }
+  });
+}
+
+export function attachCaptchaNetworkListenerToContext(context) {
+  if (!context || context.__captchaNetworkListenerAttached) return;
+  context.__captchaNetworkListenerAttached = true;
+  context.on('page', (page) => attachCaptchaNetworkListener(page));
+  for (const page of context.pages()) attachCaptchaNetworkListener(page);
+}
+
+async function waitForPortalCaptchaResponse(page, afterTs = 0, timeoutMs = 8000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const cached = getPortalCaptchaCache(page);
+    if (cached?.captchaImage && cached.fetchedAt > afterTs) return cached;
+    await page.waitForTimeout(150);
+  }
+  return getPortalCaptchaCache(page);
+}
+
+async function waitForCaptchaWidget(page) {
+  await page
+    .locator('app-captcha, .captch-canvas-blk, input[placeholder="Enter Captcha"]')
+    .first()
+    .waitFor({ state: 'visible', timeout: 15000 })
+    .catch(() => {});
+  await page.waitForTimeout(400);
+}
+
 function loadEnvFile() {
   const candidates = [path.join(process.cwd(), '.env'), path.join(__dirname, '../.env')];
   for (const file of candidates) {
@@ -437,53 +505,53 @@ export async function findCaptchaElement(page) {
   return null;
 }
 
-/** Return captcha as data URL for frontend display (canvas first — matches portal). */
+/** Return captcha as data URL for frontend — must match portal session (never a separate API fetch). */
 export async function getCaptchaImageDataUrl(page, onLog) {
-  await page
-    .locator('app-captcha, .captch-canvas-blk, input[placeholder="Enter Captcha"]')
-    .first()
-    .waitFor({ state: 'visible', timeout: 15000 })
-    .catch(() => {});
+  attachCaptchaNetworkListener(page);
+  await waitForCaptchaWidget(page);
 
-  await page.waitForTimeout(500);
+  let cached = getPortalCaptchaCache(page);
+  if (!cached?.captchaImage) {
+    cached = await waitForPortalCaptchaResponse(page, 0, 3000);
+  }
+
+  if (cached?.captchaImage) {
+    if (onLog) onLog('Captcha loaded from portal session (network sync)');
+    return { captchaImage: cached.captchaImage, captchaKey: cached.captchaKey };
+  }
 
   const element = await findCaptchaElement(page);
   if (element?.locator) {
     await element.locator.scrollIntoViewIfNeeded().catch(() => {});
     await page.waitForTimeout(300);
     const buffer = await element.locator.screenshot();
-    if (onLog) onLog(`Captcha loaded from portal ${element.type}`);
+    if (onLog) onLog(`Captcha loaded from portal ${element.type} screenshot`);
     return { captchaImage: `data:image/png;base64,${buffer.toString('base64')}` };
   }
 
-  try {
-    const api = await fetchCaptchaFromApi(page);
-    if (onLog) onLog('Captcha loaded from CPCB API');
-    return {
-      captchaImage: `data:image/png;base64,${api.buffer.toString('base64')}`,
-      captchaKey: api.captchaKey,
-    };
-  } catch (err) {
-    throw new Error(err?.message || 'Captcha image not found on Supporting Documents tab');
-  }
+  throw new Error('Captcha image not found on Supporting Documents tab');
 }
 
-/** Capture captcha PNG for OCR — prefer CPCB API (clean PNG), then canvas. */
+/** Capture captcha PNG for OCR — same portal session image as displayed to the user. */
 export async function captureCaptchaForOcr(page, onLog) {
-  await page
-    .locator('app-captcha, .captch-canvas-blk, input[placeholder="Enter Captcha"]')
-    .first()
-    .waitFor({ state: 'visible', timeout: 15000 })
-    .catch(() => {});
+  attachCaptchaNetworkListener(page);
+  await waitForCaptchaWidget(page);
 
-  await page.waitForTimeout(500);
+  let cached = getPortalCaptchaCache(page);
+  if (!cached?.captchaImage) {
+    cached = await waitForPortalCaptchaResponse(page, 0, 3000);
+  }
 
-  try {
-    const api = await fetchCaptchaFromApi(page);
-    if (onLog) onLog('Captcha captured from CPCB API');
-    return { buffer: api.buffer, source: 'api', captchaKey: api.captchaKey };
-  } catch (err) {
-    if (onLog) onLog(`Captcha API capture: ${err.message} — trying canvas`);
+  if (cached?.captchaImage) {
+    const base64 = cached.captchaImage.includes(',')
+      ? cached.captchaImage.split(',')[1]
+      : cached.captchaImage;
+    if (onLog) onLog('Captcha captured from portal session (network sync)');
+    return {
+      buffer: Buffer.from(base64, 'base64'),
+      source: 'portal-network',
+      captchaKey: cached.captchaKey,
+    };
   }
 
   const element = await findCaptchaElement(page);
@@ -505,10 +573,13 @@ export async function findCaptchaImage(page) {
 }
 
 export async function refreshCaptcha(page) {
+  attachCaptchaNetworkListener(page);
+  const beforeTs = getPortalCaptchaCache(page)?.fetchedAt || 0;
+
   const refreshBtn = page.locator('app-captcha button.btnCaptcha, button.btnCaptcha').first();
   if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
     await refreshBtn.click();
-    await page.waitForTimeout(1500);
+    await waitForPortalCaptchaResponse(page, beforeTs, 10000);
     return;
   }
 
@@ -524,7 +595,7 @@ export async function refreshCaptcha(page) {
       const btn = buttons.nth(i);
       if (await btn.isVisible().catch(() => false)) {
         await btn.click();
-        await page.waitForTimeout(1500);
+        await waitForPortalCaptchaResponse(page, beforeTs, 10000);
         return;
       }
     }

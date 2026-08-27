@@ -20,6 +20,9 @@ const OPTIONAL_COLUMNS = [
   'plastic_consumed_json',
   'compliance_status',
   'thickness_of_plastic',
+  'importer_3a_json',
+  'importer_3a_status',
+  'importer_3b_json',
 ];
 
 function emptyToNull(value) {
@@ -100,6 +103,9 @@ function extractColumnsFromForm(formDataJson, data = {}) {
   let plasticConsumedJson = emptyToNull(data.plastic_consumed_json);
   let complianceStatus = emptyToNull(data.compliance_status);
   let thicknessOfPlastic = emptyToNull(data.thickness_of_plastic);
+  let importer3aJson = emptyToNull(data.importer_3a_json);
+  let importer3aStatus = emptyToNull(data.importer_3a_status);
+  let importer3bJson = emptyToNull(data.importer_3b_json);
 
   if (!formDataJson) {
     return {
@@ -111,6 +117,9 @@ function extractColumnsFromForm(formDataJson, data = {}) {
       plasticConsumedJson,
       complianceStatus,
       thicknessOfPlastic,
+      importer3aJson,
+      importer3aStatus,
+      importer3bJson,
     };
   }
 
@@ -136,6 +145,9 @@ function extractColumnsFromForm(formDataJson, data = {}) {
     if (auto.representativePicturePath || auto.representativePicturePath) {
       representativePicture = emptyToNull(auto.representativePicturePath || auto.representativePicturePath);
     }
+    if (auto.importer3a) importer3aJson = JSON.stringify(auto.importer3a);
+    if (auto.importer3b) importer3bJson = JSON.stringify(auto.importer3b);
+    if (general.importer3aStatus) importer3aStatus = emptyToNull(general.importer3aStatus);
   } catch (err) {
     log.warn('form_data_json parse failed', { error: err.message });
   }
@@ -149,6 +161,9 @@ function extractColumnsFromForm(formDataJson, data = {}) {
     plasticConsumedJson,
     complianceStatus,
     thicknessOfPlastic,
+    importer3aJson,
+    importer3aStatus,
+    importer3bJson,
   };
 }
 
@@ -223,7 +238,10 @@ export async function saveRegistrationDetails(data = {}) {
         representative_picture_of_plastic_packaging = COALESCE(?, representative_picture_of_plastic_packaging),
         plastic_consumed_json = COALESCE(?, plastic_consumed_json),
         compliance_status = COALESCE(?, compliance_status),
-        thickness_of_plastic = COALESCE(?, thickness_of_plastic)
+        thickness_of_plastic = COALESCE(?, thickness_of_plastic),
+        importer_3a_json = COALESCE(?, importer_3a_json),
+        importer_3a_status = COALESCE(?, importer_3a_status),
+        importer_3b_json = COALESCE(?, importer_3b_json)
       WHERE _internal_id = ?`,
       emptyToNull(data.applicant_type),
       emptyToNull(data.sub_applicant_type),
@@ -242,6 +260,9 @@ export async function saveRegistrationDetails(data = {}) {
       cols.plasticConsumedJson,
       cols.complianceStatus,
       cols.thicknessOfPlastic,
+      cols.importer3aJson,
+      cols.importer3aStatus,
+      cols.importer3bJson,
       existing._internal_id
     );
 
@@ -255,8 +276,8 @@ export async function saveRegistrationDetails(data = {}) {
 
   const result = await db.run(
     `INSERT INTO registration_details
-      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging, plastic_consumed_json, compliance_status, thickness_of_plastic)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging, plastic_consumed_json, compliance_status, thickness_of_plastic, importer_3a_json, importer_3a_status, importer_3b_json)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     emptyToNull(data.applicant_type) || 'PIBO',
     emptyToNull(data.sub_applicant_type) || 'Importer',
     ceprId,
@@ -273,7 +294,10 @@ export async function saveRegistrationDetails(data = {}) {
     cols.representativePicture,
     cols.plasticConsumedJson,
     cols.complianceStatus,
-    cols.thicknessOfPlastic
+    cols.thicknessOfPlastic,
+    cols.importer3aJson,
+    cols.importer3aStatus,
+    cols.importer3bJson,
   );
 
   const verify = await db.get(

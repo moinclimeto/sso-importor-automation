@@ -5,6 +5,7 @@ import {
   normalizeGstin,
   normalizeRegistrationType,
 } from '../shared/entityRegistrationTypes.js';
+import { extractRecycledPercentFromPayload, hasMasterRegistrationMatch } from '../shared/entityVerifyBadges.js';
 import { buildClimetoApiUrl, getClimetoApiBase, getClimetoAuthHeaders } from './climetoApiConfig.js';
 import { panFromGstin } from './gstPartyUtils.js';
 
@@ -65,8 +66,9 @@ export function mapMasterDataMatchRow(row, gstin, idx = 0) {
       || row.registrationNumber
       || row.registration_number
       || '',
+    recycled_plastic_percent: extractRecycledPercentFromPayload(row),
+    confidence: row.confidence ?? row.matchScore ?? row.match_score ?? null,
     source: 'climeto_master_data',
-    confidence: row.confidence ?? row.matchScore ?? null,
     raw: row,
   };
 }
@@ -112,6 +114,13 @@ export function mapClimetoGstVerifyResponse(payload) {
     masterDataMatches,
     requiresUserSelection,
     totalMatches: payload.totalMatches ?? masterDataMatches.length,
+    confidence: payload.confidence ?? null,
+    hasMasterRegistrationMatch: hasMasterMatches,
+    recycled_plastic_percent:
+      extractRecycledPercentFromPayload(payload)
+      ?? extractRecycledPercentFromPayload(zen)
+      ?? masterDataMatches[0]?.recycled_plastic_percent
+      ?? null,
     source: 'climeto_gst',
     message: payload.message || '',
     raw: payload,

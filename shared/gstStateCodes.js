@@ -90,6 +90,34 @@ export function getStateFromGst(gstNumber) {
   return GST_STATE_CODES[gst.substring(0, 2)] || '';
 }
 
+/** Normalize OCR / CPCB labels to a canonical state name from GST_STATE_CODES. */
+export function normalizeStateLabel(state = '') {
+  const raw = String(state ?? '').trim();
+  if (!raw || raw === '-' || raw.toLowerCase() === 'null') return '';
+
+  const cpcbMatch = raw.match(/^\d{2}\s*-\s*(.+?)(?:\s+[A-Z]{2})?\s*$/i);
+  const candidate = (cpcbMatch?.[1] || raw).trim();
+  const lower = candidate.toLowerCase();
+
+  for (const name of Object.values(GST_STATE_CODES)) {
+    if (name.toLowerCase() === lower) return name;
+  }
+
+  for (const [code, abbr] of Object.entries(GST_STATE_ABBR)) {
+    if (abbr.toLowerCase() === lower) return GST_STATE_CODES[code] || '';
+  }
+
+  return candidate;
+}
+
+export function isKnownIndianState(state = '') {
+  const normalized = normalizeStateLabel(state);
+  if (!normalized) return false;
+  return Object.values(GST_STATE_CODES).some(
+    (name) => name.toLowerCase() === normalized.toLowerCase(),
+  );
+}
+
 export function formatGstStateLabel(gstNumber) {
   const gst = String(gstNumber ?? '').trim().toUpperCase();
   if (gst.length < 2) return '';
@@ -100,13 +128,9 @@ export function formatGstStateLabel(gstNumber) {
   return abbr ? `${code} - ${name} ${abbr}` : `${code} - ${name}`;
 }
 
-/** Prefer OCR-extracted state; fall back to GSTIN state code. */
+/** Prefer GSTIN state code; fall back to normalized OCR state. */
 export function resolveState(extractedState, gstNumber) {
-  const fromExtract = String(extractedState ?? '').trim();
-  if (fromExtract && fromExtract !== '-' && fromExtract.toLowerCase() !== 'null') {
-    return fromExtract;
-  }
-  const label = formatGstStateLabel(gstNumber);
-  if (label) return label;
-  return getStateFromGst(gstNumber);
+  const fromGst = getStateFromGst(gstNumber);
+  if (fromGst) return fromGst;
+  return normalizeStateLabel(extractedState);
 }

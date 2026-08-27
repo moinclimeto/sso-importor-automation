@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
@@ -6,6 +6,9 @@ import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import {
   AUTO_FILLED_FIELDS,
+  collectRegistrationUploadFileIssues,
+  formatCpcbFileNameIssue,
+  validateCpcbPortalFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -31,7 +34,22 @@ import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
+import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
+import {
+  plasticConsumed3cHasData,
+} from '../../shared/plasticConsumed3c.js';
+import {
+  fetchComputedPlasticConsumed3c,
+  shouldHydratePlasticConsumed,
+} from '../utils/registrationPlasticConsumed.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../utils/registrationPartBSection4.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -98,6 +116,7 @@ export default function NewApplicationPage() {
   const [generalInfo, setGeneralInfo] = useState({ ...GENERAL_INFO_EMPTY });
   const [docReady, setDocReady] = useState(true);
   const [missingDocs, setMissingDocs] = useState([]);
+  const [fileNameIssues, setFileNameIssues] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -139,6 +158,8 @@ export default function NewApplicationPage() {
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
   const [registrationBlocker, setRegistrationBlocker] = useState('');
+  const [uploadingPdfField, setUploadingPdfField] = useState('');
+  const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -272,6 +293,13 @@ export default function NewApplicationPage() {
     const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
     setDocReady(ready);
     setMissingDocs(missing);
+    setFileNameIssues(
+      collectRegistrationUploadFileIssues({
+        docs,
+        autoData: mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || {}),
+        generalInfo: mergeGeneralInfoFromSources(data, savedForm?.generalInfo || {}),
+      })
+    );
   }, []);
 
   const [savedRegistration, setSavedRegistration] = useState(null);
@@ -360,6 +388,106 @@ export default function NewApplicationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
+  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
+
+  const persistRegistrationForm = useCallback(async (nextGeneral, nextAuto) => {
+    if (!window.pwp?.registration?.save) return;
+    const updatedFormData = {
+      ...(savedRegistration?.formData || {}),
+      email,
+      mobile,
+      autoData: nextAuto ?? autoData,
+      generalInfo: nextGeneral ?? generalInfo,
+    };
+    await window.pwp.registration.save({
+      ...(savedRegistration || {}),
+      email,
+      mobile,
+      form_data_json: JSON.stringify(updatedFormData),
+      details_of_products_produced_marketed: (nextAuto ?? autoData).detailsOfProductsPath,
+      representative_picture_of_plastic_packaging: (nextAuto ?? autoData).representativePicturePath,
+      plastic_consumed_json: JSON.stringify((nextGeneral ?? generalInfo).plasticConsumed || {}),
+      importer_3a_status: (nextGeneral ?? generalInfo).importer3aStatus,
+    }).catch(console.error);
+  }, [savedRegistration, email, mobile, autoData, generalInfo]);
+
+  const handlePartAPdfUpload = useCallback(async (field, file) => {
+    setUploadingPdfField(field);
+    try {
+      const docBase = field === 'detailsOfProductsPath'
+        ? 'operations_details'
+        : field === 'representativePicturePath'
+          ? 'plastic_packaging_picture'
+          : 'document';
+      const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
+      if (!nameCheck.valid) {
+        showToast(
+          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+          'warning',
+          { duration: 12000 }
+        );
+      }
+      const stored = await storeCompressedUpload(file, {
+        destSubdir: 'processed_registration_docs',
+        fileName: nameCheck.suggestedName,
+      });
+      if (!stored.success || !stored.filePath) {
+        showToast(stored.message || 'Could not save PDF.', 'error');
+        return;
+      }
+      const nextAuto = { ...autoData, [field]: stored.filePath };
+      setAutoData(nextAuto);
+      await persistRegistrationForm(generalInfo, nextAuto);
+      showToast('PDF uploaded.', 'success');
+    } finally {
+      setUploadingPdfField('');
+    }
+  }, [autoData, generalInfo, persistRegistrationForm, showToast]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let docs = [];
+      if (window.pwp?.documents?.getAll) {
+        docs = await window.pwp.documents.getAll();
+      }
+      if (cancelled) return;
+      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoData, generalInfo]);
+
+  const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
+    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
+  }, []);
+
+  useEffect(() => {
+    if (loadingSavedRegistration) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await fetchComputedPlasticConsumed3c({
+          gstin: autoData.gstin,
+          savedImporter3a: autoData.importer3a,
+        });
+        if (cancelled || !result?.hasData) return;
+
+        setGeneralInfo((prev) => {
+          if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
+          return { ...prev, plasticConsumed: result.plasticConsumed };
+        });
+        setPlasticConsumedSource(result.sourceLabel || '');
+      } catch (err) {
+        console.error('Failed to hydrate Section 3c:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
+
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
   }, [applyRegistrationData]);
@@ -370,6 +498,24 @@ export default function NewApplicationPage() {
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
+      return;
+    }
+
+    let docs = [];
+    if (window.pwp?.documents?.getAll) {
+      docs = await window.pwp.documents.getAll();
+    }
+    const uploadNameIssues = collectRegistrationUploadFileIssues({ docs, autoData, generalInfo });
+    if (uploadNameIssues.length) {
+      setFileNameIssues(uploadNameIssues);
+      showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
+      if (uploadNameIssues.length > 1) {
+        showToast(
+          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          'warning',
+          { duration: 12000 }
+        );
+      }
       return;
     }
     if (!autoData.gstin || !autoData.authPan || !autoData.authName || !autoData.authDob) {
@@ -719,6 +865,19 @@ export default function NewApplicationPage() {
     }
 
     const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
+    const emptyPc = Object.fromEntries(reportingFys.map((fy) => [fy, { ...zeroCats }]));
+    const plasticConsumed = plasticConsumed3cHasData(generalInfo.plasticConsumed)
+      ? generalInfo.plasticConsumed
+      : emptyPc;
+
+    if (!autoData.detailsOfProductsPath) {
+      showToast('Upload Section 3a PDF — Details (Type & Quantity) of products produced/marketed.', 'error');
+      return;
+    }
+    if (!autoData.representativePicturePath) {
+      showToast('Upload Section 3b PDF — Representative picture of Plastic Packaging.', 'error');
+      return;
+    }
     const derivedState =
       generalInfo.stateUt ||
       stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
@@ -732,6 +891,23 @@ export default function NewApplicationPage() {
       return;
     }
 
+    const section4Issues = validateSection4AgainstPlasticConsumed(
+      generalInfo.partBSection4 || [],
+      plasticConsumed,
+      reportingFys.length ? reportingFys : getImporterReportingFinancialYears(),
+    );
+    if (section4Issues.length) {
+      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
+      if (section4Issues.length > 1) {
+        showToast(
+          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          'warning',
+          { duration: 12000 },
+        );
+      }
+      return;
+    }
+
     const applicationDefaults = {
       ...generalInfo,
       yearOfCommencement: '2026',
@@ -740,14 +916,11 @@ export default function NewApplicationPage() {
       hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
       capitalInvested: generalInfo.capitalInvested || generalInfo.capitalInvested || '0',
       operatingStates,
-      plasticConsumed: {
-        '2024-25': { ...zeroCats },
-        '2025-26': { ...zeroCats },
-      },
+      plasticConsumed,
     };
 
     setGeneralInfo(applicationDefaults);
-    showToast('Starting New Application — Part A/B quantities will be filled as 0.', 'success');
+    showToast('Starting New Application — 3a/3b PDFs and 3c values will be submitted to CPCB.', 'success');
 
     const saveLogs = [];
     if (window.pwp?.registration?.save) {
@@ -899,6 +1072,47 @@ export default function NewApplicationPage() {
     }
   };
 
+  const handleLoginOnboardingResult = (res) => {
+    if (
+      res.success &&
+      (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' ||
+        res.step === 'APPLICATION_ONBOARDING_COMPLETE')
+    ) {
+      const scrapeOk = res.scrape?.success !== false;
+      if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && scrapeOk) {
+        showToast(
+          'Registration pipeline complete! Application started and portal data synced to the app.',
+          'success',
+          { duration: 15000 },
+        );
+      } else if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && !scrapeOk) {
+        showToast(
+          `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}. You can retry from Dashboard.`,
+          'error',
+          { duration: 15000 },
+        );
+      } else {
+        showToast(
+          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
+          'success',
+          { duration: 15000 },
+        );
+      }
+      return true;
+    }
+
+    if (res.success && res.step === 'LOGIN_COMPLETE') {
+      setAutomationLogs((prev) => [
+        ...prev,
+        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
+      ]);
+      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      return true;
+    }
+
+    return false;
+  };
+
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
@@ -907,58 +1121,43 @@ export default function NewApplicationPage() {
     }
     setLoginOtpSubmitting(true);
     setLoginOtpError('');
-    setLoadingMsg('Verifying login OTP and syncing portal data...');
+    setLoadingMsg('Verifying login OTP on CPCB portal...');
     try {
-      const res = await window.pwp.scraper.submitLoginOtp({ otp, autoScrape: true });
+      const res = await window.pwp.scraper.submitLoginOtp({ otp });
 
-      if (
-        res.success &&
-        (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' ||
-          res.step === 'APPLICATION_ONBOARDING_COMPLETE')
-      ) {
+      if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        const scrapeOk = res.scrape?.success !== false;
-        if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && scrapeOk) {
-          showToast(
-            `Registration pipeline complete! Application started and portal data synced to the app.`,
-            'success',
-            { duration: 15000 }
-          );
-        } else if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && !scrapeOk) {
-          showToast(
-            `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}. You can retry from Dashboard.`,
-            'error',
-            { duration: 15000 }
-          );
-        } else {
-          showToast(
-            `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-            'success',
-            { duration: 15000 }
-          );
+        setLoginOtpSubmitting(false);
+        setLoading(true);
+        setLoadingMsg('Filling application on CPCB portal...');
+        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
+        try {
+          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: true });
+          handleLoginOnboardingResult(onboard);
+          if (!onboard.success) {
+            const errMsg = onboard.error || 'Application onboarding failed.';
+            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          }
+        } finally {
+          setLoading(false);
+          setLoadingMsg('');
         }
         return;
       }
 
-      if (res.success && res.step === 'LOGIN_COMPLETE') {
+      if (handleLoginOnboardingResult(res)) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error }]);
-        showToast(
-          `Login successful, but onboarding failed. See logs for details.`,
-          'error',
-          { duration: 15000 }
-        );
         return;
       }
 
       const errMsg = res.error || 'Invalid OTP. Please try again.';
       setLoginOtpError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
     } catch (err) {
       setLoginOtpError(err.message);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -1135,7 +1334,18 @@ export default function NewApplicationPage() {
                   onChange={async (e) => {
                     const file = e.target.files[0];
                     if (file) {
-                      const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                      const nameCheck = validateCpcbPortalFileName(file.name, 'supporting_category_doc');
+                      if (!nameCheck.valid) {
+                        showToast(
+                          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+                          'warning',
+                          { duration: 12000 }
+                        );
+                      }
+                      const stored = await storeCompressedUpload(file, {
+                        destSubdir: 'processed_registration_docs',
+                        fileName: nameCheck.suggestedName,
+                      });
                       if (!stored.success || !stored.filePath) {
                         showToast(stored.message || 'Could not save document.', 'error');
                         return;
@@ -1146,9 +1356,7 @@ export default function NewApplicationPage() {
                   className={inputClass}
                 />
                 {autoData.typeOfCompanyDoc && (
-                  <p className="text-xs text-green-600 mt-1 truncate" title={autoData.typeOfCompanyDoc}>
-                    Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                  </p>
+                  <UploadedFilePreview filePath={autoData.typeOfCompanyDoc} />
                 )}
                 {String(generalInfo.typeOfCompany || '').toLowerCase() === 'large' && (
                   <p className="text-xs text-slate-500 mt-2">
@@ -1220,9 +1428,11 @@ export default function NewApplicationPage() {
                     required
                   />
                   {autoData.unitGstDoc ? (
-                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
-                      Certificate from documents: {autoData.unitGstDoc.split(/[/\\]/).pop()} — uploaded automatically in Part A
-                    </p>
+                    <UploadedFilePreview
+                      filePath={autoData.unitGstDoc}
+                      prefix="Certificate from documents"
+                      suffix="— uploaded automatically in Part A"
+                    />
                   ) : null}
                 </div>
                 {/* Already captured by the document extractor — no manual upload needed. */}
@@ -1235,7 +1445,18 @@ export default function NewApplicationPage() {
                       onChange={async (e) => {
                         const file = e.target.files[0];
                         if (file) {
-                          const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+                          const nameCheck = validateCpcbPortalFileName(file.name, 'unit_gst');
+                          if (!nameCheck.valid) {
+                            showToast(
+                              `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+                              'warning',
+                              { duration: 12000 }
+                            );
+                          }
+                          const stored = await storeCompressedUpload(file, {
+                            destSubdir: 'processed_registration_docs',
+                            fileName: nameCheck.suggestedName,
+                          });
                           if (!stored.success || !stored.filePath) {
                             showToast(stored.message || 'Could not save Unit GST document.', 'error');
                             return;
@@ -1306,48 +1527,32 @@ export default function NewApplicationPage() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {INDIAN_STATES.map((s) => {
-                        const isChecked = (generalInfo.operatingStates || []).includes(s);
-                        return (
-                          <label key={s} className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                setGeneralInfo(prev => {
-                                  const current = prev.operatingStates || [];
-                                  const newState = e.target.checked
-                                    ? [...current, s]
-                                    : current.filter(x => x !== s);
-                                  
-                                  const newStateObj = { ...prev, operatingStates: newState };
-                                  
-                                  // Auto-save logic
-                                  if (window.pwp?.registration?.save) {
-                                    const updatedFormData = {
-                                      ...(savedRegistration?.formData || {}),
-                                      email, mobile, autoData, generalInfo: newStateObj
-                                    };
-                                    window.pwp.registration.save({
-                                      ...(savedRegistration || {}),
-                                      email,
-                                      mobile,
-                                      form_data_json: JSON.stringify(updatedFormData)
-                                    }).catch(console.error);
-                                  }
-                                  
-                                  return newStateObj;
-                                });
-                              }}
-                              className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                            />
-                            <span className="text-sm text-slate-700">{s}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+                    <OperatingStatesMultiSelect
+                      value={generalInfo.operatingStates || []}
+                      onChange={(newState) => {
+                        setGeneralInfo((prev) => {
+                          const newStateObj = { ...prev, operatingStates: newState };
+
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email,
+                              mobile,
+                              autoData,
+                              generalInfo: newStateObj,
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email,
+                              mobile,
+                              form_data_json: JSON.stringify(updatedFormData),
+                            }).catch(console.error);
+                          }
+
+                          return newStateObj;
+                        });
+                      }}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
@@ -1430,54 +1635,20 @@ export default function NewApplicationPage() {
                     </select>
                   </div>
                   
-                  <div className="md:col-span-2 mt-4">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-                    <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-2 py-1 mb-2">
-                      For now, New Application automation submits this table as <strong>0</strong> on the CPCB portal.
-                    </p>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-[#0b6c7a] text-white">
-                          <tr>
-                            <th className="px-4 py-3 font-medium">Year</th>
-                            <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 bg-white">
-                          {['2024-25', '2025-26'].map((year) => (
-                            <tr key={year}>
-                              <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
-                              {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
-                                <td key={cat} className="px-4 py-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                                    value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
-                                    onChange={(e) => {
-                                      setGeneralInfo(prev => ({
-                                        ...prev,
-                                        plasticConsumed: {
-                                          ...(prev.plasticConsumed || {}),
-                                          [year]: {
-                                            ...(prev.plasticConsumed?.[year] || {}),
-                                            [cat]: e.target.value
-                                          }
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <ImporterEprPreparedReview
+                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                    representativePicturePath={autoData.representativePicturePath || ''}
+                    plasticConsumed={
+                      generalInfo.plasticConsumed || Object.fromEntries(
+                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                      )
+                    }
+                    reportingYears={reportingFys}
+                    onPdfUpload={handlePartAPdfUpload}
+                    uploadingPdfField={uploadingPdfField}
+                    onPlasticConsumedChange={handlePlasticConsumedChange}
+                    plasticConsumedSource={plasticConsumedSource}
+                  />
 
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
@@ -1525,85 +1696,7 @@ export default function NewApplicationPage() {
         </div>
         </div>
 
-        <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
-
-        <div className="space-y-6 mt-8 border-t pt-8">
-          <div>
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
-            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, detailsOfProductsPath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.detailsOfProductsPath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) {
-                        const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
-                        if (!stored.success || !stored.filePath) {
-                          showToast(stored.message || 'Could not save document.', 'error');
-                          return;
-                        }
-                        setAutoData((prev) => {
-                          const next = { ...prev, representativePicturePath: stored.filePath };
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email, mobile, autoData: next, generalInfo
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email, mobile,
-                              form_data_json: JSON.stringify(updatedFormData)
-                            }).catch(console.error);
-                          }
-                          return next;
-                        });
-                      }
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.representativePicturePath && <p className="text-xs text-green-600 mt-1 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>}
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+        <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
 
         <RegistrationPartC
           generalInfo={generalInfo}

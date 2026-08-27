@@ -1,3 +1,8 @@
+import {
+  sanitizeVerifiedEntity,
+  shouldApplyEntityTypeFromVerify,
+} from '../../shared/entityVerifyBadges.js';
+
 function normalizeGst(gst) {
   return String(gst || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
 }
@@ -11,7 +16,7 @@ function counterpartyGst(data, decided) {
   );
 }
 
-function mergeEntityIntoData(data, entity, decided) {
+function mergeEntityIntoData(data, entity, decided, verified = null) {
   if (!entity) return data;
   const next = { ...data };
   const trusted = [
@@ -27,8 +32,11 @@ function mergeEntityIntoData(data, entity, decided) {
   };
 
   setField('registration_type', entity.registration_type);
-  if (entity.entity_type) setField('entity_type', entity.entity_type);
-  else if (entity.registration_type === 'Unregistered' && trusted) next.entity_type = '';
+  if (shouldApplyEntityTypeFromVerify(verified, entity)) {
+    setField('entity_type', entity.entity_type);
+  } else {
+    next.entity_type = '';
+  }
 
   const displayName = entity.trade_name || entity.legal_name || '';
 
@@ -39,6 +47,9 @@ function mergeEntityIntoData(data, entity, decided) {
     setField('supplier_mobile_number', entity.mobile);
     setField('supplier_gst_number', entity.gst);
     setField('vendor_gstin', entity.gst);
+    if (entity.recycled_plastic_percent != null && entity.recycled_plastic_percent !== '') {
+      setField('recycled_plastic_percent', entity.recycled_plastic_percent);
+    }
     if (entity.registration_type === 'Registered') next.is_supplier_gst_available = true;
     else if (entity.registration_type === 'Unregistered') next.is_supplier_gst_available = false;
   } else if (decided === 'sale') {
@@ -96,7 +107,11 @@ export async function enrichRoutedResultsWithEntityVerify(routed = []) {
       if (!cached) {
         const res = await window.pwp.entityVerify.lookupByGst({ gst, companyId });
         cached = {
-          entity: res?.bestEntity || res?.gstProfile || null,
+          entity: sanitizeVerifiedEntity(
+            res?.bestEntity || res?.gstProfile || null,
+            res?.gstVerified,
+          ),
+          gstVerified: res?.gstVerified || null,
           piboWarning: res?.piboWarning || null,
           fromSupplierMaster: res?.fromSupplierMaster || false,
         };
@@ -110,7 +125,7 @@ export async function enrichRoutedResultsWithEntityVerify(routed = []) {
 
       out.push({
         ...row,
-        data: mergeEntityIntoData(data, cached.entity, decided),
+        data: mergeEntityIntoData(data, cached.entity, decided, cached.gstVerified),
         entityVerified: true,
         piboWarning: cached.piboWarning,
       });

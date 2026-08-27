@@ -60,6 +60,31 @@ function fmtMt(v) {
   return Number(v).toLocaleString('en-IN', { maximumFractionDigits: 6 });
 }
 
+function formatPackagingCf(line = {}) {
+  const cf = line.conversionFactorApplied || line.conversionFactor;
+  if (!cf) return '—';
+  const u = line.unit || line.uom || 'unit';
+  return `${cf} kg/${u}`;
+}
+
+function packagingSourceBadge(line = {}) {
+  if (line.masterSource === 'auto_master') {
+    return { label: 'From Packaging Master', className: 'bg-indigo-100 text-indigo-800' };
+  }
+  if (line.plasticCategory || line.conversionFactor || line.conversionFactorApplied) {
+    return { label: 'From Sales Review', className: 'bg-slate-100 text-slate-700' };
+  }
+  return null;
+}
+
+function packagingMtTitle(line, mt) {
+  const qty = line.quantity || '—';
+  const u = line.unit || line.uom || '';
+  const cf = formatPackagingCf(line);
+  if (mt == null || cf === '—') return '';
+  return `Sale quantity: ${qty} ${u} · Packaging CF: ${cf} · Packaging quantity: ${fmtMt(mt)} MT`;
+}
+
 function buildHeaderFromRow(row) {
   return buildSalesHeaderFromRow(row);
 }
@@ -148,7 +173,7 @@ export default function SalesReview() {
     if (!entity) return;
     patchHeader({
       registration_type: entity.registration_type || header.registration_type,
-      entity_type: entity.entity_type || header.entity_type,
+      entity_type: entity.entity_type || '',
       entity_name: entity.trade_name || header.entity_name,
       address: entity.address || header.address,
       mobile_number: entity.mobile || header.mobile_number,
@@ -301,11 +326,12 @@ export default function SalesReview() {
   const applyMasterToLine = async (idx) => {
     const line = lines[idx];
     const master =
-      lookupPackagingMasterRow(packagingRows, line) ||
+      lookupPackagingMasterRow(packagingRows, line, 'sales') ||
       (await window.pwp?.packagingMaster?.lookup?.({
         company_id: record?.company_id,
         product_description: line.productDescription,
         hsn: line.hsn,
+        list_type: 'sales',
       }));
     if (!master) {
       showToast('No packaging master match for this line', 'info');
@@ -400,6 +426,8 @@ export default function SalesReview() {
       ...baseExtraction,
       district: (header.district || '').trim() || baseExtraction.district,
       dist: (header.district || '').trim() || baseExtraction.dist,
+      buyer_state: (header.state || '').trim() || baseExtraction.buyer_state,
+      buyerState: (header.state || '').trim() || baseExtraction.buyerState,
       ...(Number.isFinite(gstCharges) && gstCharges !== 0
         ? { totalInvoiceAmount: gstCharges, tot: gstCharges, gst_other_charges: gstCharges }
         : {}),
@@ -413,6 +441,7 @@ export default function SalesReview() {
       invoice_date: header.invoice_date,
       financial_year: (header.financial_year || '').trim(),
       district: (header.district || '').trim(),
+      state: (header.state || '').trim(),
       gst_other_charges: gstCharges,
       total_amount: Number.isFinite(gstCharges) ? gstCharges : record.total_amount,
       extraction,
@@ -622,7 +651,7 @@ export default function SalesReview() {
                 value={header.customer_gstin}
                 onChange={(v) => patchHeader({
                   customer_gstin: v.toUpperCase(),
-                  state: header.state || resolveState('', v),
+                  state: resolveState('', v),
                 })}
                 readOnly={readOnly}
               />
@@ -756,11 +785,17 @@ export default function SalesReview() {
 
           {/* Line items */}
           <section className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
-            <div className="px-4 py-3 border-b border-slate-100 flex items-center justify-between gap-3">
-              <h3 className="text-sm font-bold text-slate-800">Line Items ({lines.length})</h3>
-              {!readOnly && (
-                <p className="text-[11px] text-slate-500">Double-click a row or tick checkbox to edit UOM / CF Mode</p>
-              )}
+            <div className="px-4 py-3 border-b border-slate-100 space-y-1">
+              <div className="flex items-center justify-between gap-3">
+                <h3 className="text-sm font-bold text-slate-800">Line Items ({lines.length})</h3>
+                {!readOnly && (
+                  <p className="text-[11px] text-slate-500">Double-click a row or tick checkbox to edit UOM / CF Mode</p>
+                )}
+              </div>
+              <p className="text-[11px] text-teal-800 bg-teal-50 border border-teal-100 rounded px-2 py-1">
+                Importer EPR: set <strong>Plastic Category</strong> and <strong>Conversion Factor (kg per invoice unit)</strong>.
+                Example: 0.05 kg/Nos means each unit contains 0.05 kg of plastic packaging (4,000 Nos → 0.20 MT).
+              </p>
             </div>
             <div className="overflow-x-auto">
               <table className="w-full text-xs min-w-[1100px]">
@@ -774,10 +809,11 @@ export default function SalesReview() {
                     <th className="th">Qty</th>
                     <th className="th">Rate</th>
                     <th className="th">CF Mode</th>
+                    <th className="th">Packaging CF</th>
                     <th className="th">Method</th>
-                    <th className="th">Qty MT</th>
+                    <th className="th">Packaging MT</th>
                     <th className="th">Status</th>
-                    <th className="th">Master</th>
+                    <th className="th">Source</th>
                     <th className="th">Category</th>
                     <th className="th">Material</th>
                     {!readOnly && <th className="th">Action</th>}
@@ -797,6 +833,7 @@ export default function SalesReview() {
                             : CONVERSION_METHOD.DEFAULT),
                     );
                     const isEditing = isLineEditable(idx);
+                    const sourceBadge = packagingSourceBadge(line);
                     return (
                       <tr
                         key={idx}
@@ -872,8 +909,13 @@ export default function SalesReview() {
                             </select>
                           ) : CF_MODE_OPTIONS.find((o) => o.value === line.quantityDerivationType)?.label || line.quantityDerivationType}
                         </td>
+                        <td className="td font-mono text-[10px] text-slate-600" title="kg per invoice unit">
+                          {isEditing && !readOnly ? (
+                            <span className="text-[10px] text-slate-400">{formatPackagingCf(line)}</span>
+                          ) : formatPackagingCf(line)}
+                        </td>
                         <td className="td"><span className="px-1.5 py-0.5 rounded bg-slate-100 text-[10px] font-medium">{method}</span></td>
-                        <td className="td font-medium text-emerald-700">
+                        <td className="td font-medium text-emerald-700" title={packagingMtTitle(line, mt)}>
                           {line.quantityDerivationType === 'manual' && isEditing && !readOnly ? (
                             <input className="input text-xs py-1 w-16" value={line.processedQuantity} onChange={(e) => updateLine(idx, { processedQuantity: e.target.value })} />
                           ) : fmtMt(mt)}
@@ -885,10 +927,18 @@ export default function SalesReview() {
                             </select>
                           ) : LINE_STATUS_OPTIONS.find((o) => o.value === line.lineStatus)?.label || line.lineStatus}
                         </td>
-                        <td className="td"><span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-100">{line.masterSource || 'none'}</span></td>
+                        <td className="td">
+                          {sourceBadge ? (
+                            <span className={`text-[10px] px-1.5 py-0.5 rounded font-medium ${sourceBadge.className}`}>
+                              {sourceBadge.label}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] text-slate-400">—</span>
+                          )}
+                        </td>
                         <td className="td">
                           {!readOnly ? (
-                            <select className="input text-xs py-1" value={line.plasticCategory || ''} onChange={(e) => updateLine(idx, { plasticCategory: e.target.value })}>
+                            <select className="input text-xs py-1" value={line.plasticCategory || ''} onChange={(e) => updateLine(idx, { plasticCategory: e.target.value })} title="Plastic Category (Cat-I … Cat-IV)">
                               <option value="">—</option>
                               {PLASTIC_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
                             </select>
@@ -915,7 +965,7 @@ export default function SalesReview() {
             </div>
             {!readOnly && (
               <p className="text-[11px] text-slate-400 px-4 py-2 border-t border-slate-100">
-                Double-click a row to edit. Quantity Sold (MT) = sum of line weights (MT), not piece count — use CF Mode for PC/Box lines.
+                Double-click a row to edit. CF is kg per invoice unit (MT = qty × CF ÷ 1000). Quantity Sold (MT) = sum of line packaging MT — use CF Mode for PC/Box lines.
               </p>
             )}
           </section>

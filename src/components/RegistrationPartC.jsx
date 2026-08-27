@@ -1,16 +1,16 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, FileSignature, FileText, PenLine, Sparkles, Upload } from 'lucide-react';
-import LocalFilePreview from './LocalFilePreview.jsx';
+import { FileSignature, FileText, PenLine, Sparkles, Upload } from 'lucide-react';
+import UploadedFilePreview from './UploadedFilePreview.jsx';
 import LetterStudioModal from './LetterStudioModal.jsx';
 import {
   buildLetterValues,
-  fileLabel,
   getApplicableLetters,
   loadLetterSourceRecords,
   missingLetterFields,
   resolveIecNumber,
 } from '../utils/partCLetterValues.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { validateCpcbPortalFileName } from '../utils/registrationDataMapper.js';
 
 function DocumentCard({
   title,
@@ -42,13 +42,7 @@ function DocumentCard({
       </div>
 
       {filePath ? (
-        <div className="flex items-center gap-3 min-w-0">
-          <p className="text-xs text-emerald-700 flex items-center gap-1.5 min-w-0">
-            <CheckCircle2 size={13} className="shrink-0" />
-            <span className="truncate" title={filePath}>{fileLabel(filePath)}</span>
-          </p>
-          <LocalFilePreview filePath={filePath} />
-        </div>
+        <UploadedFilePreview filePath={filePath} className="mt-0" />
       ) : (
         <p className="text-xs text-slate-400">No signed PDF attached yet.</p>
       )}
@@ -132,13 +126,24 @@ export default function RegistrationPartC({
     largeEntity: autoData?.typeOfCompanyDoc,
   };
 
-  const validatePdf = async (file) => {
+  const validatePdf = async (file, docBase = 'document') => {
     if (!file) return null;
     if (!/\.pdf$/i.test(file.name)) {
       showToast?.('Please upload a PDF file.', 'error');
       return null;
     }
-    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_part_c' });
+    const nameCheck = validateCpcbPortalFileName(file.name, docBase);
+    if (!nameCheck.valid) {
+      showToast?.(
+        `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+        'warning',
+        { duration: 12000 }
+      );
+    }
+    const stored = await storeCompressedUpload(file, {
+      destSubdir: 'processed_part_c',
+      fileName: nameCheck.suggestedName,
+    });
     if (!stored.success || !stored.filePath) {
       showToast?.(stored.message || 'Could not save PDF.', 'error');
       return null;
@@ -146,8 +151,15 @@ export default function RegistrationPartC({
     return stored.filePath;
   };
 
+  const PART_C_DOC_BASE = {
+    partCCoveringLetter: 'covering_letter',
+    partCAuditedStatement: 'self_declaration',
+    partCSignature: 'signature',
+    typeOfCompanyDoc: 'supporting_category_doc',
+  };
+
   const handlePdfUpload = async (field, store, file) => {
-    const filePath = await validatePdf(file);
+    const filePath = await validatePdf(file, PART_C_DOC_BASE[field] || 'document');
     if (!filePath) return;
     if (store === 'autoData') {
       setAutoData((prev) => ({ ...prev, [field]: filePath }));

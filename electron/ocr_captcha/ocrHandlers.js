@@ -12,8 +12,10 @@ import {
   mapSaleFromOcr,
   normalizePurchasePartyFields,
   applyQrPriority,
+  fillMissingSupplierGst,
   fileBaseName,
 } from './ocrExtract.js';
+import { extractPdfTextForGstFallback } from '../invoicePartyProbe.js';
 import { createLogger, createTrackId } from '../utils/logger.js';
 import { runExtractQueue } from './extractQueue.js';
 import {
@@ -364,6 +366,24 @@ async function extractOneInvoice({
       .replace(/[^A-Z0-9]/g, '');
     row.seller_gst = sellerGst || row.seller_gst || '';
     row.buyer_gst = buyerGst || row.buyer_gst || '';
+
+    if (invoiceType === 'purchase') {
+      const hasSupplierGst = Boolean(
+        row.supplier_gst_number || row.vendor_gstin || row.seller_gst,
+      );
+      if (!hasSupplierGst && isPdf) {
+        const pdfText = await extractPdfTextForGstFallback(filePath);
+        row = fillMissingSupplierGst(row, pdfText, parsed);
+        if (row.supplier_gst_number) {
+          row.seller_gst = row.supplier_gst_number;
+          log.info('Seller GST inferred from PDF text', {
+            fileName: outFileName,
+            gst: row.supplier_gst_number,
+          });
+        }
+      }
+    }
+
     row.seller_name =
       row.seller_name ||
       String(qrData?.SellerNm || qrData?.SellerName || '').trim() ||

@@ -7,6 +7,7 @@ export function extractHsnFromText(text) {
     /\bHSN\s*(?:CODE|SAC)?\s*[:\-/]?\s*(\d{4,8})\b/i,
     /\bSAC\s*[:\-/]?\s*(\d{4,8})\b/i,
     /\bHSN\s*[\/&]\s*SAC\s*[:\-/]?\s*(\d{4,8})\b/i,
+    /\bHSN\b[\s:.-]*(\d{4,8})/i,
   ];
 
   for (const re of patterns) {
@@ -19,7 +20,29 @@ export function extractHsnFromText(text) {
     if (digits?.[1]) return digits[1];
   }
 
+  const bareEight = s.match(/\b(\d{8})\b/);
+  if (bareEight?.[1]) return bareEight[1];
+
   return '';
+}
+
+/** Pull embedded HSN out of a description and return a cleaner product label. */
+export function splitHsnFromDescription(text = '') {
+  const raw = String(text || '').trim();
+  if (!raw) return { description: '', hsn: '' };
+
+  const hsn = extractHsnFromText(raw);
+  if (!hsn) return { description: raw, hsn: '' };
+
+  const description = raw
+    .replace(/\bHSN\s*(?:CODE|SAC)?\s*[:\-/]?\s*\d{4,8}\b/gi, '')
+    .replace(/\bHSN\b[\s:.-]*\d{4,8}\b/gi, '')
+    .replace(/\bSAC\b[\s:.-]*\d{4,8}\b/gi, '')
+    .replace(/\s{2,}/g, ' ')
+    .replace(/\s+[-–]\s*$/g, '')
+    .trim();
+
+  return { description: description || raw, hsn };
 }
 
 export function normalizeHsnCode(value) {
@@ -49,6 +72,61 @@ export function resolveLineHsn(item = {}) {
     .join(' ');
 
   return extractHsnFromText(text) || '';
+}
+
+/** Resolve HSN for review/OCR lines using draft, extraction row, and header fallbacks. */
+export function resolveReviewLineHsn(line = {}, extLine = {}, row = {}, lineIndex = 0) {
+  const direct = normalizeHsnCode(line.hsn ?? line.hsn_code);
+  if (direct) return direct;
+
+  for (const source of [line, extLine]) {
+    const fromSource = resolveLineHsn(source);
+    if (fromSource) return fromSource;
+  }
+
+  const mergedText = [
+    line.productDescription,
+    line.product,
+    extLine?.d,
+    extLine?.productDescription,
+    extLine?.product_description,
+    extLine?.description,
+    extLine?.product,
+    extLine?.p,
+    extLine?.item_name,
+    extLine?.name,
+    row.item_name,
+  ]
+    .filter(Boolean)
+    .join(' ');
+  const fromMerged = extractHsnFromText(mergedText);
+  if (fromMerged) return fromMerged;
+
+  const extractionLines =
+    row.extraction?.line_items ||
+    row.extraction?.lineItems ||
+    row.extraction?.products ||
+    [];
+  const sibling = extractionLines[lineIndex];
+  if (sibling && sibling !== extLine) {
+    const fromSibling = resolveLineHsn(sibling);
+    if (fromSibling) return fromSibling;
+  }
+
+  const headerHsn = normalizeHsnCode(
+    row.hsn_code ||
+      row.extraction?.hsn_code ||
+      row.extraction?.MainHsnCode ||
+      row.extraction?.h,
+  );
+  const lineCount =
+    row.line_items?.length ||
+    row.lineItems?.length ||
+    extractionLines.length ||
+    0;
+  if (headerHsn && lineCount <= 1) return headerHsn;
+
+  return '';
 }
 
 export function fillLineItemsHsn(lineItems = [], headerHsnCode = '') {

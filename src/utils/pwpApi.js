@@ -3,6 +3,7 @@
  * Uses localStorage so Company Profile works in Vite browser too.
  */
 const KEY = 'pwp_browser_db';
+const SETTINGS_KEY = 'pwp_browser_settings';
 
 function read() {
   try {
@@ -22,6 +23,19 @@ function read() {
 
 function write(db) {
   localStorage.setItem(KEY, JSON.stringify(db));
+}
+
+function readSettings() {
+  try {
+    const raw = localStorage.getItem(SETTINGS_KEY);
+    return raw ? JSON.parse(raw) : {};
+  } catch {
+    return {};
+  }
+}
+
+function writeSettings(settings) {
+  localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
 export function getApi() {
@@ -78,7 +92,14 @@ export function getApi() {
       getAll: async () => read().sales,
       add: async (data) => {
         const db = read();
-        const item = { id: db.nextId++, ...data, created_at: new Date().toISOString() };
+        const globalBank = readSettings().global_bank_details || {};
+        const item = {
+          id: db.nextId++,
+          ...data,
+          account_number: data.account_number || globalBank.account_number || '',
+          ifsc_code: data.ifsc_code || globalBank.ifsc_code || '',
+          created_at: new Date().toISOString(),
+        };
         db.sales.push(item);
         write(db);
         return item;
@@ -91,6 +112,25 @@ export function getApi() {
         return { success: true };
       },
       getSummary: async () => ({ total_records: 0 }),
+      applyBankDetailsToAll: async ({ account_number, ifsc_code } = {}) => {
+        const db = read();
+        let updated = 0;
+        db.sales = db.sales.map((row) => {
+          updated += 1;
+          return { ...row, account_number, ifsc_code };
+        });
+        write(db);
+        return { success: true, updated };
+      },
+    },
+    settings: {
+      get: async (key) => readSettings()[key] ?? null,
+      set: async (key, value) => {
+        const settings = readSettings();
+        settings[key] = value;
+        writeSettings(settings);
+        return true;
+      },
     },
     scraper: {
       runEpr: async () => ({ success: false, error: 'Not available in browser' }),

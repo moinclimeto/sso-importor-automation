@@ -1,14 +1,17 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
-import LocalFilePreview from '../components/LocalFilePreview.jsx';
+import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
+  collectRegistrationUploadFileIssues,
+  formatCpcbFileNameIssue,
+  validateCpcbPortalFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -33,6 +36,18 @@ import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
+import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
+import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
+import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
+import {
+  fetchComputedPlasticConsumed3c,
+  shouldHydratePlasticConsumed,
+} from '../utils/registrationPlasticConsumed.js';
+import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4PartAIssue,
+} from '../utils/registrationPartBSection4.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -102,6 +117,7 @@ export default function CpcbRegistrationPage() {
   const [generalInfo, setGeneralInfo] = useState({ ...GENERAL_INFO_EMPTY });
   const [docReady, setDocReady] = useState(true);
   const [missingDocs, setMissingDocs] = useState([]);
+  const [fileNameIssues, setFileNameIssues] = useState([]);
 
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
@@ -147,6 +163,8 @@ export default function CpcbRegistrationPage() {
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
+  const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
+  const [uploadingPdfField, setUploadingPdfField] = useState('');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -300,6 +318,13 @@ export default function CpcbRegistrationPage() {
     const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
     setDocReady(ready);
     setMissingDocs(missing);
+    setFileNameIssues(
+      collectRegistrationUploadFileIssues({
+        docs,
+        autoData: mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || {}),
+        generalInfo: mergeGeneralInfoFromSources(data, savedForm?.generalInfo || {}),
+      })
+    );
   }, []);
 
   const [savedRegistration, setSavedRegistration] = useState(null);
@@ -377,9 +402,55 @@ export default function CpcbRegistrationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
+  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
+
+  useEffect(() => {
+    if (loadingSavedRegistration) return undefined;
+
+    let cancelled = false;
+    (async () => {
+      try {
+        const result = await fetchComputedPlasticConsumed3c({
+          gstin: autoData.gstin,
+          savedImporter3a: autoData.importer3a,
+        });
+        if (cancelled || !result?.hasData) return;
+
+        setGeneralInfo((prev) => {
+          if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
+          return { ...prev, plasticConsumed: result.plasticConsumed };
+        });
+        setPlasticConsumedSource(result.sourceLabel || '');
+      } catch (err) {
+        console.error('Failed to hydrate Section 3c:', err);
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
+
+  const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
+    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
+  }, []);
+
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
   }, [applyRegistrationData]);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      let docs = [];
+      if (window.pwp?.documents?.getAll) {
+        docs = await window.pwp.documents.getAll();
+      }
+      if (cancelled) return;
+      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [autoData, generalInfo]);
 
   const persistRegistrationForm = async () => {
     if (!window.pwp?.registration?.save) return;
@@ -397,30 +468,62 @@ export default function CpcbRegistrationPage() {
   };
 
   const persistPartCFile = async (file, field) => {
-    const stored = await storeCompressedUpload(file, { destSubdir: 'processed_registration_docs' });
+    const docBase = field === 'detailsOfProductsPath'
+      ? 'operations_details'
+      : field === 'representativePicturePath'
+        ? 'plastic_packaging_picture'
+        : 'document';
+    const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
+    if (!nameCheck.valid) {
+      showToast(
+        `"${file.name}" jaisa naam CPCB portal reject karta hai. App ise "${nameCheck.suggestedName}" ke naam se save karegi.`,
+        'warning',
+        { duration: 12000 }
+      );
+    }
+    const stored = await storeCompressedUpload(file, {
+      destSubdir: 'processed_registration_docs',
+      fileName: nameCheck.suggestedName,
+    });
     if (!stored.success || !stored.filePath) {
       showToast(stored.message || 'Could not save this file for preview. Please upload it again from the desktop app.', 'error');
       return;
     }
     setAutoData((prev) => {
       const next = { ...prev, [field]: stored.filePath };
-      if (window.pwp?.registration?.save) {
-        const updatedFormData = {
+      const savePayload = {
+        ...(savedRegistration || {}),
+        email,
+        mobile,
+        form_data_json: JSON.stringify({
           ...(savedRegistration?.formData || {}),
           email,
           mobile,
           autoData: next,
           generalInfo,
-        };
-        window.pwp.registration.save({
-          ...(savedRegistration || {}),
-          email,
-          mobile,
-          form_data_json: JSON.stringify(updatedFormData),
-        }).catch(console.error);
+        }),
+      };
+      if (field === 'detailsOfProductsPath') {
+        savePayload.details_of_products_produced_marketed = stored.filePath;
+      }
+      if (field === 'representativePicturePath') {
+        savePayload.representative_picture_of_plastic_packaging = stored.filePath;
+      }
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(savePayload).catch(console.error);
       }
       return next;
     });
+  };
+
+  const handlePartAPdfUpload = async (field, file) => {
+    setUploadingPdfField(field);
+    try {
+      await persistPartCFile(file, field);
+      showToast('PDF uploaded.', 'success');
+    } finally {
+      setUploadingPdfField('');
+    }
   };
 
   const handleSaveAndNext = async () => {
@@ -463,6 +566,24 @@ export default function CpcbRegistrationPage() {
 
     if (!docReady) {
       showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
+      return;
+    }
+
+    let docs = [];
+    if (window.pwp?.documents?.getAll) {
+      docs = await window.pwp.documents.getAll();
+    }
+    const uploadNameIssues = collectRegistrationUploadFileIssues({ docs, autoData, generalInfo });
+    if (uploadNameIssues.length) {
+      setFileNameIssues(uploadNameIssues);
+      showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
+      if (uploadNameIssues.length > 1) {
+        showToast(
+          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          'warning',
+          { duration: 12000 }
+        );
+      }
       return;
     }
     const missingAutoFields = [];
@@ -859,7 +980,42 @@ export default function CpcbRegistrationPage() {
     }
 
     if (missing.length > 0) {
+      const partAHints = [
+        'Type of Business',
+        'Type of Company',
+        'State/UT',
+        'Operating States',
+        'Year of Commencement',
+        'Compliance Status',
+        'Thickness',
+        'Details (Type & Quantity) of products produced/marketed',
+        'Representative picture of Plastic Packaging',
+        'Type of Company Document',
+      ];
+      if (missing.some((label) => partAHints.some((hint) => label.includes(hint)))) {
+        setWizardStep('partA');
+      } else if (missing.some((label) => label.startsWith('Part C'))) {
+        setWizardStep('partC');
+      }
       showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
+      return;
+    }
+
+    const section4Issues = validateSection4AgainstPlasticConsumed(
+      generalInfo.partBSection4 || [],
+      generalInfo.plasticConsumed || {},
+      getImporterReportingFinancialYears(),
+    );
+    if (section4Issues.length) {
+      setWizardStep('partB');
+      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
+      if (section4Issues.length > 1) {
+        showToast(
+          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          'warning',
+          { duration: 12000 },
+        );
+      }
       return;
     }
 
@@ -1002,6 +1158,43 @@ export default function CpcbRegistrationPage() {
     }
   };
 
+  const handleLoginOnboardingResult = (res) => {
+    if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      showToast(
+        `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
+        'success',
+        { duration: 15000 },
+      );
+      return true;
+    }
+
+    if (
+      res.success &&
+      (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE')
+    ) {
+      const scrapeOk = res.scrape?.success !== false;
+      showToast(
+        scrapeOk
+          ? 'Registration pipeline complete! Application started and portal data synced to the app.'
+          : `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}.`,
+        scrapeOk ? 'success' : 'error',
+        { duration: 15000 },
+      );
+      return true;
+    }
+
+    if (res.success && res.step === 'LOGIN_COMPLETE') {
+      setAutomationLogs((prev) => [
+        ...prev,
+        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
+      ]);
+      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      return true;
+    }
+
+    return false;
+  };
+
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
@@ -1014,35 +1207,39 @@ export default function CpcbRegistrationPage() {
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
 
-      if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        showToast(
-          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-          'success',
-          { duration: 15000 }
-        );
+        setLoginOtpSubmitting(false);
+        setLoading(true);
+        setLoadingMsg('Filling application on CPCB portal...');
+        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
+        try {
+          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: false });
+          handleLoginOnboardingResult(onboard);
+          if (!onboard.success) {
+            const errMsg = onboard.error || 'Application onboarding failed.';
+            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          }
+        } finally {
+          setLoading(false);
+          setLoadingMsg('');
+        }
         return;
       }
 
-      if (res.success && res.step === 'LOGIN_COMPLETE') {
+      if (handleLoginOnboardingResult(res)) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error }]);
-        showToast(
-          `Login successful, but onboarding failed. See logs for details.`,
-          'error',
-          { duration: 15000 }
-        );
         return;
       }
 
       const errMsg = res.error || 'Invalid OTP. Please try again.';
       setLoginOtpError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
     } catch (err) {
       setLoginOtpError(err.message);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -1158,6 +1355,24 @@ export default function CpcbRegistrationPage() {
       {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
         <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+
+        {fileNameIssues.length > 0 && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
+            <p className="text-sm font-semibold text-amber-900">
+              CPCB file name issue — registration tab tak fix karein
+            </p>
+            <ul className="space-y-1.5">
+              {fileNameIssues.map((issue) => (
+                <li key={`${issue.label}-${issue.fileName}`} className="text-xs text-amber-900">
+                  {formatCpcbFileNameIssue(issue)}
+                </li>
+              ))}
+            </ul>
+            <p className="text-xs text-amber-800">
+              Simple naam use karein jaise <strong>person_pan.pdf</strong> — bina space, brackets ( ) ya double extension ke.
+            </p>
+          </div>
+        )}
       </div>
       )}
 
@@ -1322,9 +1537,11 @@ export default function CpcbRegistrationPage() {
                     required
                   />
                   {autoData.unitGstDoc ? (
-                    <p className="text-xs text-green-600 mt-1 truncate" title={autoData.unitGstDoc}>
-                      Certificate from documents: {autoData.unitGstDoc.split(/[/\\]/).pop()} — uploaded automatically in Part A
-                    </p>
+                    <UploadedFilePreview
+                      filePath={autoData.unitGstDoc}
+                      prefix="Certificate from documents"
+                      suffix="— uploaded automatically in Part A"
+                    />
                   ) : null}
                 </div>
                 {/* Already captured by the document extractor — no manual upload needed. */}
@@ -1397,50 +1614,42 @@ export default function CpcbRegistrationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartACompanyProfile
+                    generalInfo={generalInfo}
+                    onChange={handleGeneralChange}
+                    autoData={autoData}
+                    onTypeOfCompanyDocSelect={(file) => persistPartCFile(file, 'typeOfCompanyDoc')}
+                    inputClass={inputClass}
+                    selectClass={inputClass}
+                  />
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-2">
-                      {INDIAN_STATES.map((s) => {
-                        const isChecked = (generalInfo.operatingStates || []).includes(s);
-                        return (
-                          <label key={s} className="flex items-start gap-2 p-2 rounded-lg hover:bg-slate-50 cursor-pointer border border-transparent hover:border-slate-200">
-                            <input
-                              type="checkbox"
-                              checked={isChecked}
-                              onChange={(e) => {
-                                setGeneralInfo(prev => {
-                                  const current = prev.operatingStates || [];
-                                  const newState = e.target.checked
-                                    ? [...current, s]
-                                    : current.filter(x => x !== s);
-                                  
-                                  const newStateObj = { ...prev, operatingStates: newState };
-                                  
-                                  // Auto-save logic
-                                  if (window.pwp?.registration?.save) {
-                                    const updatedFormData = {
-                                      ...(savedRegistration?.formData || {}),
-                                      email, mobile, autoData, generalInfo: newStateObj
-                                    };
-                                    window.pwp.registration.save({
-                                      ...(savedRegistration || {}),
-                                      email,
-                                      mobile,
-                                      form_data_json: JSON.stringify(updatedFormData)
-                                    }).catch(console.error);
-                                  }
-                                  
-                                  return newStateObj;
-                                });
-                              }}
-                              className="rounded border-slate-300 text-green-600 focus:ring-green-500"
-                            />
-                            <span className="text-sm text-slate-700">{s}</span>
-                          </label>
-                        );
-                      })}
-                    </div>
-                    <p className="text-xs text-slate-500 mt-1">Select one or more states (Auto-saves)</p>
+                    <OperatingStatesMultiSelect
+                      value={generalInfo.operatingStates || []}
+                      onChange={(newState) => {
+                        setGeneralInfo((prev) => {
+                          const newStateObj = { ...prev, operatingStates: newState };
+
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email,
+                              mobile,
+                              autoData,
+                              generalInfo: newStateObj,
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email,
+                              mobile,
+                              form_data_json: JSON.stringify(updatedFormData),
+                            }).catch(console.error);
+                          }
+
+                          return newStateObj;
+                        });
+                      }}
+                    />
                   </div>
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
@@ -1535,51 +1744,20 @@ export default function CpcbRegistrationPage() {
                     />
                   </div>
                   
-                  <div className="md:col-span-2 mt-4">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">3c) Total Quantity of Plastic Consumed for Plastic Packaging of Commodities (TPA) *</label>
-                    <div className="overflow-x-auto border border-slate-200 rounded-lg">
-                      <table className="w-full text-sm text-left">
-                        <thead className="bg-[#0b6c7a] text-white">
-                          <tr>
-                            <th className="px-4 py-3 font-medium">Year</th>
-                            <th className="px-4 py-3 font-medium">Rigid Plastic (Cat-I)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Flexible Plastic (Cat-II)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">MLP (Cat-III)<br/><span className="font-normal text-xs">* Enter value in Tonnes</span></th>
-                            <th className="px-4 py-3 font-medium">Compostable Plastic (Cat-IV)<br/><span className="font-normal text-xs">*Enter value in Tonnes</span></th>
-                          </tr>
-                        </thead>
-                        <tbody className="divide-y divide-slate-200 bg-white">
-                          {['2024-25', '2025-26'].map((year) => (
-                            <tr key={year}>
-                              <td className="px-4 py-3 font-medium text-slate-700">{year}</td>
-                              {['cat1', 'cat2', 'cat3', 'cat4'].map((cat) => (
-                                <td key={cat} className="px-4 py-2">
-                                  <input
-                                    type="number"
-                                    min="0"
-                                    className="w-full px-3 py-1.5 border border-slate-300 rounded focus:ring-1 focus:ring-emerald-500 focus:border-emerald-500 outline-none"
-                                    value={generalInfo.plasticConsumed?.[year]?.[cat] || ''}
-                                    onChange={(e) => {
-                                      setGeneralInfo(prev => ({
-                                        ...prev,
-                                        plasticConsumed: {
-                                          ...(prev.plasticConsumed || {}),
-                                          [year]: {
-                                            ...(prev.plasticConsumed?.[year] || {}),
-                                            [cat]: e.target.value
-                                          }
-                                        }
-                                      }));
-                                    }}
-                                  />
-                                </td>
-                              ))}
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    </div>
-                  </div>
+                  <ImporterEprPreparedReview
+                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                    representativePicturePath={autoData.representativePicturePath || ''}
+                    plasticConsumed={
+                      generalInfo.plasticConsumed || Object.fromEntries(
+                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                      )
+                    }
+                    reportingYears={reportingFys}
+                    onPdfUpload={handlePartAPdfUpload}
+                    uploadingPdfField={uploadingPdfField}
+                    onPlasticConsumedChange={handlePlasticConsumedChange}
+                    plasticConsumedSource={plasticConsumedSource}
+                  />
 
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
@@ -1629,7 +1807,7 @@ export default function CpcbRegistrationPage() {
         )}
 
         {registrationComplete && wizardStep === 'partB' && (
-          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} />
+          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
         )}
 
         {registrationComplete && wizardStep === 'partC' && (
@@ -1637,67 +1815,24 @@ export default function CpcbRegistrationPage() {
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
             <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Details ( Type & Quantity ) of products produced/marketed *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'detailsOfProductsPath');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.detailsOfProductsPath && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.detailsOfProductsPath}>Selected: {autoData.detailsOfProductsPath.split(/[/\\]/).pop()}</p>
-                      <LocalFilePreview filePath={autoData.detailsOfProductsPath} />
-                    </div>
-                  )}
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Representative picture of Plastic Packaging *</label>
-                  <input
-                    type="file"
-                    accept=".pdf,.png,.jpg,.jpeg"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'representativePicturePath');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.representativePicturePath && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.representativePicturePath}>Selected: {autoData.representativePicturePath.split(/[/\\]/).pop()}</p>
-                      <LocalFilePreview filePath={autoData.representativePicturePath} />
-                    </div>
-                  )}
-                </div>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">
-                    {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
-                      ? 'Type of Company Document — MSME Certificate (PDF) *'
-                      : 'Type of Company Document — Large Entity Declaration (PDF) *'}
-                  </label>
-                  <input
-                    type="file"
-                    accept=".pdf"
-                    onChange={async (e) => {
-                      const file = e.target.files[0];
-                      if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
-                    }}
-                    className={inputClass}
-                  />
-                  {autoData.typeOfCompanyDoc && (
-                    <div className="mt-1 flex items-center gap-3">
-                      <p className="text-xs text-green-600 truncate" title={autoData.typeOfCompanyDoc}>
-                        Selected: {autoData.typeOfCompanyDoc.split(/[/\\]/).pop()}
-                      </p>
-                      <LocalFilePreview filePath={autoData.typeOfCompanyDoc} />
-                    </div>
-                  )}
-                </div>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">
+                  {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
+                    ? 'Type of Company Document — MSME Certificate (PDF) *'
+                    : 'Type of Company Document — Large Entity Declaration (PDF) *'}
+                </label>
+                <input
+                  type="file"
+                  accept=".pdf"
+                  onChange={async (e) => {
+                    const file = e.target.files[0];
+                    if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
+                  }}
+                  className={inputClass}
+                />
+                {autoData.typeOfCompanyDoc && (
+                  <UploadedFilePreview filePath={autoData.typeOfCompanyDoc} />
+                )}
               </div>
             </div>
           </div>
@@ -1840,7 +1975,7 @@ export default function CpcbRegistrationPage() {
           {!registrationComplete ? (
             <button
               type="submit"
-              disabled={loading || !docReady}
+              disabled={loading || !docReady || fileNameIssues.length > 0}
               className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}

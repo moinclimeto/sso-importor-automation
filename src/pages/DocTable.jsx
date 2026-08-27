@@ -1224,6 +1224,7 @@ export default function DocTable() {
   const [confirmDialog, setConfirmDialog] = useState(null);
   const [actionBusy, setActionBusy] = useState(false);
   const [globalBankMissing, setGlobalBankMissing] = useState(false);
+  const [globalBankDetails, setGlobalBankDetails] = useState({ account_number: '', ifsc_code: '' });
 
 
 
@@ -1393,8 +1394,11 @@ export default function DocTable() {
       setRows(data || []);
 
       if (!isPurchase) {
-        const globalBank = await window.pwp?.settings?.get('global_bank_details');
-        setGlobalBankMissing(!globalBank?.account_number || !globalBank?.ifsc_code);
+        const globalBank = await api.settings?.get?.('global_bank_details');
+        const account_number = String(globalBank?.account_number || '').trim();
+        const ifsc_code = String(globalBank?.ifsc_code || '').trim();
+        setGlobalBankDetails({ account_number, ifsc_code });
+        setGlobalBankMissing(!account_number || !ifsc_code);
       }
 
 
@@ -1431,7 +1435,7 @@ export default function DocTable() {
   useEffect(() => {
     setSelectedIds(new Set());
     load();
-  }, [type, docTab]);
+  }, [type, docTab, location.pathname]);
 
   useEffect(() => {
     if (location.state?.tab) setDocTab(location.state.tab);
@@ -1951,7 +1955,7 @@ export default function DocTable() {
               <b>Disclaimer:</b> Global Bank Details (Account No / IFSC) for Sales are missing.
             </span>
           </div>
-          <button onClick={() => navigate('/cpcb-dashboard')} className="text-indigo-600 font-medium hover:underline shrink-0">
+          <button onClick={() => navigate('/dashboard')} className="text-indigo-600 font-medium hover:underline shrink-0">
             Add in Dashboard
           </button>
         </div>
@@ -2034,7 +2038,8 @@ export default function DocTable() {
                 if (col.key === 'invoice_date') return cell(r.invoice_date || r.procurement_date || r.date_of_entry || value);
                 if (col.key === 'procurement_date') return cell(r.procurement_date || r.invoice_date || value);
                 if (col.key === 'date_of_entry') return cell(r.date_of_entry || r.invoice_date || value);
-                if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin;
+                if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin || r.supplier_gst || r.seller_gst;
+                if (col.key === 'supplier_gst' && !value) return r.supplier_gst_number || r.vendor_gstin || r.seller_gst;
                 if (col.key === 'quantity_mt' && (value === undefined || value === '')) {
                   const mt = resolveRecordTotalMt(r, 'purchase');
                   if (mt != null) return fmt(mt);
@@ -2078,6 +2083,14 @@ export default function DocTable() {
                 }
                 if (col.key === 'district') {
                   return cell(resolveSalesDistrict(r) || value);
+                }
+                if (col.key === 'account_number') {
+                  const resolved = String(r.account_number || globalBankDetails.account_number || '').trim();
+                  return cell(resolved || value);
+                }
+                if (col.key === 'ifsc_code') {
+                  const resolved = String(r.ifsc_code || globalBankDetails.ifsc_code || '').trim();
+                  return cell(resolved || value);
                 }
                 if (col.key === 'gst_other_charges') {
                   const resolved = resolveSalesGstOtherCharges(r);

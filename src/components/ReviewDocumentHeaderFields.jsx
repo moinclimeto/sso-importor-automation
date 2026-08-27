@@ -23,6 +23,18 @@ export function buildStateOptions(current) {
   );
   return exists ? INDIAN_STATES : [cur, ...INDIAN_STATES];
 }
+
+function normalizeSelectOption(opt) {
+  if (opt == null) return { value: '', label: '' };
+  if (typeof opt === 'string' || typeof opt === 'number') {
+    const text = String(opt);
+    return { value: text, label: text };
+  }
+  return {
+    value: String(opt.value ?? opt.label ?? ''),
+    label: String(opt.label ?? opt.value ?? ''),
+  };
+}
 export function ReadonlyHeaderField({ label, value, multiline, required }) {
   return (
     <div>
@@ -85,6 +97,10 @@ export function EditableHeaderSelect({ label, value, onChange, options, readOnly
   if (readOnly) {
     return <ReadonlyHeaderField label={label} value={value} />;
   }
+
+  const normalized = (options || []).map(normalizeSelectOption);
+  const hasEmptyOption = normalized.some((opt) => opt.value === '');
+
   return (
     <div>
       <label className="label text-xs text-slate-500">{label}</label>
@@ -94,10 +110,10 @@ export function EditableHeaderSelect({ label, value, onChange, options, readOnly
         disabled={disabled}
         onChange={(e) => onChange(e.target.value)}
       >
-        <option value="">{placeholder}</option>
-        {options.map((opt) => (
-          <option key={opt} value={opt}>
-            {opt}
+        {!hasEmptyOption && <option value="">{placeholder}</option>}
+        {normalized.map((opt) => (
+          <option key={`${opt.value}::${opt.label}`} value={opt.value}>
+            {opt.label}
           </option>
         ))}
       </select>
