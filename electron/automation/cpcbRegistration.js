@@ -31,6 +31,7 @@ import {
   resolvePlasticConsumedYears,
 } from './portalPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import {
   getBaseNameFromPath,
   registrationDocFileName,
@@ -579,7 +580,7 @@ async function fillGeneralInformation(page, data, onLog) {
     onLog(`[DEBUG] thicknessOfPlastic: ${data.thicknessOfPlastic}`);
   }
 
-  if (data.plasticConsumed) {
+  if (data.plasticConsumed && requiresHistoricalEprData(data.yearOfCommencement)) {
     if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
     const pcYears = resolvePlasticConsumedYears(data.plasticConsumed);
     await fillPlasticConsumedGrid(
@@ -588,6 +589,8 @@ async function fillGeneralInformation(page, data, onLog) {
       pcYears.length ? pcYears : getImporterReportingFinancialYears(),
       onLog,
     );
+  } else if (onLog) {
+    onLog('Skipping 3c — operations commenced in current financial year.');
   }
 
   if (data.complianceStatus?.trim()) {

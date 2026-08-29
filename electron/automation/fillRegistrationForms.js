@@ -25,6 +25,7 @@ import {
   formatSection4PartAIssue,
 } from '../../shared/partBSection4.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { requiresHistoricalEprData, getCurrentFinancialYearStartYear } from '../../shared/commencementYearScope.js';
 import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
 
 const UPLOAD_LABEL_BASE_NAMES = {
@@ -868,6 +869,7 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   );
   const productsFile = existingFile(data.detailsOfProductsPath);
   const pictureFile = existingFile(data.representativePicturePath);
+  const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
   if (!productsFile) {
     throw new Error('Upload the real PDF for Details (Type & Quantity) of products produced/marketed. Dummy file will not be used.');
   }
@@ -876,6 +878,9 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   }
   if (onLog) onLog(`Using user products PDF: ${productsFile}`);
   if (onLog) onLog(`Using user packaging picture: ${pictureFile}`);
+  if (!needsHistorical && onLog) {
+    onLog(`Year of Commencement ${data.yearOfCommencement} is current FY — skipping 3c grid only.`);
+  }
   const iecNumber = docs.iec?.document_number || data.iec;
 
   await uploadNearLabel(page, 'Company PAN', companyPanFile, onLog);
@@ -936,15 +941,18 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await chooseOption(page, {
     labelRegex: /2\s*d\).*Year of Commencement of Operations/i,
     placeholders: ['Enter year', 'Select year'],
-    option: '2026',
+    option: String(data.yearOfCommencement || getCurrentFinancialYearStartYear()),
     onLog,
-    name: 'Year of Commencement (2d) = 2026',
+    name: `Year of Commencement (2d) = ${data.yearOfCommencement || getCurrentFinancialYearStartYear()}`,
   });
   const yearSelect = page.getByText(/2\s*d\).*Year of Commencement/i).first()
     .locator('xpath=following::select[1]');
+  const commencementYear = String(data.yearOfCommencement || getCurrentFinancialYearStartYear());
   if (await yearSelect.isVisible({ timeout: 1500 }).catch(() => false)) {
-    await yearSelect.selectOption({ value: '2026' }).catch(() => yearSelect.selectOption({ label: '2026' })).catch(() => {});
-    if (onLog) onLog('Forced Year of Commencement select to 2026');
+    await yearSelect.selectOption({ value: commencementYear })
+      .catch(() => yearSelect.selectOption({ label: commencementYear }))
+      .catch(() => {});
+    if (onLog) onLog(`Set Year of Commencement to ${commencementYear}`);
   }
 
   await uploadNearLabel(
@@ -956,17 +964,19 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await uploadNearLabel(page, 'products produced/marketed', productsFile, onLog);
   await uploadNearLabel(page, 'Representative picture of Plastic Packaging', pictureFile, onLog);
 
-  const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
-    ? resolvePlasticConsumedYears(data.plasticConsumed)
-    : getImporterReportingFinancialYears();
-  const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
-  if (!filled3c) {
-    await fillAgGridZeros(
-      page,
-      /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
-      onLog,
-      'Part A 3c fallback zeros'
-    );
+  if (needsHistorical) {
+    const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
+      ? resolvePlasticConsumedYears(data.plasticConsumed)
+      : getImporterReportingFinancialYears();
+    const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
+    if (!filled3c) {
+      await fillAgGridZeros(
+        page,
+        /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
+        onLog,
+        'Part A 3c fallback zeros'
+      );
+    }
   }
 
   await chooseOption(page, {
@@ -1380,14 +1390,17 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
 
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
+  const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
   data.partBSection4 = await resolvePartBSection4ForAutomation({
-    partBSection4: data.partBSection4,
+    partBSection4: needsHistorical ? data.partBSection4 : [],
     operatingStates: data.operatingStates,
+    yearOfCommencement: data.yearOfCommencement,
     onLog,
   });
   data.partBTransactions = await resolvePartBTransactionsForAutomation({
-    partBTransactions: data.partBTransactions,
+    partBTransactions: needsHistorical ? data.partBTransactions : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
     gstin: data.unitGst,
+    yearOfCommencement: data.yearOfCommencement,
     onLog,
   });
 
@@ -1403,8 +1416,12 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     stepName: 'Part B',
     onLog,
     fillFn: async () => {
-      await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
-      await fillPartBSection5(page, data.partBTransactions, onLog);
+      if (needsHistorical) {
+        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
+        await fillPartBSection5(page, data.partBTransactions, onLog);
+      } else if (onLog) {
+        onLog('Part B: current FY commencement — skipping Section 4 and all Section 5 entries.');
+      }
     },
     saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
   });

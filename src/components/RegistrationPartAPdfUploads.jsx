@@ -21,15 +21,20 @@ export default function RegistrationPartAPdfUploads({
   representativePicturePath = '',
   onUpload,
   uploadingField = '',
+  includeDetailsOfProducts = true,
 }) {
   const paths = {
     detailsOfProductsPath,
     representativePicturePath,
   };
 
+  const visibleFields = includeDetailsOfProducts
+    ? FIELDS
+    : FIELDS.filter((field) => field.key !== 'detailsOfProductsPath');
+
   return (
     <div className="space-y-4">
-      {FIELDS.map((field) => {
+      {visibleFields.map((field) => {
         const filePath = paths[field.key] || '';
         const uploading = uploadingField === field.key;
 

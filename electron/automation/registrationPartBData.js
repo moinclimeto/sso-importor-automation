@@ -11,6 +11,7 @@ import {
   reconcileSec5bForAutomation,
   reconcileSec5dForAutomation,
 } from '../../shared/partBSection5.js';
+import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 
 async function resolveCompanyIdForAutomation({ companyId = null, gstin = '' } = {}) {
   if (companyId != null && companyId !== '') return companyId;
@@ -78,8 +79,13 @@ export async function resolvePartBSection4ForAutomation({
   partBSection4 = [],
   operatingStates = [],
   companyId = null,
+  yearOfCommencement = '',
   onLog,
 } = {}) {
+  if (!requiresHistoricalEprData(yearOfCommencement)) {
+    if (onLog) onLog('Part B Section 4 skipped — operations commenced in current financial year.');
+    return [];
+  }
   if (partBSection4HasData(partBSection4)) return partBSection4;
   if (!operatingStates?.length) {
     if (onLog) onLog('Part B Section 4 empty and no operating states — cannot compute.');
@@ -110,6 +116,7 @@ export async function resolvePartBTransactionsForAutomation({
   partBTransactions = {},
   companyId = null,
   gstin = '',
+  yearOfCommencement = '',
   onLog,
 } = {}) {
   const base = {
@@ -119,6 +126,10 @@ export async function resolvePartBTransactionsForAutomation({
     sec5d: [],
     ...(partBTransactions || {}),
   };
+  if (!requiresHistoricalEprData(yearOfCommencement)) {
+    if (onLog) onLog('Part B Section 5 skipped — operations commenced in current financial year.');
+    return { ...base, sec5a: [], sec5b: [], sec5c: [], sec5d: [] };
+  }
   const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
   const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
   const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
