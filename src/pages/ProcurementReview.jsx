@@ -105,6 +105,27 @@ export default function ProcurementReview() {
     [header, lines, record, packagingRows],
   );
 
+  const validateCurrentDocument = useCallback(
+    () => validateReviewDocument({
+      header,
+      lines,
+      record: record || {},
+      packagingRows,
+      mode: 'purchase',
+    }),
+    [header, lines, record, packagingRows],
+  );
+
+  const ensurePublishReady = useCallback((docStatus) => {
+    if (docStatus !== 'published') return true;
+    const result = validateCurrentDocument();
+    if (!result.ok) {
+      showToast(result.errors.join(' · ') || 'Complete required fields before publishing', 'error');
+      return false;
+    }
+    return true;
+  }, [validateCurrentDocument, showToast]);
+
   const applyValidationDraft = useCallback(() => {
     const { headerDraft, enrichedLines } = validation;
     if (
@@ -375,6 +396,7 @@ export default function ProcurementReview() {
 
   const handleSave = async (docStatus, { silent = false, skipReload = false } = {}) => {
     if (!record?.id) return;
+    if (!ensurePublishReady(docStatus)) return;
     setSaving(true);
     try {
       const payload = buildSavePayload(docStatus);
@@ -423,8 +445,9 @@ export default function ProcurementReview() {
 
   const handlePublish = async () => {
     applyValidationDraft();
-    if (!validation.ok) {
-      showToast(validation.errors.join(' · ') || 'Complete required fields before publishing', 'error');
+    const result = validateCurrentDocument();
+    if (!result.ok) {
+      showToast(result.errors.join(' · ') || 'Complete required fields before publishing', 'error');
       return;
     }
     await handleSave('published');
@@ -571,6 +594,8 @@ export default function ProcurementReview() {
                   state: resolveState('', v),
                 })}
                 readOnly={readOnly}
+                required
+                placeholder="15-character GSTIN"
               />
               <RegisteredEntityVerify
                 gst={header.supplier_gst_number}
@@ -867,7 +892,7 @@ export default function ProcurementReview() {
             <div className="flex gap-2">
               {isPublished ? (
                 <>
-                  <button type="button" disabled={saving} onClick={() => handleSave('published')} className="btn-primary text-sm py-2 px-5">
+                  <button type="button" disabled={saving || !validation.ok} onClick={() => handleSave('published')} className="btn-primary text-sm py-2 px-5 disabled:opacity-50">
                     {saving ? <Loader2 size={14} className="animate-spin inline" /> : null} Save Changes
                   </button>
                   <button type="button" disabled={saving} onClick={runValidation} className="btn-secondary text-sm py-2 px-4 border-emerald-200 text-emerald-700 hover:bg-emerald-50">Validate</button>

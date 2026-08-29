@@ -1,19 +1,19 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { ArrowLeft, Wallet, TrendingUp, Package, History, ArrowDownRight, IndianRupee, Calendar, FileText, AlertCircle, RefreshCw, Scale, CreditCard, Edit2, Check, X, ShieldCheck } from 'lucide-react';
 import { getApi } from '../utils/pwpApi.js';
 import { useToast, Toast } from '../components/Toast.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
+import { aggregateByFinancialYear } from '../../shared/plasticMtAggregation.js';
 
 export default function ScrapedDashboard({ company, onBack }) {
   const [profile, setProfile] = useState(null);
   const [wallet, setWallet] = useState([]);
   const [history, setHistory] = useState([]);
-  const [procurement, setProcurement] = useState([]);
-  const [sales, setSales] = useState([]);
   const [payments, setPayments] = useState([]);
+  const [purchases, setPurchases] = useState([]);
+  const [sales, setSales] = useState([]);
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
-  const [selectedYear, setSelectedYear] = useState(2025);
   const [dashboardCards, setDashboardCards] = useState(null);
   const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
   const [isEditingBank, setIsEditingBank] = useState(false);
@@ -43,6 +43,15 @@ export default function ScrapedDashboard({ company, onBack }) {
         
         const h = await api.scraper.getWalletHistory();
         setHistory(h);
+
+        if (window.pwp) {
+          const [p, s] = await Promise.all([
+            window.pwp.purchases.getAll(),
+            window.pwp.sales.getAll(),
+          ]);
+          setPurchases(p || []);
+          setSales(s || []);
+        }
       } catch (err) {
         console.error("Failed to load static scraped data", err);
       } finally {
@@ -52,21 +61,22 @@ export default function ScrapedDashboard({ company, onBack }) {
     fetchStaticData();
   }, []);
 
-  useEffect(() => {
-    async function fetchYearlyData() {
-      try {
-        const api = getApi();
-        const proc = await api.scraper.getProcurement(selectedYear);
-        setProcurement(proc);
-        
-        const sal = await api.scraper.getSales(selectedYear);
-        setSales(sal);
-      } catch (err) {
-        console.error("Failed to load yearly scraped data", err);
-      }
-    }
-    fetchYearlyData();
-  }, [selectedYear]);
+  const publishedMtFilters = useMemo(
+    () => ({ docStatus: 'published', financialYear: 'all' }),
+    [],
+  );
+
+  const totalProc = useMemo(
+    () => aggregateByFinancialYear(purchases, 'purchase', publishedMtFilters)
+      .reduce((sum, row) => sum + (row.total || 0), 0),
+    [purchases, publishedMtFilters],
+  );
+
+  const totalSale = useMemo(
+    () => aggregateByFinancialYear(sales, 'sale', publishedMtFilters)
+      .reduce((sum, row) => sum + (row.total || 0), 0),
+    [sales, publishedMtFilters],
+  );
 
   if (loading) {
     return (
@@ -102,9 +112,6 @@ export default function ScrapedDashboard({ company, onBack }) {
       showToast('Failed to save bank details: ' + err.message, 'error');
     }
   };
-
-  const totalProc = procurement.reduce((sum, item) => sum + (Number(item.qty_plastic_waste_mt) || 0), 0);
-  const totalSale = sales.reduce((sum, item) => sum + (Number(item.qtyClinkerSold) || 0), 0);
 
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 w-full pb-10">
@@ -337,7 +344,7 @@ export default function ScrapedDashboard({ company, onBack }) {
               <p className="text-4xl font-black text-slate-900 tracking-tight">
                 {totalProc.toFixed(2)}
               </p>
-              <p className="text-sm font-semibold text-slate-400 tracking-wide uppercase mt-1">Metric Tons</p>
+              <p className="text-sm font-semibold text-slate-400 tracking-wide uppercase mt-1">Metric Tons (Published)</p>
             </div>
           </div>
         </div>
@@ -355,7 +362,7 @@ export default function ScrapedDashboard({ company, onBack }) {
               <p className="text-4xl font-black text-slate-900 tracking-tight">
                 {totalSale.toFixed(2)}
               </p>
-              <p className="text-sm font-semibold text-slate-400 tracking-wide uppercase mt-1">Metric Tons</p>
+              <p className="text-sm font-semibold text-slate-400 tracking-wide uppercase mt-1">Metric Tons (Published)</p>
             </div>
           </div>
         </div>

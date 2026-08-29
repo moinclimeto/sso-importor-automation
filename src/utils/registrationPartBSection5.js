@@ -7,6 +7,8 @@ import {
   mergeSec5dRows,
   normalizeSec5bRowForPortal,
   normalizeSec5dRowForPortal,
+  PART_B_SECTION5_DOC_STATUS,
+  isPublishedDocRecord,
   sec5bRowHasData,
   sec5dRowHasData,
 } from '../../shared/partBSection5.js';
@@ -14,7 +16,7 @@ import { resolveCompanyIdFromGstin } from './registrationPlasticConsumed.js';
 
 export async function fetchComputedPartBSection5({
   gstin = '',
-  docStatus = 'all',
+  docStatus = PART_B_SECTION5_DOC_STATUS,
 } = {}) {
   if (!window.pwp?.purchases?.getAll || !window.pwp?.sales?.getAll) return null;
 
@@ -47,14 +49,14 @@ export async function fetchComputedPartBSection5b(args = {}) {
 }
 
 export function mergePartBSection5b(existing = [], computed = []) {
+  if (!computed.length) return [];
   if (!existing.length) return computed;
-  if (!computed.length) return existing;
   return mergeSec5bRows(existing, computed);
 }
 
 export function mergePartBSection5d(existing = [], computed = []) {
+  if (!computed.length) return [];
   if (!existing.length) return computed;
-  if (!computed.length) return existing;
   return mergeSec5dRows(existing, computed);
 }
 
@@ -74,11 +76,11 @@ export async function refreshSec5RowFromSource({
 
   if (secKey === 'sec5b') {
     const purchase = (purchases || []).find((row) => String(row.id) === String(sourceRecordId));
-    if (!purchase) return null;
+    if (!purchase || !isPublishedDocRecord(purchase)) return null;
     return normalizeSec5bRowForPortal(buildSec5bRowFromPurchase(purchase));
   }
 
   const sale = (sales || []).find((row) => String(row.id) === String(sourceRecordId));
-  if (!sale) return null;
+  if (!sale || !isPublishedDocRecord(sale)) return null;
   return normalizeSec5dRowForPortal(buildSec5dRowFromSale(sale));
 }

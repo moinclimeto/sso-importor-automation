@@ -8,6 +8,13 @@ import {
   resolveSalesGstOtherCharges,
 } from './reviewEnrichment.js';
 
+/** Section 5b/5d — only Doc Processor rows with this status sync to Registration + automation. */
+export const PART_B_SECTION5_DOC_STATUS = 'published';
+
+export function isPublishedDocRecord(row = {}) {
+  return (row.doc_status || 'inbox') === PART_B_SECTION5_DOC_STATUS;
+}
+
 const CATEGORY_TO_PART_B_LABEL = {
   'Cat-I': 'Rigid Plastic (Cat-I)',
   'Cat-II': 'Flexible Plastic (Cat-II)',

@@ -12,6 +12,7 @@ import {
   refreshCaptcha,
   attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
+import { CPCB_CHROMIUM_ARGS, prepareCpcbBrowserPage } from './cpcbBrowserLaunch.js';
 import {
   evaluateGstDetailsResponse,
   evaluateCompaniesApiResponse,
@@ -30,6 +31,7 @@ import {
   resolvePlasticConsumedYears,
 } from './portalPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import {
   getBaseNameFromPath,
   registrationDocFileName,
@@ -578,7 +580,7 @@ async function fillGeneralInformation(page, data, onLog) {
     onLog(`[DEBUG] thicknessOfPlastic: ${data.thicknessOfPlastic}`);
   }
 
-  if (data.plasticConsumed) {
+  if (data.plasticConsumed && requiresHistoricalEprData(data.yearOfCommencement)) {
     if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
     const pcYears = resolvePlasticConsumedYears(data.plasticConsumed);
     await fillPlasticConsumedGrid(
@@ -587,6 +589,8 @@ async function fillGeneralInformation(page, data, onLog) {
       pcYears.length ? pcYears : getImporterReportingFinancialYears(),
       onLog,
     );
+  } else if (onLog) {
+    onLog('Skipping 3c — operations commenced in current financial year.');
   }
 
   if (data.complianceStatus?.trim()) {
@@ -1584,9 +1588,10 @@ export async function startRegistrationFlow(data, onLog) {
     if (onLog) onLog('Starting registration flow...');
     
     // Launch browser
-    regBrowser = await chromium.launch({ headless: false, args: ['--start-maximized'] }); // Visible to user for transparency if needed
+    regBrowser = await chromium.launch({ headless: false, args: CPCB_CHROMIUM_ARGS });
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
+    await prepareCpcbBrowserPage(regPage);
     attachCaptchaNetworkListenerToContext(regContext);
     const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
     await attachPortalToastWatcherToContext(regContext).catch(() => {});

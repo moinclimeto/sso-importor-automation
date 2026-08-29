@@ -5,17 +5,39 @@ import {
   PORTAL_PLASTIC_MATERIAL_VALUES,
   PORTAL_SEC5_ENTITY_VALUES,
   normalizeSec5bRowForPortal,
+  normalizeSec5dRowForPortal,
   toInputDate,
 } from '../../shared/partBSection5.js';
+import {
+  getBaseNameFromPath,
+  sanitizeCpcbPortalFileName,
+} from '../../shared/cpcbPortalFileName.js';
 import { CPCB_MAX_UPLOAD_BYTES, ensurePdfUnderMaxSize } from '../utils/pdfCompressor.js';
+import {
+  collectPortalAlerts,
+  dismissPortalAlerts,
+  waitForPortalBusy,
+} from './portalErrorGuard.js';
 
 async function fillPortalSelect(scope, selector, optionLabel, onLog, fieldName, valueMap = {}) {
   if (!optionLabel) return false;
+  const page = scope.page();
   const select = scope.locator(selector).first();
-  if (!(await select.isVisible({ timeout: 2500 }).catch(() => false))) {
-    if (onLog) onLog(`${fieldName} select not visible (${selector})`);
+  const hasSelect = (await select.count().catch(() => 0)) > 0;
+  if (!hasSelect) {
+    if (onLog) onLog(`${fieldName} select not found (${selector})`);
     return false;
   }
+
+  const visible = await select.isVisible({ timeout: 2500 }).catch(() => false);
+  if (!visible) {
+    const inDom = await select.evaluate((el) => !!el).catch(() => false);
+    if (!inDom) {
+      if (onLog) onLog(`${fieldName} select not visible (${selector})`);
+      return false;
+    }
+  }
+
   if (await select.isDisabled().catch(() => false)) {
     if (onLog) onLog(`${fieldName} is disabled — skipping`);
     return true;
@@ -40,6 +62,7 @@ async function fillPortalSelect(scope, selector, optionLabel, onLog, fieldName, 
         await select.dispatchEvent('change').catch(() => {});
         await select.dispatchEvent('input').catch(() => {});
         if (onLog) onLog(`Selected ${fieldName}: ${label}`);
+        await waitForPortalBusy(page, 12000).catch(() => {});
         return true;
       }
     } catch {
@@ -65,6 +88,7 @@ async function fillPortalSelect(scope, selector, optionLabel, onLog, fieldName, 
 
   if (ok) {
     if (onLog) onLog(`Selected ${fieldName} via DOM: ${label}`);
+    await waitForPortalBusy(page, 12000).catch(() => {});
     return true;
   }
 
@@ -166,6 +190,8 @@ async function waitForEntryModalClosed(page, timeoutMs = 12000) {
 }
 
 async function dismissBlockingModals(page, onLog) {
+  await waitForPortalBusy(page, 15000).catch(() => {});
+
   const hidden = await page.evaluate(() => {
     let count = 0;
     const hide = (el) => {
@@ -175,6 +201,7 @@ async function dismissBlockingModals(page, onLog) {
       el.style.setProperty('pointer-events', 'none', 'important');
       count += 1;
     };
+    document.querySelectorAll('app-loader, .loader-wrapper, .loader-overlay').forEach(hide);
     document.querySelectorAll('app-table-add-modal').forEach(hide);
     document.querySelectorAll('[role="dialog"][aria-modal="true"]').forEach((el) => {
       hide(el);
@@ -230,56 +257,112 @@ async function ensureNoOpenEntryModal(page, onLog) {
 
 async function resolveUploadPdfPath(filePath, onLog) {
   if (!filePath || !fs.existsSync(filePath)) return null;
+
+  const rawName = getBaseNameFromPath(filePath);
+  const safeName = sanitizeCpcbPortalFileName(rawName, 'sec5_invoice');
+  const tempPath = path.join(os.tmpdir(), `cpcb-sec5-${Date.now()}-${safeName}`);
+
   try {
     const size = fs.statSync(filePath).size;
-    if (size <= CPCB_MAX_UPLOAD_BYTES) return filePath;
-    const tempPath = path.join(os.tmpdir(), `cpcb-sec5-${Date.now()}-${path.basename(filePath)}`);
-    const result = await ensurePdfUnderMaxSize(filePath, tempPath);
-    if (onLog) {
-      onLog(`PDF prepared for upload (${Math.round((result.sizeBytes || size) / 1024)}KB${result.compressed ? ', compressed' : ''}).`);
-      if (result.warning) onLog(result.warning);
+    if (size > CPCB_MAX_UPLOAD_BYTES) {
+      const result = await ensurePdfUnderMaxSize(filePath, tempPath);
+      if (onLog) {
+        onLog(`PDF prepared for upload (${Math.round((result.sizeBytes || size) / 1024)}KB${result.compressed ? ', compressed' : ''}).`);
+        if (result.warning) onLog(result.warning);
+      }
+      if (result.filePath && fs.existsSync(result.filePath)) return result.filePath;
     }
-    return result.filePath || filePath;
+
+    fs.copyFileSync(filePath, tempPath);
+    if (onLog && safeName !== rawName) {
+      onLog(`Invoice renamed for CPCB upload: ${rawName} → ${safeName}`);
+    }
+    return tempPath;
   } catch (err) {
     if (onLog) onLog(`PDF prepare failed: ${err.message}`);
     return filePath;
   }
 }
 
-async function pickSearchableCountry(page, scope, country = 'India', onLog) {
-  const trigger = scope.locator('#country.searchable-trigger, app-searchable-select button.searchable-trigger').first();
-  if (!(await trigger.isVisible({ timeout: 2000 }).catch(() => false))) {
-    return pickDropdownOption(page, scope, /Country/i, country);
-  }
+async function clickThroughLoader(page, locator, onLog, label = 'Control') {
+  await waitForPortalBusy(page, 25000);
+  await locator.scrollIntoViewIfNeeded().catch(() => {});
 
-  await trigger.click({ timeout: 3000 });
-  await page.waitForTimeout(180);
-
-  const search = page.locator(
-    '.searchable-dropdown input, .searchable-panel input, .searchable-options input, input[placeholder*="Search country" i]'
-  ).last();
-  if (await search.isVisible({ timeout: 800 }).catch(() => false)) {
-    await search.fill('');
-    await search.fill(country);
-    await page.waitForTimeout(120);
-  }
-
-  const option = page.locator('.searchable-option, .dropdown-option, [role="option"], li, button, div').filter({
-    hasText: new RegExp(`^\\s*${String(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i'),
-  }).first();
-  if (await option.isVisible({ timeout: 1500 }).catch(() => false)) {
-    await option.click({ force: true });
-    if (onLog) onLog(`Selected country: ${country}`);
-    return true;
-  }
-
-  const fallback = page.getByText(new RegExp(`^${String(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')).last();
-  if (await fallback.isVisible({ timeout: 1000 }).catch(() => false)) {
-    await fallback.click({ force: true });
-    if (onLog) onLog(`Selected country: ${country}`);
-    return true;
+  for (let attempt = 1; attempt <= 4; attempt += 1) {
+    await waitForPortalBusy(page, 20000);
+    try {
+      await locator.click({ timeout: 8000 });
+      return true;
+    } catch (err) {
+      const blocked = /intercepts pointer events|Timeout/i.test(err.message || '');
+      if (blocked && attempt < 4) {
+        if (onLog) onLog(`${label} blocked by portal loader — retry ${attempt}/4...`);
+        await page.waitForTimeout(700);
+        continue;
+      }
+      try {
+        await locator.evaluate((el) => el.click());
+        return true;
+      } catch {
+        if (onLog) onLog(`${label} click failed: ${err.message}`);
+        return false;
+      }
+    }
   }
   return false;
+}
+
+async function pickSearchableCountry(page, scope, country = 'India', onLog) {
+  try {
+    await waitForPortalBusy(page, 20000);
+
+    const trigger = scope.locator('#country.searchable-trigger, app-searchable-select button.searchable-trigger').first();
+    if (!(await trigger.isVisible({ timeout: 2500 }).catch(() => false))) {
+      return pickDropdownOption(page, scope, /Country/i, country);
+    }
+
+    const currentLabel = String(await trigger.innerText().catch(() => '') || '').trim();
+    if (new RegExp(`^\\s*${String(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i').test(currentLabel)) {
+      if (onLog) onLog(`Country already set: ${currentLabel}`);
+      return true;
+    }
+
+    const opened = await clickThroughLoader(page, trigger, onLog, 'Country dropdown');
+    if (!opened) return pickDropdownOption(page, scope, /Country/i, country);
+
+    await page.waitForTimeout(220);
+
+    const search = page.locator(
+      '.searchable-dropdown input, .searchable-panel input, .searchable-options input, input[placeholder*="Search country" i]'
+    ).last();
+    if (await search.isVisible({ timeout: 1200 }).catch(() => false)) {
+      await search.fill('');
+      await search.fill(country);
+      await page.waitForTimeout(150);
+    }
+
+    const option = page.locator('.searchable-option, .dropdown-option, [role="option"], li, button, div').filter({
+      hasText: new RegExp(`^\\s*${String(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}\\s*$`, 'i'),
+    }).first();
+    if (await option.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await clickThroughLoader(page, option, onLog, `Country option (${country})`);
+      if (onLog) onLog(`Selected country: ${country}`);
+      await waitForPortalBusy(page, 12000);
+      return true;
+    }
+
+    const fallback = page.getByText(new RegExp(`^${String(country).replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}$`, 'i')).last();
+    if (await fallback.isVisible({ timeout: 1200 }).catch(() => false)) {
+      await clickThroughLoader(page, fallback, onLog, `Country option (${country})`);
+      if (onLog) onLog(`Selected country: ${country}`);
+      await waitForPortalBusy(page, 12000);
+      return true;
+    }
+    return false;
+  } catch (err) {
+    if (onLog) onLog(`Country selection failed: ${err.message}`);
+    return false;
+  }
 }
 
 function nonRegisteredFormScope(page) {
@@ -365,26 +448,100 @@ function soldFormScope(page) {
   return page.locator('form.modal-form .sold-modal, .sold-modal').first();
 }
 
-async function waitForEntryModal(page, titleRegex) {
-  const soldModal = page.locator('form.modal-form .sold-modal, .sold-modal').first();
-  await soldModal.waitFor({ state: 'visible', timeout: 2500 }).catch(() => {});
-  if (await soldModal.isVisible({ timeout: 500 }).catch(() => false)) {
-    return soldModal.locator('xpath=ancestor::form[1]').first().or(soldModal);
+async function waitForSoldEntryModal(page, onLog, timeoutMs = 12000) {
+  const sold = soldFormScope(page);
+  try {
+    await sold.waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.locator('#soldEntityName, #soldRegistrationType, #soldEntityType').first()
+      .waitFor({ state: 'visible', timeout: timeoutMs })
+      .catch(() => {});
+    await page.waitForTimeout(400);
+  } catch {
+    if (onLog) onLog('Section 5d modal (sold-modal) did not open.');
+    return null;
   }
 
-  const formModal = page.locator('form.modal-form .nonregistered-modal, .nonregistered-modal').first();
-  await formModal.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
-  if (await formModal.isVisible({ timeout: 1500 }).catch(() => false)) {
-    return formModal.locator('xpath=ancestor::form[1]').first().or(formModal);
+  const form = sold.locator('xpath=ancestor::form[1]').first();
+  if ((await form.count().catch(() => 0)) > 0) {
+    return form;
+  }
+  return sold;
+}
+
+async function waitForNonRegisteredEntryModal(page, onLog, timeoutMs = 12000) {
+  const modal = nonRegisteredFormScope(page);
+  try {
+    await modal.waitFor({ state: 'visible', timeout: timeoutMs });
+    await page.locator('#entityName, #entityType, #registrationType').first()
+      .waitFor({ state: 'visible', timeout: timeoutMs })
+      .catch(() => {});
+    await waitForPortalBusy(page, 15000);
+    await page.waitForTimeout(400);
+  } catch {
+    if (onLog) onLog('Section 5b modal (nonregistered-modal) did not open.');
+    return null;
   }
 
-  const modal = page.locator(
-    '.modal, .dialog, [role="dialog"], .cdk-overlay-pane, .p-dialog',
-  ).filter({ hasText: titleRegex }).last();
-  await modal.waitFor({ state: 'visible', timeout: 8000 }).catch(() => {});
-  if (await modal.isVisible({ timeout: 1500 }).catch(() => false)) return modal;
+  const form = modal.locator('xpath=ancestor::form[1]').first();
+  if ((await form.count().catch(() => 0)) > 0) {
+    return form;
+  }
+  return modal;
+}
 
-  return page.locator('body').first();
+async function waitForEntryModal(page, titleRegex, kind = 'auto') {
+  if (kind === 'sold') {
+    return waitForSoldEntryModal(page, null);
+  }
+  if (kind === 'nonregistered') {
+    return waitForNonRegisteredEntryModal(page, null);
+  }
+
+  const sold = await waitForSoldEntryModal(page, null, 2500);
+  if (sold) return sold;
+  return waitForNonRegisteredEntryModal(page, null, 8000);
+}
+
+async function findVisibleUploadWrap(page) {
+  const selector = [
+    '.sold-modal .sold-upload-wrap',
+    '.sold-modal .nonregistered-upload-wrap',
+    '.nonregistered-modal .nonregistered-upload-wrap',
+    'form.modal-form .sold-upload-wrap',
+    'form.modal-form .nonregistered-upload-wrap',
+  ].join(', ');
+  const wraps = page.locator(selector);
+  const count = await wraps.count().catch(() => 0);
+  for (let i = 0; i < count; i += 1) {
+    const wrap = wraps.nth(i);
+    if (await wrap.isVisible({ timeout: 400 }).catch(() => false)) {
+      return wrap;
+    }
+  }
+  return wraps.first();
+}
+
+async function entryModalUploadWrap(page) {
+  return findVisibleUploadWrap(page);
+}
+
+function entryModalUploadButton(wrap) {
+  return wrap.locator('button.upload-link-btn').first();
+}
+
+async function isUploadComplete(page, uploadPath, onLog) {
+  const wrap = await entryModalUploadWrap(page);
+  if (!(await wrap.isVisible({ timeout: 1500 }).catch(() => false))) {
+    return false;
+  }
+
+  const text = String(await wrap.innerText().catch(() => '') || '');
+  if (/Change/i.test(text) && /\.pdf/i.test(text)) {
+    if (onLog) onLog(`Upload already attached in modal (${path.basename(uploadPath)}).`);
+    return true;
+  }
+
+  return verifyInvoiceAttached(wrap, page, uploadPath);
 }
 
 async function submitEntryModal(page, modal, onLog) {
@@ -398,29 +555,32 @@ async function submitEntryModal(page, modal, onLog) {
   const submitCandidates = [];
   for (const scope of scopes) {
     submitCandidates.push(
-      scope.locator('button.nonregistered-btn').filter({ hasText: /^Submit$/i }).first(),
-      scope.locator('button.sold-btn').filter({ hasText: /^Submit$/i }).first(),
+      scope.locator('button.nonregistered-btn').first(),
+      scope.locator('button.sold-btn').first(),
     );
   }
   submitCandidates.push(
-    page.locator('button.nonregistered-btn, button.sold-btn').filter({ hasText: /^Submit$/i }).last(),
-    page.getByRole('button', { name: /^Submit$/i }).last(),
+    page.locator('button.nonregistered-btn, button.sold-btn').last(),
+    page.getByRole('button', { name: /Submit/i }).last(),
   );
 
   for (const submit of submitCandidates) {
+    if (!(await submit.count().catch(() => 0))) continue;
     if (!(await submit.isVisible({ timeout: 1200 }).catch(() => false))) continue;
+    await waitForPortalBusy(page, 20000);
     await submit.scrollIntoViewIfNeeded().catch(() => {});
-    await submit.click({ timeout: 5000, force: true }).catch(() => {});
+    const clicked = await clickThroughLoader(page, submit, onLog, 'Submit');
+    if (!clicked) {
+      await submit.evaluate((el) => el.click()).catch(() => {});
+    }
     await page.waitForTimeout(900);
     if (await waitForEntryModalClosed(page, 12000)) {
       if (onLog) onLog('Entry modal submitted and closed.');
       return true;
     }
 
-    await page.evaluate(() => {
-      const btn = document.querySelector('button.nonregistered-btn, button.sold-btn');
-      btn?.click();
-    }).catch(() => {});
+    await waitForPortalBusy(page, 15000);
+    await submit.evaluate((el) => el.click()).catch(() => {});
     await page.waitForTimeout(900);
     if (await waitForEntryModalClosed(page, 8000)) {
       if (onLog) onLog('Entry modal submitted and closed (DOM click).');
@@ -466,6 +626,154 @@ async function verifyInvoiceAttached(scope, page, filePath) {
   return false;
 }
 
+async function portalUploadFailedVisible(page) {
+  return page.getByText(/failed to fetch|something went wrong/i).first()
+    .isVisible({ timeout: 600 })
+    .catch(() => false);
+}
+
+function isCpcbUploadResponse(response) {
+  const url = String(response.url() || '').toLowerCase();
+  const method = String(response.request().method() || '').toUpperCase();
+  if (method !== 'POST' && method !== 'PUT' && method !== 'PATCH') return false;
+  if (/upload|document|file|attachment|invoice|media|blob|storage|s3|minio/.test(url)) return true;
+  const contentType = String(response.request().headers()['content-type'] || '').toLowerCase();
+  return contentType.includes('multipart/form-data');
+}
+
+async function waitForCpcbUploadResponse(page, timeoutMs = 45000) {
+  try {
+    return await page.waitForResponse(
+      (resp) => isCpcbUploadResponse(resp) && resp.status() >= 200 && resp.status() < 300,
+      { timeout: timeoutMs },
+    );
+  } catch {
+    return null;
+  }
+}
+
+async function confirmUploadSucceeded(page, uploadPath, onLog, uploadResponse = null) {
+  await waitForPortalBusy(page, 8000).catch(() => {});
+  await page.waitForTimeout(uploadResponse ? 400 : 1200);
+
+  const alerts = await collectPortalAlerts(page);
+  const uploadAlert = alerts.find((msg) => /failed to fetch|something went wrong|invalid filename|upload failed|try again/i.test(msg));
+  if (uploadAlert) {
+    await dismissPortalAlerts(page, onLog);
+    if (onLog) onLog(`CPCB upload rejected: ${uploadAlert}`);
+    return false;
+  }
+
+  if (await portalUploadFailedVisible(page)) {
+    if (onLog) onLog('CPCB upload failed — portal showed error toast.');
+    return false;
+  }
+
+  if (uploadResponse) {
+    if (onLog) onLog(`CPCB upload API confirmed (${uploadResponse.status()}): ${path.basename(uploadPath)}`);
+    return true;
+  }
+
+  const wrap = await entryModalUploadWrap(page);
+  const changeBtn = entryModalUploadButton(wrap);
+  const btnText = String(await changeBtn.innerText().catch(() => '') || '').trim();
+  if (/Change/i.test(btnText) && (await changeBtn.isVisible({ timeout: 2000 }).catch(() => false))) {
+    if (onLog) onLog(`Upload confirmed — Change button visible: ${path.basename(uploadPath)}`);
+    return true;
+  }
+
+  if (await isUploadComplete(page, uploadPath, onLog)) {
+    return true;
+  }
+
+  return false;
+}
+
+async function pickFileViaChooser(page, trigger, uploadPath, onLog, label = 'Upload') {
+  const responsePromise = waitForCpcbUploadResponse(page, 45000);
+  try {
+    const [chooser] = await Promise.all([
+      page.waitForEvent('filechooser', { timeout: 15000 }),
+      trigger.click({ timeout: 5000 }),
+    ]);
+    await chooser.setFiles(uploadPath);
+  } catch (err) {
+    if (onLog) onLog(`${label} click failed (${err.message}) — trying DOM click...`);
+    try {
+      const [chooser] = await Promise.all([
+        page.waitForEvent('filechooser', { timeout: 15000 }),
+        trigger.evaluate((el) => el.click()),
+      ]);
+      await chooser.setFiles(uploadPath);
+    } catch (domErr) {
+      if (onLog) onLog(`${label} file chooser failed: ${domErr.message}`);
+      return null;
+    }
+  }
+
+  const response = await responsePromise;
+  return response;
+}
+
+async function uploadViaPortalChooser(page, uploadPath, onLog) {
+  const wrap = await entryModalUploadWrap(page);
+  if (!(await wrap.isVisible({ timeout: 3500 }).catch(() => false))) {
+    if (onLog) onLog('Section 5 upload area not visible in modal.');
+    return false;
+  }
+
+  if (await isUploadComplete(page, uploadPath, onLog)) {
+    return true;
+  }
+
+  await wrap.scrollIntoViewIfNeeded().catch(() => {});
+
+  const uploadBtn = entryModalUploadButton(wrap);
+  const fileInput = wrap.locator('input[type="file"]').first();
+
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    const btnText = String(await uploadBtn.innerText().catch(() => '') || '').trim();
+    const wantsUpload = /Upload/i.test(btnText) || !btnText;
+
+    if (wantsUpload && (await uploadBtn.isVisible({ timeout: 1500 }).catch(() => false))) {
+      const response = await pickFileViaChooser(
+        page,
+        uploadBtn,
+        uploadPath,
+        onLog,
+        `Upload button (try ${attempt})`,
+      );
+      if (await confirmUploadSucceeded(page, uploadPath, onLog, response)) {
+        return true;
+      }
+    } else if (onLog) {
+      onLog(`Upload button state: "${btnText || '(empty)'}" (try ${attempt})`);
+    }
+
+    if (await fileInput.count().catch(() => 0)) {
+      const responsePromise = waitForCpcbUploadResponse(page, 20000);
+      try {
+        await fileInput.setInputFiles(uploadPath);
+        await fileInput.evaluate((el) => {
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+        });
+      } catch (err) {
+        if (onLog) onLog(`Hidden file input attempt ${attempt} failed: ${err.message}`);
+      }
+      const response = await responsePromise;
+      if (await confirmUploadSucceeded(page, uploadPath, onLog, response)) {
+        return true;
+      }
+    }
+
+    if (onLog) onLog(`Section 5 invoice upload retry ${attempt}/2...`);
+    await page.waitForTimeout(800);
+  }
+
+  return false;
+}
+
 async function uploadInvoiceInModal(scope, filePath, onLog) {
   const uploadPath = await resolveUploadPdfPath(filePath, onLog);
   if (!uploadPath || !fs.existsSync(uploadPath)) {
@@ -474,68 +782,24 @@ async function uploadInvoiceInModal(scope, filePath, onLog) {
   }
 
   const page = scope.page();
-  const roots = [
-    scope,
-    nonRegisteredFormScope(page),
-    soldFormScope(page),
-    page.locator('.nonregistered-modal').first(),
-    page.locator('.sold-modal').first(),
-    page.locator('form.modal-form').first(),
-  ];
-
-  for (const root of roots) {
-    const wrap = root.locator('.nonregistered-upload-wrap, .sold-upload-wrap').first();
-    const fileInputs = wrap.locator('input[type="file"]')
-      .or(root.locator('input[type="file"].file-input-hidden, input.file-input-hidden, input[type="file"]'));
-    const count = await fileInputs.count().catch(() => 0);
-    for (let i = 0; i < count; i += 1) {
-      const input = fileInputs.nth(i);
-      try {
-        await input.setInputFiles(uploadPath);
-        await input.dispatchEvent('change').catch(() => {});
-        await input.dispatchEvent('input').catch(() => {});
-        await page.waitForTimeout(1200);
-        if (await verifyInvoiceAttached(root, page, uploadPath)) {
-          if (onLog) onLog(`Uploaded invoice: ${path.basename(uploadPath)}`);
-          return true;
-        }
-      } catch {
-        /* try next input */
-      }
-    }
-
-    const uploadBtn = root.locator('button.upload-link-btn').filter({ hasText: /^(Upload|Change)$/i }).first();
-    if (await uploadBtn.isVisible({ timeout: 1200 }).catch(() => false)) {
-      try {
-        const [chooser] = await Promise.all([
-          page.waitForEvent('filechooser', { timeout: 10000 }),
-          uploadBtn.click({ timeout: 4000 }),
-        ]);
-        await chooser.setFiles(uploadPath);
-        await page.waitForTimeout(1200);
-        if (await verifyInvoiceAttached(root, page, uploadPath)) {
-          if (onLog) onLog(`Uploaded invoice via chooser: ${path.basename(uploadPath)}`);
-          return true;
-        }
-      } catch (err) {
-        if (onLog) onLog(`Invoice upload chooser failed: ${err.message}`);
-      }
-    }
+  if (await uploadViaPortalChooser(page, uploadPath, onLog)) {
+    return true;
   }
 
-  if (onLog) onLog(`Invoice upload did not show filename on form: ${path.basename(uploadPath)}`);
+  if (onLog) {
+    onLog(`Invoice upload did not complete on CPCB portal: ${path.basename(uploadPath)}`);
+  }
   return false;
 }
 
 export async function fillSec5bEntryModal(page, row = {}, onLog) {
   const data = normalizeSec5bRowForPortal(row);
-  const modal = await waitForEntryModal(
-    page,
-    /Plastic Raw Material|Procured from Non-Registered|Non-Registered Entity/i,
-  );
-  const scope = (await nonRegisteredFormScope(page).isVisible({ timeout: 2000 }).catch(() => false))
-    ? nonRegisteredFormScope(page)
-    : modal;
+  const modal = await waitForNonRegisteredEntryModal(page, onLog);
+  if (!modal) {
+    await closeEntryModal(page, onLog);
+    return false;
+  }
+  const scope = nonRegisteredFormScope(page);
 
   if (onLog) onLog(`Filling Section 5b modal for ${data.entityName || 'purchase row'}...`);
   if (onLog) onLog(`Section 5b data: entity=${data.entityType}, material=${data.materialType}, pdf=${data.invoiceDoc || '(none)'}`);
@@ -548,8 +812,13 @@ export async function fillSec5bEntryModal(page, row = {}, onLog) {
     'Entity Type',
     PORTAL_SEC5_ENTITY_VALUES,
   );
+  if (entityOk) {
+    await waitForPortalBusy(page, 20000);
+    await page.waitForTimeout(350);
+  }
   await fillByControlId(scope, 'entityName', data.entityName);
-  await pickSearchableCountry(page, scope, data.country || 'India', onLog);
+  const countryOk = await pickSearchableCountry(page, scope, data.country || 'India', onLog);
+  if (!countryOk && onLog) onLog(`Country not selected — continuing with default (${data.country || 'India'}).`);
   await fillByControlId(scope, 'address', data.address);
   await fillByControlId(scope, 'mobileNumber', data.mobile);
   const materialOk = await fillPortalSelect(
@@ -602,68 +871,75 @@ export async function fillSec5bEntryModal(page, row = {}, onLog) {
 }
 
 export async function fillSec5dEntryModal(page, row = {}, onLog) {
-  const modal = await waitForEntryModal(
-    page,
-    /Sold to UnRegistered PIBOs|Plastic Raw Material.*Sold|UnRegistered PIBOs/i,
-  );
-  const scope = (await soldFormScope(page).isVisible({ timeout: 2000 }).catch(() => false))
-    ? soldFormScope(page)
-    : modal;
+  const data = normalizeSec5dRowForPortal(row);
+  const modal = await waitForSoldEntryModal(page, onLog);
+  if (!modal) {
+    await closeEntryModal(page, onLog);
+    return false;
+  }
+  const scope = soldFormScope(page);
 
-  if (onLog) onLog(`Filling Section 5d modal for ${row.entityName || 'sale row'}...`);
+  if (onLog) onLog(`Filling Section 5d modal for ${data.entityName || 'sale row'}...`);
+  if (onLog) onLog(`Section 5d data: entity=${data.entityType}, material=${data.materialType}, pdf=${data.invoiceDoc || '(none)'}`);
 
-  await fillPortalSelect(
+  const entityOk = await fillPortalSelect(
     scope,
     '#soldEntityType, select[formcontrolname="entityType"]',
-    row.entityType || 'Brand Owner',
+    data.entityType || 'Brand Owner',
     onLog,
     'Entity Type',
     PORTAL_SEC5_ENTITY_VALUES,
   );
-  await fillByControlId(scope, 'soldEntityName', row.entityName);
-  await fillByControlId(scope, 'soldAddress', row.address);
+  await fillByControlId(scope, 'soldEntityName', data.entityName);
+  await fillByControlId(scope, 'soldAddress', data.address);
   await fillNativeSelect(
     scope,
     '#soldState, select[formcontrolname="state"]',
-    row.state,
+    data.state,
     onLog,
     'State',
   );
-  await fillByControlId(scope, 'soldMobileNumber', row.mobile);
-  await fillPortalSelect(
+  await fillByControlId(scope, 'soldMobileNumber', data.mobile);
+  const materialOk = await fillPortalSelect(
     scope,
     '#soldPlasticMaterialType, select[formcontrolname="plasticMaterialType"]',
-    row.materialType || 'Others',
+    data.materialType || 'Others',
     onLog,
     'Plastic Material Type',
     PORTAL_PLASTIC_MATERIAL_VALUES,
   );
-  await fillPortalSelect(
+  const categoryOk = await fillPortalSelect(
     scope,
     '#soldCategoryOfPlastic, select[formcontrolname="categoryOfPlastic"]',
-    row.category,
+    data.category,
     onLog,
     'Category of Plastic',
   );
-  await fillPortalSelect(
+  const yearOk = await fillPortalSelect(
     scope,
     '#soldFinancialYear, select[formcontrolname="financialYear"]',
-    row.financialYear,
+    data.financialYear,
     onLog,
     'Financial Year',
   );
-  await fillByControlId(scope, 'soldGst', row.gst);
-  await fillByControlId(scope, 'soldBankAccountNo', row.bankAccount);
-  await fillByControlId(scope, 'soldIfscCode', row.ifsc);
-  await fillByControlId(scope, 'soldGstPaid', row.gstPaid);
-  await fillByControlId(scope, 'soldGstEInvoiceNumber', row.invoiceNo);
-  await fillByControlId(scope, 'soldTotalPlasticQuantity', row.quantity);
-  await fillByControlId(scope, 'soldRecycledPlasticContent', row.recycledPercent ?? '0');
+  await fillByControlId(scope, 'soldGst', data.gst);
+  await fillByControlId(scope, 'soldBankAccountNo', data.bankAccount);
+  await fillByControlId(scope, 'soldIfscCode', data.ifsc);
+  await fillByControlId(scope, 'soldGstPaid', data.gstPaid);
+  await fillByControlId(scope, 'soldGstEInvoiceNumber', data.invoiceNo);
+  await fillByControlId(scope, 'soldTotalPlasticQuantity', data.quantity);
+  await fillByControlId(scope, 'soldRecycledPlasticContent', data.recycledPercent ?? '0');
 
-  const uploaded = row.invoiceDoc
-    ? await uploadInvoiceInModal(scope, row.invoiceDoc, onLog)
+  const uploaded = data.invoiceDoc
+    ? await uploadInvoiceInModal(scope, data.invoiceDoc, onLog)
     : true;
-  if (!uploaded && row.invoiceDoc) {
+
+  if (!entityOk || !materialOk || !categoryOk || !yearOk) {
+    if (onLog) onLog('Section 5d required dropdowns not selected — skipping submit.');
+    await closeEntryModal(page, onLog);
+    return false;
+  }
+  if (!uploaded) {
     if (onLog) onLog('Section 5d invoice PDF not attached — skipping submit.');
     await closeEntryModal(page, onLog);
     return false;
@@ -674,8 +950,8 @@ export async function fillSec5dEntryModal(page, row = {}, onLog) {
     await closeEntryModal(page, onLog);
     return false;
   }
-  if (onLog) onLog(`Section 5d saved: ${row.entityName || row.invoiceNo || row.quantity}`);
-  return ok;
+  if (onLog) onLog(`Section 5d saved: ${data.entityName || data.invoiceNo || data.quantity}`);
+  return true;
 }
 
 export async function fillPartBSection5dRows(page, rows = [], onLog) {
@@ -709,7 +985,7 @@ export async function fillPartBSection5dRows(page, rows = [], onLog) {
       const clicked = await clickAddNewRow(target, page, onLog, 'Section 5d');
       if (!clicked) continue;
 
-      await page.waitForTimeout(700);
+      await page.waitForTimeout(1200);
       const ok = await fillSec5dEntryModal(page, row, onLog);
       if (ok) filled += 1;
     } catch (err) {
@@ -745,7 +1021,8 @@ export async function fillPartBSection5bRows(page, rows = [], onLog) {
       const clicked = await clickAddNewRow(block, page, onLog, 'Section 5b');
       if (!clicked) continue;
 
-      await page.waitForTimeout(700);
+      await waitForPortalBusy(page, 15000);
+      await page.waitForTimeout(900);
       const ok = await fillSec5bEntryModal(page, row, onLog);
       if (ok) {
         filled += 1;

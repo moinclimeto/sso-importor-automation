@@ -10,6 +10,7 @@ import {
 import { sanitizePlasticMaterial } from './packagingMasterSync.js';
 import { resolveState } from './gstStateCodes.js';
 import { resolveProcurementSource } from './importerPurchaseSaleMatch.js';
+import { validateGstin, validateIfscCode } from './bankGstValidation.js';
 import { fillLineItemsHsn, normalizeHsnCode, resolveLineHsn, resolveReviewLineHsn, splitHsnFromDescription } from './hsnUtils.js';
 import { normalizePlasticCategory } from './plasticCategories.js';
 
@@ -552,6 +553,18 @@ export function validateReviewDocument({
     if (!line.plasticCategory?.trim()) errors.push(`Line ${i + 1}: Category is required`);
     if (!line.plasticMaterial?.trim()) errors.push(`Line ${i + 1}: Material is required`);
   });
+
+  if (mode === 'purchase') {
+    const gst = validateGstin(headerDraft.supplier_gst_number, { label: 'Supplier GST number' });
+    if (!gst.valid) errors.push(gst.error);
+  }
+
+  if (mode === 'sale') {
+    const gst = validateGstin(headerDraft.customer_gstin, { label: 'Customer GST number' });
+    if (!gst.valid) errors.push(gst.error);
+    const ifsc = validateIfscCode(headerDraft.ifsc_code, { label: 'IFSC code' });
+    if (!ifsc.valid) errors.push(ifsc.error);
+  }
 
   return {
     ok: errors.length === 0,
