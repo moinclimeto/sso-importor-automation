@@ -13,6 +13,7 @@ import {
   attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
 import { runEprExtraction } from './cpcbEprScraper.js';
+import { CPCB_PERSISTENT_LAUNCH_OPTS, prepareCpcbBrowserPage } from './cpcbBrowserLaunch.js';
 import {
   fillNewApplicationFlow,
 } from './fillRegistrationForms.js';
@@ -72,6 +73,7 @@ async function ensureLoginPage(onLog) {
   if (existing.page && isPageAlive(existing.page) && isBrowserAlive(existing.browser)) {
     try {
       existing.page.url();
+      await prepareCpcbBrowserPage(existing.page);
       return existing;
     } catch {
       /* window was closed */
@@ -85,20 +87,19 @@ async function ensureLoginPage(onLog) {
 
   try {
     loginBrowser = await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      args: ['--start-maximized'],
+      ...CPCB_PERSISTENT_LAUNCH_OPTS,
     });
   } catch (err) {
     if (onLog) onLog('Previous browser lock found — relaunching...');
     await discardLoginBrowser();
     loginBrowser = await chromium.launchPersistentContext(userDataDir, {
-      headless: false,
-      args: ['--start-maximized'],
+      ...CPCB_PERSISTENT_LAUNCH_OPTS,
     });
   }
 
   const pages = loginBrowser.pages();
   loginPage = pages.length > 0 ? pages[0] : await loginBrowser.newPage();
+  await prepareCpcbBrowserPage(loginPage);
   attachCaptchaNetworkListenerToContext(loginBrowser);
   attachCaptchaNetworkListener(loginPage);
   const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');

@@ -49,7 +49,7 @@ export function ReadonlyHeaderField({ label, value, multiline, required }) {
   );
 }
 
-export function EditableHeaderField({ label, value, onChange, type = 'text', readOnly, required, disabled }) {
+export function EditableHeaderField({ label, value, onChange, type = 'text', readOnly, required, disabled, placeholder }) {
   if (readOnly) {
     return <ReadonlyHeaderField label={label} value={value} required={required} />;
   }
@@ -64,7 +64,7 @@ export function EditableHeaderField({ label, value, onChange, type = 'text', rea
         className="input text-sm w-full bg-white"
         value={value || ''}
         disabled={disabled}
-        placeholder={type === 'text' ? `Enter ${label}` : undefined}
+        placeholder={placeholder || (type === 'text' ? `Enter ${label}` : undefined)}
         onChange={(e) => onChange(e.target.value)}
       />
     </div>

@@ -16,7 +16,7 @@ const navLinks = [
     icon: LayoutDashboard,
     label: 'Overview',
     subLinks: [
-      { to: '/dashboard', label: 'Dashboard' },
+      // { to: '/dashboard', label: 'Dashboard' },
       { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
     ]
   },

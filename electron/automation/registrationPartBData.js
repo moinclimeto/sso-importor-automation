@@ -6,6 +6,7 @@ import {
 import {
   buildSec5bFromPurchases,
   buildSec5dFromSales,
+  PART_B_SECTION5_DOC_STATUS,
   normalizeSec5bRowForPortal,
   reconcileSec5bForAutomation,
   reconcileSec5dForAutomation,
@@ -124,8 +125,14 @@ export async function resolvePartBTransactionsForAutomation({
 
   try {
     const { purchases, sales } = await loadCompanyRecords(resolvedCompanyId);
-    const computed5b = buildSec5bFromPurchases(purchases, { companyId: resolvedCompanyId, docStatus: 'all' });
-    const computed5d = buildSec5dFromSales(sales, { companyId: resolvedCompanyId, docStatus: 'all' });
+    const computed5b = buildSec5bFromPurchases(purchases, {
+      companyId: resolvedCompanyId,
+      docStatus: PART_B_SECTION5_DOC_STATUS,
+    });
+    const computed5d = buildSec5dFromSales(sales, {
+      companyId: resolvedCompanyId,
+      docStatus: PART_B_SECTION5_DOC_STATUS,
+    });
 
     const sec5b = reconcileSec5bForAutomation(existing5b, computed5b);
     const sec5d = reconcileSec5dForAutomation(existing5d, computed5d);
@@ -135,7 +142,7 @@ export async function resolvePartBTransactionsForAutomation({
         String(row.registration_type || '').toLowerCase().replace(/\s+/g, '') === 'unregistered',
       ).length;
       if (sec5b.length) {
-        onLog(`Section 5b rows ready: ${sec5b.length} (computed ${computed5b.length}, companyId=${resolvedCompanyId ?? 'all'}).`);
+        onLog(`Section 5b rows ready: ${sec5b.length} (computed ${computed5b.length} published, companyId=${resolvedCompanyId ?? 'all'}).`);
         for (const row of sec5b) {
           onLog(`  5b → ${row.entityName}: entity=${row.entityType}, material=${row.materialType}`);
         }
@@ -143,7 +150,7 @@ export async function resolvePartBTransactionsForAutomation({
       if (!sec5b.length) {
         onLog(`No Section 5b rows — ${unregisteredPurchases} unregistered purchase(s) in DB (${purchases.length} total).`);
       }
-      if (computed5d.length) onLog(`Computed ${computed5d.length} Section 5d row(s) from unregistered sales.`);
+      if (computed5d.length) onLog(`Computed ${computed5d.length} Section 5d row(s) from published unregistered sales.`);
       else if (!sec5d.length) {
         const unregisteredSales = sales.filter((row) =>
           String(row.registration_type || '').toLowerCase().replace(/\s+/g, '') === 'unregistered',

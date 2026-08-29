@@ -12,6 +12,7 @@ import {
   refreshCaptcha,
   attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
+import { CPCB_CHROMIUM_ARGS, prepareCpcbBrowserPage } from './cpcbBrowserLaunch.js';
 import {
   evaluateGstDetailsResponse,
   evaluateCompaniesApiResponse,
@@ -1584,9 +1585,10 @@ export async function startRegistrationFlow(data, onLog) {
     if (onLog) onLog('Starting registration flow...');
     
     // Launch browser
-    regBrowser = await chromium.launch({ headless: false, args: ['--start-maximized'] }); // Visible to user for transparency if needed
+    regBrowser = await chromium.launch({ headless: false, args: CPCB_CHROMIUM_ARGS });
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
+    await prepareCpcbBrowserPage(regPage);
     attachCaptchaNetworkListenerToContext(regContext);
     const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
     await attachPortalToastWatcherToContext(regContext).catch(() => {});

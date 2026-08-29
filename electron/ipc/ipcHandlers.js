@@ -18,7 +18,7 @@ import {
   assertNoDuplicateSale,
   pruneOrphanFileHashes,
 } from '../invoiceDuplicateCheck.js';
-import { migrateFromJsonToSqlite } from '../db/dataMigration.js';
+import { CPCB_PERSISTENT_LAUNCH_OPTS, prepareCpcbBrowserPage } from '../automation/cpcbBrowserLaunch.js';
 import { storeProcessedUpload } from '../utils/storeUploadFile.js';
 import {
   computeImporter3aDraft,
@@ -1680,7 +1680,7 @@ async function syncSupplierMasterFromRecord(
     if (cpcbContext && cpcbPage) {
       try {
         if (!cpcbPage.isClosed()) {
-          await cpcbPage.bringToFront();
+          await prepareCpcbBrowserPage(cpcbPage);
           await pruneExtraTabs(cpcbPage);
           return { reused: true };
         }
@@ -1696,6 +1696,7 @@ async function syncSupplierMasterFromRecord(
     if (cpcbLaunchPromise) {
       await cpcbLaunchPromise;
       if (cpcbContext && cpcbPage && !cpcbPage.isClosed()) {
+        await prepareCpcbBrowserPage(cpcbPage);
         await pruneExtraTabs(cpcbPage);
         return { reused: true };
       }
@@ -1703,12 +1704,7 @@ async function syncSupplierMasterFromRecord(
 
     cpcbLaunchPromise = (async () => {
       const userDataDir = getCpcbSessionDir();
-      const launchOpts = {
-        headless: false,
-        acceptDownloads: true,
-        viewport: null,
-        args: ['--start-maximized'],
-      };
+      const launchOpts = { ...CPCB_PERSISTENT_LAUNCH_OPTS };
 
       let context;
       try {
@@ -1726,6 +1722,7 @@ async function syncSupplierMasterFromRecord(
       // Prefer an existing page; never open extras
       const existing = context.pages();
       cpcbPage = existing.length > 0 ? existing[0] : await context.newPage();
+      await prepareCpcbBrowserPage(cpcbPage);
       await attachPortalToastWatcherToContext(context).catch(() => {});
       await pruneExtraTabs(cpcbPage);
 
@@ -2235,14 +2232,11 @@ async function syncSupplierMasterFromRecord(
 
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
       const context = await chromium.launchPersistentContext(userDataDir, {
-        headless: false,
-        acceptDownloads: true,
-        viewport: null,
-        args: ['--start-maximized'],
+        ...CPCB_PERSISTENT_LAUNCH_OPTS,
         channel: 'chrome',
       });
       const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
-      await page.bringToFront();
+      await prepareCpcbBrowserPage(page);
 
       await page.goto('https://epr.cpcb.gov.in');
 
