@@ -50,6 +50,7 @@ import {
   formatSection4PartAIssue,
 } from '../utils/registrationPartBSection4.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -389,6 +390,10 @@ export default function NewApplicationPage() {
   };
 
   const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
+  const showHistoricalEprSections = useMemo(
+    () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
+    [generalInfo.yearOfCommencement],
+  );
 
   const persistRegistrationForm = useCallback(async (nextGeneral, nextAuto) => {
     if (!window.pwp?.registration?.save) return;
@@ -891,11 +896,13 @@ export default function NewApplicationPage() {
       return;
     }
 
-    const section4Issues = validateSection4AgainstPlasticConsumed(
-      generalInfo.partBSection4 || [],
-      plasticConsumed,
-      reportingFys.length ? reportingFys : getImporterReportingFinancialYears(),
-    );
+    const section4Issues = showHistoricalEprSections
+      ? validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        plasticConsumed,
+        reportingFys.length ? reportingFys : getImporterReportingFinancialYears(),
+      )
+      : [];
     if (section4Issues.length) {
       showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
       if (section4Issues.length > 1) {
@@ -910,7 +917,7 @@ export default function NewApplicationPage() {
 
     const applicationDefaults = {
       ...generalInfo,
-      yearOfCommencement: '2026',
+      yearOfCommencement: generalInfo.yearOfCommencement || String(new Date().getFullYear()),
       complianceStatus: generalInfo.complianceStatus || generalInfo.complianceStatus || 'Yes',
       thicknessOfPlastic: generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '50',
       hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
@@ -920,7 +927,12 @@ export default function NewApplicationPage() {
     };
 
     setGeneralInfo(applicationDefaults);
-    showToast('Starting New Application — 3a/3b PDFs and 3c values will be submitted to CPCB.', 'success');
+    showToast(
+      showHistoricalEprSections
+        ? 'Starting New Application — 3a/3b PDFs and 3c values will be submitted to CPCB.'
+        : 'Starting New Application — 3a/3b PDFs will be submitted (3c skipped for current FY commencement).',
+      'success',
+    );
 
     const saveLogs = [];
     if (window.pwp?.registration?.save) {
@@ -1638,6 +1650,7 @@ export default function NewApplicationPage() {
                   <ImporterEprPreparedReview
                     detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
                     representativePicturePath={autoData.representativePicturePath || ''}
+                    yearOfCommencement={generalInfo.yearOfCommencement || ''}
                     plasticConsumed={
                       generalInfo.plasticConsumed || Object.fromEntries(
                         reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),

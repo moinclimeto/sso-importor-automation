@@ -24,6 +24,10 @@ import {
   normalizeSec5dRowForPortal,
   toPortalInputDate,
 } from '../../shared/partBSection5.js';
+import {
+  CURRENT_FY_COMMENCEMENT_HINT,
+  requiresHistoricalEprData,
+} from '../../shared/commencementYearScope.js';
 
 const inputClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm';
 const selectClass = 'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none text-sm bg-white';
@@ -42,17 +46,21 @@ export default function RegistrationPartB({
   const [modalData, setModalData] = useState({});
   const operatingStatesKey = JSON.stringify(generalInfo.operatingStates || []);
   const hydrateRef = useRef('');
+  const showHistoricalSections = requiresHistoricalEprData(generalInfo.yearOfCommencement);
 
   const section4PartAIssues = useMemo(
-    () => validateSection4AgainstPlasticConsumed(
-      generalInfo.partBSection4 || [],
-      generalInfo.plasticConsumed || {},
-      getImporterReportingFinancialYears(),
-    ),
-    [generalInfo.partBSection4, generalInfo.plasticConsumed],
+    () => (showHistoricalSections
+      ? validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        generalInfo.plasticConsumed || {},
+        getImporterReportingFinancialYears(),
+      )
+      : []),
+    [generalInfo.partBSection4, generalInfo.plasticConsumed, showHistoricalSections],
   );
 
   useEffect(() => {
+    if (!showHistoricalSections) return undefined;
     const operatingStates = generalInfo.operatingStates || [];
     if (!operatingStates.length) {
       if ((generalInfo.partBSection4 || []).length) {
@@ -90,9 +98,10 @@ export default function RegistrationPartB({
     })();
 
     return () => { cancelled = true; };
-  }, [operatingStatesKey, gstin, setGeneralInfo]);
+  }, [operatingStatesKey, gstin, setGeneralInfo, showHistoricalSections]);
 
   useEffect(() => {
+    if (!showHistoricalSections) return undefined;
     let cancelled = false;
     (async () => {
       try {
@@ -122,7 +131,7 @@ export default function RegistrationPartB({
     })();
 
     return () => { cancelled = true; };
-  }, [gstin, setGeneralInfo]);
+  }, [gstin, setGeneralInfo, showHistoricalSections]);
 
   const updateSection4Cell = (groupIndex, catIndex, field, value) => {
     setGeneralInfo((prev) => {
@@ -646,7 +655,14 @@ export default function RegistrationPartB({
     <div className="space-y-8 mt-8 border-t pt-8 relative">
       <div>
         <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part B: Pertaining to Liquid Effluent and Gaseous Emissions</h3>
+
+        {!showHistoricalSections ? (
+          <div className="text-sm text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3 mb-6">
+            {CURRENT_FY_COMMENCEMENT_HINT}
+          </div>
+        ) : null}
         
+        {showHistoricalSections ? (
         <div className="bg-white border rounded-xl shadow-sm p-5 mb-6">
           <div className="mb-3">
             <h4 className="font-semibold text-slate-700 text-sm">
@@ -746,7 +762,9 @@ export default function RegistrationPartB({
             </table>
           </div>
         </div>
+        ) : null}
 
+        {showHistoricalSections ? (
         <div className="bg-white border rounded-xl shadow-sm p-5">
           <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
           
@@ -755,6 +773,7 @@ export default function RegistrationPartB({
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
           {renderSec5dTable()}
         </div>
+        ) : null}
       </div>
 
       {activeModal && (

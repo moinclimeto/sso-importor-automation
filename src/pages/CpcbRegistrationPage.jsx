@@ -44,6 +44,7 @@ import {
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
 import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
@@ -403,6 +404,10 @@ export default function CpcbRegistrationPage() {
   };
 
   const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
+  const showHistoricalEprSections = useMemo(
+    () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
+    [generalInfo.yearOfCommencement],
+  );
 
   useEffect(() => {
     if (loadingSavedRegistration) return undefined;
@@ -1001,11 +1006,13 @@ export default function CpcbRegistrationPage() {
       return;
     }
 
-    const section4Issues = validateSection4AgainstPlasticConsumed(
-      generalInfo.partBSection4 || [],
-      generalInfo.plasticConsumed || {},
-      getImporterReportingFinancialYears(),
-    );
+    const section4Issues = showHistoricalEprSections
+      ? validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        generalInfo.plasticConsumed || {},
+        getImporterReportingFinancialYears(),
+      )
+      : [];
     if (section4Issues.length) {
       setWizardStep('partB');
       showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
@@ -1747,6 +1754,7 @@ export default function CpcbRegistrationPage() {
                   <ImporterEprPreparedReview
                     detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
                     representativePicturePath={autoData.representativePicturePath || ''}
+                    yearOfCommencement={generalInfo.yearOfCommencement || ''}
                     plasticConsumed={
                       generalInfo.plasticConsumed || Object.fromEntries(
                         reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
