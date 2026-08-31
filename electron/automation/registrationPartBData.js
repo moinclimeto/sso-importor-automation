@@ -132,8 +132,8 @@ export async function resolvePartBTransactionsForAutomation({
     if (onLog) onLog('Part B Section 5 skipped — operations commenced in current financial year.');
     return { ...base, sec5a: [], sec5b: [], sec5c: [], sec5d: [] };
   }
-  const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
-  const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
+    const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
+    const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
   const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
 
   try {

@@ -1,5 +1,5 @@
-import { resolveRecordTotalMt } from './procurementConversionFactor.js';
-import { normalizePlasticCategory } from './plasticCategories.js';
+import { resolveRecordTotalMt, resolveFinancialYear } from './procurementConversionFactor.js';
+import { normalizePlasticCategory, PLASTIC_CATEGORIES } from './plasticCategories.js';
 import { normalizeStateLabel, resolveState } from './gstStateCodes.js';
 import { normalizePlasticMaterial } from './reviewEnrichment.js';
 import {
@@ -50,6 +50,12 @@ export const PORTAL_PLASTIC_MATERIAL_VALUES = {
 export const PORTAL_SEC5_ENTITY_VALUES = {
   Importer: '2',
   'Brand Owner': '3',
+};
+
+export const PORTAL_SEC5_REG_TYPE_VALUES = {
+  UnRegistered: 'UnRegistered',
+  Unregistered: 'UnRegistered',
+  Registered: 'Registered',
 };
 
 export function isSec5PortalEntityType(entityType = '') {
@@ -197,6 +203,263 @@ export function resolvePurchaseInvoicePath(row = {}) {
   );
 }
 
+const CATEGORY_3C_KEYS = ['cat1', 'cat2', 'cat3', 'cat4'];
+export const SECTION5_PARTA_TOLERANCE = 0.4;
+
+export function mapSec5aProcType(entityType = '') {
+  const value = String(entityType || '').trim();
+  if (/brand owner/i.test(value)) return 'Brand Owner';
+  if (/importer/i.test(value)) return 'Importer';
+  if (/producer/i.test(value)) return 'Producer';
+  if (/processor|recycl/i.test(value)) return 'Plastic Waste Processor';
+  return 'Importer';
+}
+
+export function normalizeSec5aRowForPortal(row = {}) {
+  return {
+    ...row,
+    regType: 'Registered',
+    procType: mapSec5aProcType(row.procType || row.entity_type || row.entityType || 'Importer'),
+    recycledPercent: row.recycledPercent != null && row.recycledPercent !== ''
+      ? String(row.recycledPercent)
+      : '0',
+    category: row.category ? toPartBCategoryLabel(row.category) || row.category : row.category,
+  };
+}
+
+export function categoryLabelToIndex(category = '') {
+  const text = String(category || '').trim();
+  if (!text) return -1;
+
+  const normalized = normalizePlasticCategory(text);
+  if (normalized) {
+    const idx = PLASTIC_CATEGORIES.indexOf(normalized);
+    if (idx >= 0) return idx;
+  }
+
+  for (let i = 0; i < PLASTIC_CATEGORIES.length; i += 1) {
+    const label = toPartBCategoryLabel(PLASTIC_CATEGORIES[i]);
+    if (text === label) return i;
+    const cat = PLASTIC_CATEGORIES[i];
+    if (new RegExp(`\\(${cat.replace('-', '\\-')}\\)`, 'i').test(text)) return i;
+  }
+
+  const lower = text.toLowerCase();
+  for (let i = 0; i < PLASTIC_CATEGORIES.length; i += 1) {
+    const cat = PLASTIC_CATEGORIES[i].toLowerCase();
+    if (lower.includes(cat) || lower.includes(`cat-${['i', 'ii', 'iii', 'iv'][i]}`)) return i;
+  }
+  return -1;
+}
+
+export function sumSec5CategoryYear(rows = [], year = '', catIndex = 0) {
+  let sum = 0;
+  for (const row of rows || []) {
+    if (String(row.financialYear || '') !== String(year || '')) continue;
+    if (categoryLabelToIndex(row.category) !== catIndex) continue;
+    sum += Number(row.quantity) || 0;
+  }
+  return Number(sum.toFixed(4));
+}
+
+export function sumSec5abCategoryYear(sec5a = [], sec5b = [], year = '', catIndex = 0) {
+  return Number((
+    sumSec5CategoryYear(sec5a, year, catIndex) + sumSec5CategoryYear(sec5b, year, catIndex)
+  ).toFixed(4));
+}
+
+export function validateSection5abAgainstPlasticConsumed(
+  sec5a = [],
+  sec5b = [],
+  plasticConsumed = {},
+  years = [],
+  tolerance = SECTION5_PARTA_TOLERANCE,
+) {
+  const issues = [];
+  const fyList = years.length
+    ? years
+    : [...new Set([
+      ...sec5a.map((r) => r.financialYear),
+      ...sec5b.map((r) => r.financialYear),
+    ].filter(Boolean))];
+
+  for (const year of fyList) {
+    for (let i = 0; i < PLASTIC_CATEGORIES.length; i += 1) {
+      const catKey = CATEGORY_3C_KEYS[i];
+      const label = toPartBCategoryLabel(PLASTIC_CATEGORIES[i]) || PLASTIC_CATEGORIES[i];
+      const partAVal = Number(plasticConsumed?.[year]?.[catKey]) || 0;
+      const procuredSum = sumSec5abCategoryYear(sec5a, sec5b, year, i);
+
+      if (partAVal <= 0 && procuredSum <= 0) continue;
+
+      if (partAVal <= 0 && procuredSum > 0) {
+        issues.push({
+          year,
+          category: label,
+          catKey,
+          partAVal,
+          procuredSum,
+          message: `Section 5a+5b ${label} (${year}): procured total ${procuredSum} TPA, but Part A 3c has ${catKey}=0.`,
+        });
+        continue;
+      }
+
+      const minAllowed = Number((partAVal * (1 - tolerance)).toFixed(4));
+      const maxAllowed = Number((partAVal * (1 + tolerance)).toFixed(4));
+      if (procuredSum < minAllowed || procuredSum > maxAllowed) {
+        issues.push({
+          year,
+          category: label,
+          catKey,
+          partAVal,
+          procuredSum,
+          minAllowed,
+          maxAllowed,
+          message: `Section 5a+5b ${label} (${year}): procured ${procuredSum} TPA is outside ±40% of Part A 3c ${partAVal} (${minAllowed}–${maxAllowed}).`,
+        });
+      }
+    }
+  }
+
+  return issues;
+}
+
+export function formatSection5abPartAIssue(issue = {}) {
+  return issue.message
+    || `Section 5a+5b ${issue.category || ''} (${issue.year || ''}) does not match Part A 3c.`;
+}
+
+export function validateSection5bAgainstPlasticConsumed(
+  sec5b = [],
+  plasticConsumed = {},
+  years = [],
+  tolerance = SECTION5_PARTA_TOLERANCE,
+) {
+  const issues = validateSection5abAgainstPlasticConsumed([], sec5b, plasticConsumed, years, tolerance);
+  return issues.map((issue) => ({
+    ...issue,
+    message: (issue.message || '').replace(/Section 5a\+5b/g, 'Section 5b'),
+  }));
+}
+
+export function formatSection5bPartAIssue(issue = {}) {
+  return issue.message
+    || `Section 5b ${issue.category || ''} (${issue.year || ''}) does not match Part A 3c.`;
+}
+
+export function filterSec5bToPortalYears(sec5b = [], years = []) {
+  const allowed = new Set((years || []).map(String));
+  return (sec5b || []).filter((row) => allowed.has(String(row.financialYear || '').trim()));
+}
+
+/** Scale existing 5b rows per FY+category so totals match Part A 3c (±40% portal rule). */
+export function alignSec5bRowsToPlasticConsumed(
+  sec5b = [],
+  plasticConsumed = {},
+  years = [],
+  tolerance = SECTION5_PARTA_TOLERANCE,
+) {
+  const rows = (sec5b || []).map((row) => ({ ...row }));
+
+  for (const year of years) {
+    for (let i = 0; i < PLASTIC_CATEGORIES.length; i += 1) {
+      const catKey = CATEGORY_3C_KEYS[i];
+      const partAVal = Number(plasticConsumed?.[year]?.[catKey]) || 0;
+      if (partAVal <= 0) continue;
+
+      const indices = [];
+      let current = 0;
+      for (let j = 0; j < rows.length; j += 1) {
+        if (String(rows[j].financialYear || '') !== String(year)) continue;
+        if (categoryLabelToIndex(rows[j].category) !== i) continue;
+        indices.push(j);
+        current += Number(rows[j].quantity) || 0;
+      }
+      if (!indices.length || current <= 0) continue;
+
+      const minAllowed = Number((partAVal * (1 - tolerance)).toFixed(4));
+      const maxAllowed = Number((partAVal * (1 + tolerance)).toFixed(4));
+      if (current >= minAllowed && current <= maxAllowed) continue;
+
+      const factor = partAVal / current;
+      for (const j of indices) {
+        rows[j] = {
+          ...rows[j],
+          quantity: String(Number((Number(rows[j].quantity) * factor).toFixed(4))),
+          _alignedToPartA3c: true,
+        };
+      }
+    }
+  }
+
+  return rows.map(normalizeSec5bRowForPortal);
+}
+
+/** Prepare unregistered purchase (5b) rows for CPCB portal — 5a is manual / not automated yet. */
+export function prepareSec5bForPortal({
+  plasticConsumed = {},
+  sec5b = [],
+  years = [],
+  tolerance = SECTION5_PARTA_TOLERANCE,
+  alignToPartA = true,
+} = {}) {
+  let rows = filterSec5bToPortalYears(sec5b, years).map(normalizeSec5bRowForPortal);
+  if (alignToPartA && years.length) {
+    rows = alignSec5bRowsToPlasticConsumed(rows, plasticConsumed, years, tolerance);
+  }
+  return rows;
+}
+
+/** @deprecated 5a automation not ready — use prepareSec5bForPortal */
+export function prepareSec5abForPortal(opts = {}) {
+  return {
+    sec5a: opts.sec5a || [],
+    sec5b: prepareSec5bForPortal(opts),
+  };
+}
+
+/** @deprecated use prepareSec5bForPortal when 5a is empty */
+export function buildSec5aBalanceRowsForPlasticConsumed() {
+  return [];
+}
+
+export function buildSec5aRowFromPurchase(row = {}) {
+  const quantityMt = resolveRecordTotalMt(row, 'purchase');
+  const firstLine = (row.line_items || row.lineItems || [])[0] || {};
+  const category = toPartBCategoryLabel(
+    row.category_of_plastic || firstLine.plasticCategory || firstLine.category_of_plastic,
+  );
+  const financialYear = row.financial_year
+    || resolveFinancialYear(row.procurement_date || row.invoice_date || row.date_of_entry)
+    || '';
+
+  return {
+    regType: 'Registered',
+    procType: mapSec5aProcType(row.entity_type),
+    invoiceNo: row.invoice_no || row.invoice_number || row.application_number || '',
+    quantity: quantityMt != null ? String(Number(quantityMt.toFixed(4))) : '',
+    recycledPercent: row.recycled_plastic_percent != null && row.recycled_plastic_percent !== ''
+      ? String(row.recycled_plastic_percent)
+      : '0',
+    category,
+    financialYear,
+    sourceRecordId: row.id,
+    sourceInvoiceNo: row.invoice_no || row.invoice_number || '',
+  };
+}
+
+export function buildSec5aFromPurchases(purchases = [], { companyId = null, docStatus = 'published' } = {}) {
+  let rows = filterByCompany(purchases, companyId);
+  if (docStatus && docStatus !== 'all') {
+    rows = rows.filter((row) => (row.doc_status || 'inbox') === docStatus);
+  }
+  rows = rows.filter((row) => !isUnregisteredRegistrationType(row.registration_type));
+
+  return rows
+    .map(buildSec5aRowFromPurchase)
+    .filter((row) => row.invoiceNo || row.quantity);
+}
+
 export function buildSec5bRowFromPurchase(row = {}) {
   const quantityMt = resolveRecordTotalMt(row, 'purchase');
   const firstLine = (row.line_items || row.lineItems || [])[0] || {};
@@ -205,6 +468,9 @@ export function buildSec5bRowFromPurchase(row = {}) {
   );
   const entityType = mapSec5bEntityType(row.entity_type);
   const materialType = resolvePlasticMaterialFromRecord(row) || 'Others';
+  const financialYear = row.financial_year
+    || resolveFinancialYear(row.procurement_date || row.invoice_date || row.date_of_entry)
+    || '';
 
   return {
     regType: 'UnRegistered',
@@ -216,7 +482,7 @@ export function buildSec5bRowFromPurchase(row = {}) {
     materialType,
     plastic_type: row.plastic_type || materialType,
     category,
-    financialYear: row.financial_year || '',
+    financialYear,
     date: resolvePurchaseDate(row),
     quantity: quantityMt != null ? String(Number(quantityMt.toFixed(4))) : '',
     recycledPercent: row.recycled_plastic_percent != null && row.recycled_plastic_percent !== ''
@@ -385,6 +651,14 @@ export function sec5bRowHasData(row = {}) {
   );
 }
 
+export function sec5aRowHasData(row = {}) {
+  return Boolean(
+    Number(row.quantity) > 0
+    && String(row.category || '').trim()
+    && String(row.financialYear || '').trim(),
+  );
+}
+
 export function resolveSaleInvoicePath(row = {}) {
   return (
     row._source_fields?.local_pdf_path
@@ -412,6 +686,9 @@ export function buildSec5dRowFromSale(row = {}) {
     row.category_of_plastic || firstLine.plasticCategory || firstLine.category_of_plastic,
   );
   const gstPaid = resolveSalesGstOtherCharges(row);
+  const financialYear = row.financial_year
+    || resolveFinancialYear(row.invoice_date || row.date)
+    || '';
 
   return {
     regType: 'UnRegistered',
@@ -422,7 +699,7 @@ export function buildSec5dRowFromSale(row = {}) {
     mobile: row.mobile_number || '',
     materialType: resolvePlasticMaterialFromRecord(row) || 'Others',
     category,
-    financialYear: row.financial_year || '',
+    financialYear,
     gst: row.customer_gstin || '',
     bankAccount: row.account_number || '',
     ifsc: row.ifsc_code || '',

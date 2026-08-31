@@ -18,6 +18,7 @@ import { getCpcbPersistentLaunchOpts, prepareCpcbBrowserPage } from './cpcbBrows
 import {
   fillNewApplicationFlow,
 } from './fillRegistrationForms.js';
+import { runResumeDraftApplicationFlow } from './resumeDraftApplication.js';
 
 const LOGIN_URL = 'https://epr.cpcb.gov.in/login';
 const DASHBOARD_URL = 'https://epr.cpcb.gov.in/dashboard';
@@ -29,6 +30,7 @@ function escapeRegex(value) {
 let loginBrowser = null;
 let loginPage = null;
 let pendingLoginCredentials = { ceprId: '', password: '' };
+let pendingAutomationMode = 'full';
 
 function isPageAlive(page) {
   try {
@@ -1160,6 +1162,7 @@ async function startApplicationOnboarding(page, onLog) {
 
 export async function startLoginFlow(payload, onLog) {
   try {
+    pendingAutomationMode = payload?.automationMode === 'resumeDraft' ? 'resumeDraft' : 'full';
     const ceprId = String(payload?.ceprId || payload?.userId || '').trim();
     const creds = resolveRegistrationLoginCredentials({
       email: payload?.email,
@@ -1202,7 +1205,11 @@ export async function startLoginFlow(payload, onLog) {
       const isLoginVisible = await page.locator('input[placeholder="Enter CEPR User ID"], app-input[formcontrolname="userId"] input').first().isVisible({ timeout: 1000 }).catch(() => false);
       
       if (!isLoginVisible && isAuthenticatedUrl(page.url())) {
-         if (onLog) onLog('Session is already authenticated. Skipping login flow and starting onboarding...');
+         if (onLog) onLog('Session is already authenticated. Skipping login flow…');
+
+         if (pendingAutomationMode === 'resumeDraft') {
+           return await runResumeDraftApplicationFlow(page, onLog, { fillPartB: true });
+         }
          
          let onboardingResult = null;
          try {
@@ -1462,11 +1469,15 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
 }
 
 export async function runApplicationOnboardingAfterLogin(onLog, options = {}) {
-  const { autoScrape = false } = options;
+  const { autoScrape = false, automationMode = pendingAutomationMode, fillPartB = true } = options;
   try {
     const { page } = getLoginSession();
     if (!page) {
       return { success: false, error: 'Browser session not active' };
+    }
+
+    if (automationMode === 'resumeDraft') {
+      return await runResumeDraftApplicationFlow(page, onLog, { fillPartB });
     }
 
     let onboardingResult = null;

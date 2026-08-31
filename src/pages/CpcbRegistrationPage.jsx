@@ -185,6 +185,8 @@ export default function CpcbRegistrationPage() {
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
   const automationBusyRef = useRef(false);
+  /** 'full' = normal Register; 'resumeDraft' = open draft View → Part B (dev). */
+  const automationModeRef = useRef('full');
 
   const formatTimer = useCallback(
     (time) => `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`,
@@ -1115,6 +1117,7 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleNewApplication = async () => {
+    automationModeRef.current = 'full';
     const registerBlockers = getRegisterApplicationBlockers({
       savedCeprId,
       generalInfo,
@@ -1163,13 +1166,55 @@ export default function CpcbRegistrationPage() {
     setLoading(true);
     setCurrentAutomationStep('Starting CPCB login…');
     try {
-      await beginLoginFlow(savedCeprId);
+      await beginLoginFlow(savedCeprId, { automationMode: 'full' });
     } finally {
       setLoading(false);
     }
   };
 
-  const beginLoginFlow = async (ceprId) => {
+  /** DEV: login → Applications list → first draft View → Save & Next (Part A skip fill) → Part B automation. */
+  const handleResumeDraftPartB = async () => {
+    automationModeRef.current = 'resumeDraft';
+
+    if (!String(savedCeprId || '').trim()) {
+      showToast('CEPR ID required — complete registration first.', 'error');
+      return;
+    }
+    if (!String(generalInfo.password || '').trim()) {
+      showToast('Enter CPCB portal Password in Part A → Login credentials.', 'error');
+      setWizardStep('partA');
+      return;
+    }
+
+    if (window.pwp?.registration?.save) {
+      try {
+        await window.pwp.registration.save({
+          email,
+          mobile,
+          applicant_type: generalInfo.applicantType || 'PIBO',
+          sub_applicant_type: generalInfo.subApplicantType || 'Importer',
+          cepr_id: savedCeprId || '',
+          form_data_json: JSON.stringify({ email, mobile, generalInfo, autoData }),
+        });
+      } catch (err) {
+        console.error('Failed to save data before draft resume', err);
+      }
+    }
+
+    clearPortalToasts();
+    openAutomationModal('Resuming draft application…', 'login');
+    appendAutomationLog(setAutomationLogs, '[Dev] Resume draft → Part B (skip Part A fill)', 'info');
+    setLoading(true);
+    setCurrentAutomationStep('Starting CPCB login…');
+    try {
+      await beginLoginFlow(savedCeprId, { automationMode: 'resumeDraft' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const beginLoginFlow = async (ceprId, { automationMode = 'full' } = {}) => {
+    automationModeRef.current = automationMode;
     setSavedCeprId(ceprId || '');
     flushSync(() => {
       setShowAutomationModal(true);
@@ -1189,6 +1234,7 @@ export default function CpcbRegistrationPage() {
         password: loginCreds.password,
         email: loginCreds.email,
         mobile: loginCreds.mobile,
+        automationMode,
       });
       if (loginRes.success && loginRes.step === 'WAITING_LOGIN_CAPTCHA') {
         setLoginCaptchaImage(loginRes.captchaImage || '');
@@ -1201,6 +1247,12 @@ export default function CpcbRegistrationPage() {
       } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
         completeAutomationModal('Application onboarding completed successfully!');
         showToast('Application onboarding completed successfully!', 'success');
+      } else if (loginRes.success && loginRes.step === 'DRAFT_RESUMED_PART_B') {
+        completeAutomationModal('Draft opened — Part B automation finished (dev flow).');
+        showToast('Draft resumed on CPCB portal — Part B fill attempted. Browser is open.', 'success', { duration: 15000 });
+      } else if (!loginRes.success && loginRes.step === 'DRAFT_RESUME_FAILED') {
+        failAutomationModal(loginRes.error || 'Draft resume failed');
+        showToast(loginRes.error || 'Draft resume failed', 'error', { duration: 14000 });
       } else if (loginRes.step === 'APPLICATION_FILL_FAILED' || (!loginRes.success && loginRes.error)) {
         const err = loginRes.error || 'Application form fill failed';
         failAutomationModal(err);
@@ -1307,11 +1359,17 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleLoginOnboardingResult = (res) => {
-    if (!res.success && (res.step === 'APPLICATION_FILL_FAILED' || res.error)) {
-      const err = res.error || 'Application form fill failed';
+    if (!res.success && (res.step === 'DRAFT_RESUME_FAILED' || res.step === 'APPLICATION_FILL_FAILED' || res.error)) {
+      const err = res.error || (res.step === 'DRAFT_RESUME_FAILED' ? 'Draft resume failed' : 'Application form fill failed');
       failAutomationModal(err);
       showToast(err, 'error', { duration: 14000 });
       if (/Section 3c/i.test(err)) setWizardStep('partA');
+      return true;
+    }
+
+    if (res.success && res.step === 'DRAFT_RESUMED_PART_B') {
+      completeAutomationModal('Draft opened — Part B automation finished (dev flow).');
+      showToast('Draft resumed on CPCB portal — Part B fill attempted. Browser is open.', 'success', { duration: 15000 });
       return true;
     }
 
@@ -1370,11 +1428,24 @@ export default function CpcbRegistrationPage() {
         setShowLoginOtpModal(false);
         setLoginOtp('');
         setAutomationPhase('running');
-        setCurrentAutomationStep('Filling application on CPCB portal…');
-        appendAutomationLog(setAutomationLogs, 'Login OTP verified — filling application form', 'success');
+        setCurrentAutomationStep(
+          automationModeRef.current === 'resumeDraft'
+            ? 'Resuming draft on CPCB portal…'
+            : 'Filling application on CPCB portal…',
+        );
+        appendAutomationLog(
+          setAutomationLogs,
+          automationModeRef.current === 'resumeDraft'
+            ? 'Login OTP verified — resuming draft (Part B dev flow)'
+            : 'Login OTP verified — filling application form',
+          'success',
+        );
         setLoading(true);
         try {
-          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: false });
+          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({
+            autoScrape: false,
+            automationMode: automationModeRef.current,
+          });
           if (!handleLoginOnboardingResult(onboard) && !onboard.success) {
             failAutomationModal(onboard.error || 'Application onboarding failed.');
           }
@@ -2216,24 +2287,45 @@ export default function CpcbRegistrationPage() {
               <ChevronRight size={16} />
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={handleNewApplication}
-              disabled={
-                loading
-                || loginCaptchaSubmitting
-                || loginOtpSubmitting
-                || (showAutomationModal && automationPhase !== 'error')
-              }
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
-            >
-              {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <FilePlus size={16} />
-              )}
-              Register
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              <button
+                type="button"
+                onClick={handleResumeDraftPartB}
+                disabled={
+                  loading
+                  || loginCaptchaSubmitting
+                  || loginOtpSubmitting
+                  || (showAutomationModal && automationPhase !== 'error')
+                }
+                title="Dev only: open first DRAFT on CPCB, Save & Next Part A, then fill Part B"
+                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
+              >
+                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <Eye size={16} />
+                )}
+                Resume Draft → Part B (Dev)
+              </button>
+              <button
+                type="button"
+                onClick={handleNewApplication}
+                disabled={
+                  loading
+                  || loginCaptchaSubmitting
+                  || loginOtpSubmitting
+                  || (showAutomationModal && automationPhase !== 'error')
+                }
+                className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+              >
+                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FilePlus size={16} />
+                )}
+                Register
+              </button>
+            </div>
           )}
         </div>
       </form>

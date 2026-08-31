@@ -1484,7 +1484,15 @@ async function syncSupplierMasterFromRecord(
   ipcMain.handle('scraper:runApplicationOnboardingAfterLogin', async (event, payload) => {
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
-    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), { autoScrape });
+    const automationMode = typeof payload === 'object' ? payload?.automationMode : undefined;
+    const fillPartB = typeof payload === 'object' && payload?.fillPartB !== undefined
+      ? Boolean(payload.fillPartB)
+      : true;
+    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), {
+      autoScrape,
+      automationMode,
+      fillPartB,
+    });
   });
 
   ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {

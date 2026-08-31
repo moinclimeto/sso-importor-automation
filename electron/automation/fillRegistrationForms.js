@@ -19,6 +19,7 @@ import {
 } from './portalPlasticConsumed.js';
 import { fillPartBSection4Grid } from './portalPartBSection4.js';
 import { fillPartBSection5bRows, fillPartBSection5dRows, forceCloseAllEntryModals } from './portalPartBSection5.js';
+import { prepareSec5bForPortal } from '../../shared/partBSection5.js';
 import { resolvePartBSection4ForAutomation, resolvePartBTransactionsForAutomation } from './registrationPartBData.js';
 import {
   validateSection4AgainstPlasticConsumed,
@@ -182,15 +183,18 @@ async function loadCompanyDocs() {
 }
 
 async function isPartBVisible(page) {
-  return page.getByText(/Part B:|Pertaining to Liquid Effluent/i).first().isVisible({ timeout: 2500 }).catch(() => false);
+  return page.getByText(
+    /Part B:|Pertaining to Liquid Effluent|State-wise, Category-wise Quantity of PW generated/i,
+  ).first().isVisible({ timeout: 2500 }).catch(() => false);
 }
 
 async function isPartCVisible(page) {
   return page.getByText(/Part C:|EPR Action Plan/i).first().isVisible({ timeout: 2500 }).catch(() => false);
 }
 
-async function clickSaveAndNext(page, onLog, stepName) {
-  if (stepName === 'Part A') {
+export async function clickSaveAndNext(page, onLog, stepName, options = {}) {
+  const { skipPartAStateCheck = false } = options;
+  if (stepName === 'Part A' && !skipPartAStateCheck) {
     const hasState = await page.locator('.chip').filter({ hasText: /Madhya Pradesh/i }).first().isVisible({ timeout: 1500 }).catch(() => false);
     if (!hasState) {
       if (onLog) onLog('Not clicking Save & Next — Part A 2a state chip is missing.');
@@ -1059,8 +1063,18 @@ export async function fillPartBSection4(page, section4Data, onLog, plasticConsum
   );
 }
 
-export async function fillPartBSection5(page, transactions = {}, onLog) {
-  const sec5b = transactions?.sec5b || [];
+export async function fillPartBSection5(page, transactions = {}, onLog, plasticConsumed = {}) {
+  const years = getCpcbPortalPartA3cYears();
+  const sec5b = prepareSec5bForPortal({
+    plasticConsumed,
+    sec5b: transactions?.sec5b || [],
+    years,
+  });
+  const alignedCount = sec5b.filter((row) => row._alignedToPartA3c).length;
+  if (alignedCount && onLog) {
+    onLog(`Section 5b: scaled ${alignedCount} row(s) to align with Part A 3c (±40% portal rule).`);
+  }
+
   const sec5d = transactions?.sec5d || [];
   let filled = false;
 
@@ -1413,6 +1427,80 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
   await capturePayuAndOpenChrome(page, payBtn, onLog);
 }
 
+export async function loadApplicationFormDataFromDb(onLog) {
+  let mergedGeneralInfo = {};
+  let mergedAutoData = {};
+  try {
+    const db = getDb();
+    const regDetails = await db.get(
+      'SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1',
+    );
+    if (regDetails?.form_data_json) {
+      const parsed = JSON.parse(regDetails.form_data_json);
+      mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
+      mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
+      if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
+        mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
+      }
+      if (!mergedAutoData.representativePicturePath && regDetails.representative_picture_of_plastic_packaging) {
+        mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
+      }
+    }
+  } catch (err) {
+    if (onLog) onLog(`Failed to load saved form data: ${err.message}`);
+  }
+  return normalizeApplicationData({
+    ...mergedGeneralInfo,
+    ...mergedAutoData,
+    plasticConsumed: mergedGeneralInfo.plasticConsumed,
+    partBSection4: mergedGeneralInfo.partBSection4,
+    partBTransactions: mergedGeneralInfo.partBTransactions,
+  });
+}
+
+export async function advanceDraftPartAToPartB(page, onLog) {
+  const moved = await clickSaveAndNext(page, onLog, 'Part A', { skipPartAStateCheck: true });
+  if (!moved) {
+    throw new Error('Save & Next from Part A did not reach Part B — check portal validation on the draft.');
+  }
+  return true;
+}
+
+export async function fillPartBAndPartCOnly(page, formData, onLog) {
+  const data = normalizeApplicationData(formData);
+  const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
+  data.partBSection4 = await resolvePartBSection4ForAutomation({
+    partBSection4: needsHistorical ? data.partBSection4 : [],
+    operatingStates: data.operatingStates,
+    yearOfCommencement: data.yearOfCommencement,
+    onLog,
+  });
+  data.partBTransactions = await resolvePartBTransactionsForAutomation({
+    partBTransactions: needsHistorical ? data.partBTransactions : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
+    gstin: data.unitGst,
+    yearOfCommencement: data.yearOfCommencement,
+    onLog,
+  });
+
+  if (onLog) onLog('Filling Part B (Section 4 / 5) on resumed draft…');
+  await fillUntilPortalAccepts(page, {
+    stepName: 'Part B',
+    onLog,
+    fillFn: async () => {
+      if (needsHistorical) {
+        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
+      } else if (onLog) {
+        onLog('Part B: current FY commencement — skipping Section 4 and Section 5.');
+      }
+    },
+    saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
+  });
+
+  if (onLog) onLog('Filling Part C on resumed draft…');
+  await fillPartC(page, data, onLog);
+}
+
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
   const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
@@ -1443,7 +1531,7 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     fillFn: async () => {
       if (needsHistorical) {
         await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
-        await fillPartBSection5(page, data.partBTransactions, onLog);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
       } else if (onLog) {
         onLog('Part B: current FY commencement — skipping Section 4 and all Section 5 entries.');
       }

@@ -16,6 +16,11 @@ import {
   mergePartBSection5d,
   refreshSec5RowFromSource,
 } from '../utils/registrationPartBSection5.js';
+import {
+  validateSection5bAgainstPlasticConsumed,
+  formatSection5bPartAIssue,
+  prepareSec5bForPortal,
+} from '../../shared/partBSection5.js';
 import { PART_B_SECTION4_CATEGORY_LABELS } from '../../shared/partBSection4.js';
 import {
   PORTAL_PLASTIC_MATERIALS,
@@ -58,6 +63,23 @@ export default function RegistrationPartB({
       : []),
     [generalInfo.partBSection4, generalInfo.plasticConsumed, showHistoricalSections],
   );
+
+  const section5bPartAIssues = useMemo(() => {
+    if (!showHistoricalSections) return [];
+    const years = getCpcbPortalPartA3cYears();
+    const tx = generalInfo.partBTransactions || {};
+    const prepared5b = prepareSec5bForPortal({
+      plasticConsumed: generalInfo.plasticConsumed || {},
+      sec5b: tx.sec5b || [],
+      years,
+      alignToPartA: true,
+    });
+    return validateSection5bAgainstPlasticConsumed(
+      prepared5b,
+      generalInfo.plasticConsumed || {},
+      years,
+    );
+  }, [generalInfo.partBTransactions, generalInfo.plasticConsumed, showHistoricalSections]);
 
   useEffect(() => {
     if (!showHistoricalSections) return undefined;
@@ -767,8 +789,22 @@ export default function RegistrationPartB({
         {showHistoricalSections ? (
         <div className="bg-white border rounded-xl shadow-sm p-5">
           <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
+          {section5bPartAIssues.length > 0 ? (
+            <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-4 space-y-1">
+              <p className="font-semibold">Part A 3c and Section 5b (unregistered purchases) do not match (CPCB ±40% rule)</p>
+              {section5bPartAIssues.slice(0, 6).map((issue) => (
+                <p key={`${issue.year}-${issue.catKey}`}>{formatSection5bPartAIssue(issue)}</p>
+              ))}
+              {section5bPartAIssues.length > 6 ? (
+                <p>+{section5bPartAIssues.length - 6} more year/category mismatch(es)</p>
+              ) : null}
+              <p className="text-amber-800">
+                Add published unregistered purchase invoices for missing years/categories, or edit 5b quantities. Automation scales existing 5b rows to Part A 3c where rows exist. Section 5a is manual for now.
+              </p>
+            </div>
+          ) : null}
           
-          {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity', 'sec5a')}
+          {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity (manual — automation pending)', 'sec5a')}
           {renderSec5bTable()}
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
           {renderSec5dTable()}

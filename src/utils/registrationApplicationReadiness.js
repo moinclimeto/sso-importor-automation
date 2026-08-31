@@ -6,6 +6,11 @@ import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../../shared/partBSection4.js';
+import {
+  validateSection5bAgainstPlasticConsumed,
+  formatSection5bPartAIssue,
+  prepareSec5bForPortal,
+} from '../../shared/partBSection5.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { alignPlasticConsumedToYears, prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
@@ -158,6 +163,24 @@ export function getRegisterApplicationBlockers({
       blockers.push({
         id: `section4-${issue.year}-${issue.catKey}`,
         label: formatSection4PartAIssue(issue),
+        section: 'partB',
+      });
+    }
+
+    const prepared5b = prepareSec5bForPortal({
+      plasticConsumed: portalPlasticConsumed,
+      sec5b: generalInfo.partBTransactions?.sec5b || [],
+      years,
+      alignToPartA: true,
+    });
+    for (const issue of validateSection5bAgainstPlasticConsumed(
+      prepared5b,
+      portalPlasticConsumed,
+      years,
+    )) {
+      blockers.push({
+        id: `section5b-${issue.year}-${issue.catKey}`,
+        label: formatSection5bPartAIssue(issue),
         section: 'partB',
       });
     }
