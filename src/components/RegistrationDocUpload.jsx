@@ -11,8 +11,6 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
-  formatCpcbFileNameRenameNotice,
-  validateCpcbPortalFileName,
   validateCpcbPortalFilePath,
 } from '../utils/registrationDataMapper.js';
 import {
@@ -172,10 +170,17 @@ function ProgressPanel({ progress }) {
 }
 
 function DocListRow({ item, onRemove, removing }) {
-  const storedName = item.filePath?.split(/[/\\]/).pop() || item.fileName || '';
-  const nameIssue = storedName
-    ? validateCpcbPortalFilePath(item.filePath || storedName, item.docType || 'document')
-    : validateCpcbPortalFileName(item.fileName || '', item.docType || 'document');
+  const storedPath = item.filePath || '';
+  const storedName = storedPath.split(/[/\\]/).pop() || item.fileName || '';
+  const nameIssue = storedPath
+    ? validateCpcbPortalFilePath(storedPath, item.docType || 'document')
+    : { valid: true };
+  const renamedForPortal = Boolean(
+    item.status === 'done'
+    && storedName
+    && (item.originalFileName || item.fileName)
+    && storedName.toLowerCase() !== String(item.originalFileName || item.fileName).toLowerCase(),
+  );
   const tone =
     item.status === 'done'
       ? 'text-green-600'
@@ -226,9 +231,14 @@ function DocListRow({ item, onRemove, removing }) {
           )}
           {item.status === 'failed' && (item.error || 'Extraction failed')}
           {item.status === 'processing' && 'Extracting…'}
-          {item.status === 'done' && !nameIssue.valid && (
+          {item.status === 'done' && renamedForPortal && (
+            <span className="block text-emerald-700 mt-1">
+              Saved as {storedName} (auto-renamed &amp; compressed for CPCB)
+            </span>
+          )}
+          {item.status === 'done' && !renamedForPortal && !nameIssue.valid && (
             <span className="block text-amber-700 mt-1">
-              CPCB file name issue: &quot;{nameIssue.fileName}&quot; will be saved as &quot;{nameIssue.suggestedName}&quot;
+              CPCB file name issue: &quot;{nameIssue.fileName}&quot; — expected &quot;{nameIssue.suggestedName}&quot;
             </span>
           )}
         </p>
@@ -384,17 +394,6 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       return;
     }
 
-    for (const file of targets) {
-      const check = validateCpcbPortalFileName(file.name, 'document');
-      if (!check.valid) {
-        showToast?.(
-          formatCpcbFileNameRenameNotice(file.name, check.suggestedName),
-          'warning',
-          { duration: 12000 }
-        );
-      }
-    }
-
     if (!window.pwp?.ocr?.extractBatch) {
       showToast?.('OCR extraction needs the Electron app.', 'error');
       return;
@@ -529,11 +528,14 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         try {
           const saved = await saveDocument(data, sourcePath);
           savedCount += 1;
+          const storedPath = saved.file_path || sourcePath;
+          const storedFileName = storedPath.split(/[/\\]/).pop() || fileName;
           upsertDocInList({
             id: `db-${saved.id}`,
             dbId: saved.id,
-            fileName,
-            filePath: sourcePath,
+            fileName: storedFileName,
+            originalFileName: fileName,
+            filePath: storedPath,
             docType,
             documentNumber: data.document_number,
             entityName: data.entity_name,
@@ -574,6 +576,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
 
       const allDocs = await window.pwp.documents.getAll();
       const relevant = (allDocs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
+      setDocList(
+        relevant.map((doc) => ({
+          id: `db-${doc.id}`,
+          dbId: doc.id,
+          fileName: doc.file_path?.split(/[/\\]/).pop() || 'Uploaded document',
+          filePath: doc.file_path || '',
+          docType: doc.doc_type,
+          documentNumber: doc.document_number,
+          entityName: doc.entity_name,
+          status: 'done',
+          error: '',
+        })),
+      );
       const processedTotal = savedCount + failedCount;
       const remaining = Math.max(0, batchTotal - processedTotal);
 

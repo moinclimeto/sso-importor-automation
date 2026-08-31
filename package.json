@@ -9,7 +9,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5180 && cross-env NODE_ENV=development electron .\"",
+    "electron:dev": "npm run setup:playwright && concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://127.0.0.1:5180 && cross-env NODE_ENV=development PWP_FORCE_GPU=1 electron .\"",
     "electron:build": "npm run build && electron-builder",
     "setup:ghostscript": "node scripts/setup-ghostscript.mjs",
     "setup:playwright": "node scripts/setup-playwright.mjs",

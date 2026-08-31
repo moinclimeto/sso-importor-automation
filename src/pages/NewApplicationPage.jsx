@@ -8,8 +8,7 @@ import {
   AUTO_FILLED_FIELDS,
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
-  formatCpcbFileNameRenameNotice,
-  validateCpcbPortalFileName,
+  registrationDocFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -35,6 +34,7 @@ import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
@@ -425,17 +425,11 @@ export default function NewApplicationPage() {
         : field === 'representativePicturePath'
           ? 'plastic_packaging_picture'
           : 'document';
-      const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
-      if (!nameCheck.valid) {
-        showToast(
-          formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
-          'warning',
-          { duration: 12000 }
-        );
-      }
+      const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
+      const portalFileName = registrationDocFileName(docBase, ext);
       const stored = await storeCompressedUpload(file, {
         destSubdir: 'processed_registration_docs',
-        fileName: nameCheck.suggestedName,
+        fileName: portalFileName,
       });
       if (!stored.success || !stored.filePath) {
         showToast(stored.message || 'Could not save PDF.', 'error');
@@ -453,12 +447,26 @@ export default function NewApplicationPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const normalized = await normalizeRegistrationPaths({ autoData, generalInfo });
+      if (cancelled) return;
+      if (normalized.changed) {
+        setAutoData(normalized.autoData);
+        setGeneralInfo(normalized.generalInfo);
+        return;
+      }
+
       let docs = [];
       if (window.pwp?.documents?.getAll) {
         docs = await window.pwp.documents.getAll();
       }
       if (cancelled) return;
-      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+      setFileNameIssues(
+        collectRegistrationUploadFileIssues({
+          docs,
+          autoData: normalized.autoData,
+          generalInfo: normalized.generalInfo,
+        }),
+      );
     })();
     return () => {
       cancelled = true;
@@ -1347,17 +1355,11 @@ export default function NewApplicationPage() {
                   onChange={async (e) => {
                     const file = e.target.files[0];
                     if (file) {
-                      const nameCheck = validateCpcbPortalFileName(file.name, 'supporting_category_doc');
-                      if (!nameCheck.valid) {
-                        showToast(
-                          formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
-                          'warning',
-                          { duration: 12000 }
-                        );
-                      }
+                      const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+                      const portalFileName = registrationDocFileName('supporting_category_doc', ext);
                       const stored = await storeCompressedUpload(file, {
                         destSubdir: 'processed_registration_docs',
-                        fileName: nameCheck.suggestedName,
+                        fileName: portalFileName,
                       });
                       if (!stored.success || !stored.filePath) {
                         showToast(stored.message || 'Could not save document.', 'error');
@@ -1458,17 +1460,11 @@ export default function NewApplicationPage() {
                       onChange={async (e) => {
                         const file = e.target.files[0];
                         if (file) {
-                          const nameCheck = validateCpcbPortalFileName(file.name, 'unit_gst');
-                          if (!nameCheck.valid) {
-                            showToast(
-                              formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
-                              'warning',
-                              { duration: 12000 }
-                            );
-                          }
+                          const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+                          const portalFileName = registrationDocFileName('unit_gst', ext);
                           const stored = await storeCompressedUpload(file, {
                             destSubdir: 'processed_registration_docs',
-                            fileName: nameCheck.suggestedName,
+                            fileName: portalFileName,
                           });
                           if (!stored.success || !stored.filePath) {
                             showToast(stored.message || 'Could not save Unit GST document.', 'error');

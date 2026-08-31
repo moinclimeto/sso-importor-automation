@@ -4,7 +4,7 @@ const IGNORE_RE =
   /payment bypass|already completed the payment|submit application|click to pay|payu|transaction id|otp sent successfully|otp has been/i;
 
 const BLOCKING_RE =
-  /please (fill|select|upload|enter|attach|choose)|required|mandatory|not uploaded|not selected|not entered|missing|something went wrong|try again|network|unable to|failed to|invalid|at least one|document .*not|upload .*document|field .*empty|cannot be empty|is required/i;
+  /please (fill|select|upload|enter|attach|choose)|required|mandatory|not uploaded|not selected|not entered|missing|something went wrong|try again|network|unable to|failed to|invalid|at least one|document .*not|upload .*document|field .*empty|cannot be empty|is required|already exists|authorised person|authorized person|conflict/i;
 
 const SUCCESS_RE =
   /success|verified|submitted|saved|registered|otp has been|otp sent|valid otp|sent successfully|pan details submitted/i;

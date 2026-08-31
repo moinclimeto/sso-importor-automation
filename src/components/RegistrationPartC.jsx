@@ -10,7 +10,7 @@ import {
   resolveIecNumber,
 } from '../utils/partCLetterValues.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
-import { formatCpcbFileNameRenameNotice, validateCpcbPortalFileName } from '../utils/registrationDataMapper.js';
+import { registrationDocFileName } from '../utils/registrationDataMapper.js';
 
 function DocumentCard({
   title,
@@ -132,17 +132,11 @@ export default function RegistrationPartC({
       showToast?.('Please upload a PDF file.', 'error');
       return null;
     }
-    const nameCheck = validateCpcbPortalFileName(file.name, docBase);
-    if (!nameCheck.valid) {
-      showToast?.(
-        formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
-        'warning',
-        { duration: 12000 }
-      );
-    }
+    const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+    const portalFileName = registrationDocFileName(docBase, ext);
     const stored = await storeCompressedUpload(file, {
       destSubdir: 'processed_part_c',
-      fileName: nameCheck.suggestedName,
+      fileName: portalFileName,
     });
     if (!stored.success || !stored.filePath) {
       showToast?.(stored.message || 'Could not save PDF.', 'error');

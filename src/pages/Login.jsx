@@ -85,10 +85,10 @@ export default function LoginPage() {
         <div className="text-center mb-6 sm:mb-8">
           <img
             src={logo}
-            alt="PWP Logo"
+            alt="Importer Logo"
             className="mx-auto mb-3 sm:mb-4 h-auto w-44 sm:w-52 md:w-60 lg:w-64 max-w-[min(85vw,16rem)] object-contain"
           />
-          <h1 className="text-2xl sm:text-3xl font-bold text-white">PWP</h1>
+          <h1 className="text-2xl sm:text-3xl font-bold text-white">Importer</h1>
         </div>
 
         <div className="bg-white rounded-2xl shadow-2xl p-8">

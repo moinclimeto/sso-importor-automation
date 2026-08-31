@@ -57,6 +57,9 @@ function installToastWatchInPage() {
     '.alert-warning',
     '.alert-info',
     '.swal2-popup',
+    '[class*="toast"]',
+    '[class*="snackbar"]',
+    '[class*="notification"]',
   ].join(',');
 
   const seen = new Map();
@@ -158,6 +161,9 @@ export async function harvestPortalToasts(page) {
       '.alert-warning',
       '.alert-info',
       '.swal2-popup',
+      '[class*="toast"]',
+      '[class*="snackbar"]',
+      '[class*="notification"]',
     ].join(',');
     const nodes = Array.from(document.querySelectorAll(selector));
     const out = [];

@@ -27,7 +27,7 @@ export default class ErrorBoundary extends Component {
         <div className="max-w-lg w-full bg-white border border-red-100 rounded-2xl shadow-sm p-6 space-y-4">
           <div>
             <p className="text-xs font-semibold uppercase tracking-wide text-red-500">App error</p>
-            <h1 className="text-xl font-bold text-slate-900 mt-1">Climeto PWP hit an unexpected error</h1>
+            <h1 className="text-xl font-bold text-slate-900 mt-1">Climeto Importer hit an unexpected error</h1>
             <p className="text-sm text-slate-600 mt-2">
               The error was saved on this PC and sent to monitoring if the internet is available.
               You can reload and continue.

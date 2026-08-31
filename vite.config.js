@@ -14,7 +14,9 @@ export default defineConfig({
   plugins: [react(), stripCrossOrigin()],
   base: './',
   server: {
+    host: '127.0.0.1',
     port: 5180,
+    strictPort: true,
     watch: {
       ignored: ['**/data/**', '**/electron/**', '**/release/**', '**/node_modules/**'],
     },

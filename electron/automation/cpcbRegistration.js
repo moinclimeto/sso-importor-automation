@@ -1,4 +1,4 @@
-import { chromium, withPlaywrightLaunchOptions } from './playwrightRuntime.js';
+import { chromium, formatPlaywrightBrowserError, withPlaywrightLaunchOptions } from './playwrightRuntime.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -43,6 +43,60 @@ let regContext = null;
 let regPage = null;
 let regMobile = null;
 let regPayload = null;
+let lastCompaniesApiError = null;
+
+function resetCompaniesApiError() {
+  lastCompaniesApiError = null;
+}
+
+function recordCompaniesApiError(message, errorCode, status) {
+  const text = String(message || '').trim();
+  if (!text) return;
+  lastCompaniesApiError = {
+    message: text,
+    errorCode: errorCode || undefined,
+    status: Number(status) || undefined,
+    at: Date.now(),
+  };
+}
+
+function getRecentCompaniesApiError(maxAgeMs = 120000) {
+  if (!lastCompaniesApiError) return null;
+  if (Date.now() - lastCompaniesApiError.at > maxAgeMs) return null;
+  return lastCompaniesApiError;
+}
+
+function attachCompaniesApiWatcher(page) {
+  if (!page || page.__companiesApiWatcherAttached) return;
+  page.__companiesApiWatcherAttached = true;
+
+  page.on('response', async (response) => {
+    try {
+      const url = response.url();
+      if (!url.includes('/companies') || response.request().method() !== 'POST') return;
+      const status = response.status();
+      if (status < 400) {
+        if (status >= 200 && status < 300) lastCompaniesApiError = null;
+        return;
+      }
+      const body = await response.json().catch(() => ({}));
+      const evaluated = evaluateCompaniesApiResponse(body, status);
+      if (!evaluated.isRegistrationAllowed && evaluated.message) {
+        recordCompaniesApiError(evaluated.message, evaluated.errorCode, status);
+      }
+    } catch {
+      /* ignore */
+    }
+  });
+}
+
+function attachCompaniesApiWatcherToContext(context) {
+  if (!context || context.__companiesApiWatcherAttached) return;
+  context.__companiesApiWatcherAttached = true;
+  context.on('page', (page) => attachCompaniesApiWatcher(page));
+  const pages = typeof context.pages === 'function' ? context.pages() : [];
+  for (const page of pages) attachCompaniesApiWatcher(page);
+}
 
 function buildRegistrationDbPayload(ceprId, screenshotPath) {
   const data = regPayload || {};
@@ -778,17 +832,42 @@ async function waitForSupportingDocStep(page, onLog) {
   if (onLog) onLog('Supporting Documents tab active');
 }
 
-async function resolveCompaniesSubmitFailure(page, companiesResponse) {
+async function resolveCompaniesSubmitFailure(page, companiesResponse, onLog) {
+  if (companiesResponse && companiesResponse.status() >= 400) {
+    await page.waitForTimeout(500);
+  }
+
+  const cachedBeforeParse = getRecentCompaniesApiError();
+  if (cachedBeforeParse?.message) {
+    logPortalFeedback(onLog, cachedBeforeParse.message, 'error');
+    return cachedBeforeParse.message;
+  }
+
   if (companiesResponse) {
     try {
       const body = await companiesResponse.json();
       const evaluated = evaluateCompaniesApiResponse(body, companiesResponse.status());
-      if (!evaluated.isRegistrationAllowed) return evaluated.message;
+      if (!evaluated.isRegistrationAllowed && evaluated.message) {
+        recordCompaniesApiError(evaluated.message, evaluated.errorCode, companiesResponse.status());
+        logPortalFeedback(onLog, evaluated.message, 'error');
+        return evaluated.message;
+      }
     } catch {
-      /* fall through to toast check */
+      const cachedAfterParse = getRecentCompaniesApiError();
+      if (cachedAfterParse?.message) {
+        logPortalFeedback(onLog, cachedAfterParse.message, 'error');
+        return cachedAfterParse.message;
+      }
     }
   }
-  return checkPortalError(page);
+
+  await page.waitForTimeout(500);
+  const toastErr = await checkPortalError(page);
+  if (toastErr) {
+    logPortalFeedback(onLog, toastErr, 'error');
+    return toastErr;
+  }
+  return null;
 }
 
 async function clickGeneralInfoContinue(page, onLog) {
@@ -830,7 +909,7 @@ async function clickGeneralInfoContinue(page, onLog) {
       if (!(await btn.isEnabled().catch(() => false))) continue;
 
       const companiesResponsePromise = page.waitForResponse(
-        (res) => res.url().includes('/api/v1/companies') && res.request().method() === 'POST',
+        (res) => res.url().includes('/companies') && res.request().method() === 'POST',
         { timeout: 20000 }
       ).catch(() => null);
 
@@ -838,7 +917,7 @@ async function clickGeneralInfoContinue(page, onLog) {
       await waitForPortalBusy(page);
 
       const companiesResponse = await companiesResponsePromise;
-      const submitFailure = await resolveCompaniesSubmitFailure(page, companiesResponse);
+      const submitFailure = await resolveCompaniesSubmitFailure(page, companiesResponse, onLog);
       if (submitFailure) throw new Error(submitFailure);
 
       const continueAlerts = await collectPortalAlerts(page);
@@ -863,10 +942,10 @@ async function clickGeneralInfoContinue(page, onLog) {
       await page.locator('form').first().evaluate((form) => form.requestSubmit()).catch(() => {});
 
       const retryCompaniesResponse = await page.waitForResponse(
-        (res) => res.url().includes('/api/v1/companies') && res.request().method() === 'POST',
+        (res) => res.url().includes('/companies') && res.request().method() === 'POST',
         { timeout: 10000 }
       ).catch(() => null);
-      const retryFailure = await resolveCompaniesSubmitFailure(page, retryCompaniesResponse);
+      const retryFailure = await resolveCompaniesSubmitFailure(page, retryCompaniesResponse, onLog);
       if (retryFailure) throw new Error(retryFailure);
 
       await page.waitForTimeout(1500);
@@ -887,7 +966,11 @@ async function clickGeneralInfoContinue(page, onLog) {
     }
   }
 
-  throw new Error('Could not submit General Information — check required fields on portal');
+  throw new Error(
+    getRecentCompaniesApiError()?.message
+    || (await checkPortalError(page).catch(() => null))
+    || 'Could not submit General Information — check required fields on portal',
+  );
 }
 
 async function clickSupportingDocContinue(page, onLog) {
@@ -1150,7 +1233,7 @@ function isFailurePortalMessage(text) {
   if (isSuccessPortalMessage(t) && !/invalid|incorrect|failed|something went wrong|cancelled|canceled/i.test(t)) {
     return false;
   }
-  return /something went wrong|please try again|try again after|failed|invalid otp|incorrect otp|unable to|not valid|invalid pan|invalid gst|cancelled|canceled|inactive|suspended|already exists|conflict/i.test(t);
+  return /something went wrong|please try again|try again after|failed|invalid otp|incorrect otp|unable to|not valid|invalid pan|invalid gst|cancelled|canceled|inactive|suspended|already exists|is already exists|conflict|authorised person|authorized person/i.test(t);
 }
 
 async function readPortalToastText(page) {
@@ -1163,6 +1246,10 @@ async function readAllPortalToastTexts(page) {
   const texts = [];
   const seen = new Set();
   const selectors = [
+    '.p-toast-message',
+    '.p-toast-detail',
+    '.p-toast-summary',
+    '.p-toast-message-content',
     '.toast-error',
     '.toast-success',
     '.toast-message',
@@ -1171,8 +1258,17 @@ async function readAllPortalToastTexts(page) {
     '.toast-container .toast',
     '[role="alert"]',
     '.alert-danger',
+    '.alert-warning',
+    '.swal2-html-container',
+    '.swal2-title',
     '.mat-mdc-snack-bar-label',
     '.mat-snack-bar-container',
+    '.p-error',
+    '.error-message',
+    '.text-danger',
+    '[class*="toast"]',
+    '[class*="snackbar"]',
+    '[class*="notification"]',
   ];
   for (const sel of selectors) {
     try {
@@ -1267,10 +1363,36 @@ async function checkPortalError(page) {
     for (const text of texts) {
       if (isFailurePortalMessage(text)) return text;
     }
+    const alerts = await collectPortalAlerts(page);
+    for (const text of alerts) {
+      if (isFailurePortalMessage(text)) return text;
+    }
     return null;
   } catch {
     return null;
   }
+}
+
+async function resolveAutomationError(page, err, onLog) {
+  const apiErr = getRecentCompaniesApiError();
+  if (apiErr?.message) {
+    logPortalFeedback(onLog, apiErr.message, 'error');
+    return apiErr.message;
+  }
+
+  const portalMsg = await checkPortalError(page).catch(() => null);
+  if (portalMsg) {
+    logPortalFeedback(onLog, portalMsg, 'error');
+    return portalMsg;
+  }
+
+  return simplifyAutomationError(err?.message);
+}
+
+function logPortalFeedback(onLog, message, type = 'error') {
+  const text = String(message || '').trim();
+  if (!text || !onLog) return;
+  onLog(type === 'error' ? text : text);
 }
 
 async function waitForGstVerifyOutcome(page, gstin, onLog) {
@@ -1360,6 +1482,100 @@ async function isOtpSectionVerified(page, otpFieldIndex) {
   return false;
 }
 
+function simplifyAutomationError(message) {
+  const text = String(message || '').trim();
+  if (!text) return 'Something went wrong. Please try again.';
+
+  if (/resend otp link not found/i.test(text)) {
+    return 'Resend OTP link not found on CPCB portal. Wait a moment and try again.';
+  }
+  if (/browser session not active/i.test(text)) {
+    return 'Browser session closed. Start registration again.';
+  }
+  if (/locator\.(click|fill)|timeout.*exceeded|call log:|element is not enabled/i.test(text)) {
+    if (/resend/i.test(text)) return 'Could not click Resend OTP. Please try again.';
+    if (/verify otp|incorrect otp|failed to verify/i.test(text)) return 'Incorrect OTP — please try again.';
+    return 'CPCB portal did not respond in time. Please try again.';
+  }
+
+  const firstLine = text.split('\n')[0].trim();
+  return firstLine.length > 120 ? `${firstLine.slice(0, 117)}...` : firstLine;
+}
+
+async function resolveOtpFieldIndex(page, kind = 'mobile') {
+  const otpInputs = page.getByPlaceholder(/Enter OTP/i);
+  const count = await otpInputs.count();
+  if (count === 0) throw new Error('OTP field not found on CPCB portal');
+  if (kind === 'email') return 0;
+  if (count === 1) return 0;
+  if (await isOtpSectionVerified(page, 0)) return Math.min(1, count - 1);
+  return count - 1;
+}
+
+/** Click the Resend OTP control beside a specific OTP field (email=0, mobile=1). */
+async function clickOtpResendLink(page, otpFieldIndex, onLog) {
+  const otpInputs = page.getByPlaceholder(/Enter OTP/i);
+  await otpInputs.first().waitFor({ state: 'visible', timeout: 15000 });
+  const count = await otpInputs.count();
+  const index = Math.min(Math.max(otpFieldIndex, 0), count - 1);
+  const otpInput = otpInputs.nth(index);
+  await otpInput.scrollIntoViewIfNeeded();
+  await page.waitForTimeout(300);
+
+  const tryClick = async (locator) => {
+    try {
+      if (!(await locator.isVisible({ timeout: 500 }))) return false;
+      await locator.scrollIntoViewIfNeeded();
+      try {
+        await locator.click({ timeout: 10000 });
+      } catch {
+        await locator.evaluate((el) => {
+          el.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        });
+      }
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  for (let level = 1; level <= 8; level += 1) {
+    let ancestor = otpInput;
+    for (let i = 0; i < level; i += 1) {
+      ancestor = ancestor.locator('xpath=..');
+    }
+
+    const localCandidates = [
+      ancestor.getByRole('link', { name: /Resend\s*OTP/i }).first(),
+      ancestor.locator('a').filter({ hasText: /Resend\s*OTP/i }).first(),
+      ancestor.locator('button, span, p, div').filter({ hasText: /^Resend\s*OTP$/i }).first(),
+      ancestor.getByText(/Resend\s*OTP/i).first(),
+    ];
+
+    for (const candidate of localCandidates) {
+      if (await tryClick(candidate)) {
+        if (onLog) onLog('Clicked Resend OTP on portal');
+        return;
+      }
+    }
+  }
+
+  const resendAll = page.locator('a, button, span, p').filter({ hasText: /Resend\s*OTP/i });
+  const resendCount = await resendAll.count();
+  const tryOrder = index > 0
+    ? [...Array(resendCount).keys()].reverse()
+    : [...Array(resendCount).keys()];
+
+  for (const i of tryOrder) {
+    if (await tryClick(resendAll.nth(i))) {
+      if (onLog) onLog('Clicked Resend OTP on portal');
+      return;
+    }
+  }
+
+  throw new Error('Resend OTP link not found on CPCB portal');
+}
+
 async function clickContinueButton(page, onLog) {
   if (onLog) onLog('Clicking Continue...');
   await page.waitForTimeout(1000);
@@ -1393,7 +1609,11 @@ async function clickContinueButton(page, onLog) {
     }
   }
 
-  throw new Error('Could not click Continue button — ensure email and mobile OTP are verified');
+  throw new Error(
+    getRecentCompaniesApiError()?.message
+    || (await checkPortalError(page).catch(() => null))
+    || 'Could not click Continue button — ensure email and mobile OTP are verified',
+  );
 }
 
 /** Fill OTP field and click the Verify button in the same row/section. */
@@ -1426,8 +1646,15 @@ async function fillOtpAndVerify(page, otp, otpFieldIndex = 0, onLog) {
   await otpInput.scrollIntoViewIfNeeded();
   const canType = await otpInput.isEnabled().catch(() => false);
   if (!canType) {
-    if (onLog) onLog(`${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP input is disabled — treating as verified`);
-    return;
+    if (await isOtpSectionVerified(page, otpFieldIndex)) {
+      if (onLog) {
+        onLog(`${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP already verified — skipping`);
+      }
+      return;
+    }
+    throw new Error(
+      `${otpFieldIndex === 0 ? 'Email' : 'Mobile'} OTP field is locked. Wait for the CPCB resend timer, then try again.`,
+    );
   }
   await otpInput.click({ timeout: 8000 });
   await otpInput.fill('');
@@ -1594,6 +1821,9 @@ export async function startRegistrationFlow(data, onLog) {
     }));
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
+    resetCompaniesApiError();
+    attachCompaniesApiWatcherToContext(regContext);
+    attachCompaniesApiWatcher(regPage);
     await prepareCpcbBrowserPage(regPage);
     attachCaptchaNetworkListenerToContext(regContext);
     const { attachPortalToastWatcherToContext } = await import('./portalToastWatcher.js');
@@ -1671,12 +1901,13 @@ export async function startRegistrationFlow(data, onLog) {
     return { success: true, step: 'WAITING_EMAIL_OTP' };
     
   } catch (err) {
-    if (onLog) onLog('Error: ' + err.message);
+    const message = formatPlaywrightBrowserError(err);
+    if (onLog) onLog('Error: ' + message);
     if (regBrowser) {
       await regBrowser.close();
       regBrowser = null;
     }
-    return { success: false, error: err.message };
+    return { success: false, error: message };
   }
 }
 
@@ -1703,12 +1934,14 @@ export async function submitEmailOtp(otp, mobile, onLog) {
 export async function resendEmailOtp(onLog) {
   try {
     if (!regPage) throw new Error('Browser session not active');
-    if (onLog) onLog('Clicking Resend Email OTP...');
-    await regPage.getByText('Resend OTP').first().click();
+    if (onLog) onLog('Resending Email OTP...');
+    const emailIndex = await resolveOtpFieldIndex(regPage, 'email');
+    await clickOtpResendLink(regPage, emailIndex, onLog);
     await regPage.waitForTimeout(2000);
+    if (onLog) onLog('Email OTP resent — check your inbox');
     return { success: true };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: await resolveAutomationError(regPage, err, onLog) };
   }
 }
 
@@ -1817,20 +2050,35 @@ export async function submitMobileOtp(payload, onLog) {
 
     const mobile = payload?.mobile;
     const otp = payload?.otp;
+    const verifyOnly = payload?.verifyOnly === true;
+    const skipOtpVerify = payload?.skipOtpVerify === true;
     const data = withRegistrationDummyFallback({ ...regPayload, ...payload });
 
-    const mobileLocator = regPage.getByPlaceholder(/Enter Mobile Number/i);
-    const mobileVal = (await mobileLocator.inputValue().catch(() => '')).replace(/\D/g, '');
+    if (!skipOtpVerify) {
+      const mobileLocator = regPage.getByPlaceholder(/Enter Mobile Number/i);
+      const mobileVal = (await mobileLocator.inputValue().catch(() => '')).replace(/\D/g, '');
 
-    if (!mobileVal || mobileVal.length < 10) {
-      await requestMobileOtp(regPage, mobile || regMobile, onLog);
+      if (!mobileVal || mobileVal.length < 10) {
+        await requestMobileOtp(regPage, mobile || regMobile, onLog);
+      }
+
+      if (onLog) onLog('Entering Mobile OTP...');
+      const mobileIndex = await resolveOtpFieldIndex(regPage, 'mobile');
+      await fillOtpAndVerify(regPage, otp, mobileIndex, onLog);
+
+      const portalErr = await checkPortalError(regPage);
+      if (portalErr) throw new Error(portalErr);
+
+      if (verifyOnly) {
+        if (onLog) onLog('Mobile OTP verified on portal');
+        return { success: true, step: 'MOBILE_OTP_VERIFIED' };
+      }
+    } else {
+      const mobileIndex = await resolveOtpFieldIndex(regPage, 'mobile');
+      if (!(await isOtpSectionVerified(regPage, mobileIndex))) {
+        throw new Error('Mobile OTP is not verified on CPCB portal yet');
+      }
     }
-
-    if (onLog) onLog('Entering Mobile OTP...');
-    await fillOtpAndVerify(regPage, otp, 1, onLog);
-
-    const portalErr = await checkPortalError(regPage);
-    if (portalErr) throw new Error(portalErr);
 
     await clickContinueButton(regPage, onLog);
 
@@ -1853,9 +2101,12 @@ export async function submitMobileOtp(payload, onLog) {
         generalInfoError = null;
         break;
       } catch (err) {
-        if (isDuplicateAuthPersonMessage(err.message)) throw err;
-        generalInfoError = err.message;
-        if (onLog) onLog(`General Information attempt ${attempt}/3 failed: ${err.message}. Re-filling required fields.`);
+        const apiErr = getRecentCompaniesApiError();
+        const errMsg = apiErr?.message || err.message;
+        if (isDuplicateAuthPersonMessage(errMsg)) throw new Error(errMsg);
+        generalInfoError = errMsg;
+        if (onLog) onLog(errMsg);
+        await regPage.waitForTimeout(800);
         await dismissPortalAlerts(regPage, onLog);
         await regPage.waitForTimeout(1500);
       }
@@ -1887,6 +2138,24 @@ export async function submitMobileOtp(payload, onLog) {
 
     const warning = [generalInfoError, supportingDocError].filter(Boolean).join(' | ') || undefined;
 
+    if (generalInfoError && !submittedGeneral) {
+      logPortalFeedback(onLog, generalInfoError, 'error');
+      return {
+        success: false,
+        error: generalInfoError,
+        errorCode: isDuplicateAuthPersonMessage(generalInfoError) ? 'DUPLICATE_AUTH_PERSON' : undefined,
+      };
+    }
+
+    if (warning && isDuplicateAuthPersonMessage(warning)) {
+      logPortalFeedback(onLog, warning, 'error');
+      return {
+        success: false,
+        error: warning,
+        errorCode: 'DUPLICATE_AUTH_PERSON',
+      };
+    }
+
     return {
       success: true,
       step,
@@ -1895,11 +2164,13 @@ export async function submitMobileOtp(payload, onLog) {
       warning,
     };
   } catch (err) {
-    if (onLog) onLog('Mobile OTP error: ' + err.message);
+    const resolved = await resolveAutomationError(regPage, err, onLog);
+    const apiErr = getRecentCompaniesApiError();
     return {
       success: false,
-      error: err.message,
-      errorCode: isDuplicateAuthPersonMessage(err.message) ? 'DUPLICATE_AUTH_PERSON' : undefined,
+      error: resolved,
+      errorCode: apiErr?.errorCode
+        || (isDuplicateAuthPersonMessage(resolved) ? 'DUPLICATE_AUTH_PERSON' : undefined),
     };
   }
 }
@@ -1909,24 +2180,19 @@ export async function resendMobileOtp(onLog) {
     if (!regPage) throw new Error('Browser session not active');
     if (onLog) onLog('Resending Mobile OTP...');
 
-    if (regMobile) {
-      await requestMobileOtp(regPage, regMobile, onLog);
-      return { success: true };
+    const mobileIndex = await resolveOtpFieldIndex(regPage, 'mobile');
+    await clickOtpResendLink(regPage, mobileIndex, onLog);
+    await regPage.waitForTimeout(1500);
+
+    const outcome = await waitForPortalOutcome(regPage, { timeoutMs: 8000 }).catch(() => ({}));
+    if (outcome?.error && !/sent|resent|success|otp/i.test(outcome.error)) {
+      throw new Error(outcome.error);
     }
 
-    const resendBtns = regPage.getByText(/^Resend OTP$/i);
-    const count = await resendBtns.count();
-    if (count > 1) {
-      await resendBtns.nth(count - 1).click();
-    } else if (count === 1) {
-      await resendBtns.first().click();
-    } else {
-      throw new Error('Resend OTP not found for mobile');
-    }
-    await regPage.waitForTimeout(2000);
+    if (onLog) onLog('Mobile OTP resent — check your phone');
     return { success: true };
   } catch (err) {
-    return { success: false, error: err.message };
+    return { success: false, error: await resolveAutomationError(regPage, err, onLog) };
   }
 }
 

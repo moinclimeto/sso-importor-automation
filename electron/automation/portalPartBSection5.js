@@ -437,7 +437,7 @@ async function clickAddNewRow(section, page, onLog, sectionName) {
   const fallback = section.locator('button.add-button, .table-actions button').last();
   if (await fallback.isVisible({ timeout: 1500 }).catch(() => false)) {
     await fallback.click({ timeout: 3000 });
-    return true;
+      return true;
   }
 
   if (onLog) onLog(`${sectionName}: Add New Row button not found.`);
@@ -584,8 +584,8 @@ async function submitEntryModal(page, modal, onLog) {
     await page.waitForTimeout(900);
     if (await waitForEntryModalClosed(page, 8000)) {
       if (onLog) onLog('Entry modal submitted and closed (DOM click).');
-      return true;
-    }
+  return true;
+}
 
     const errors = await nonRegisteredFormScope(page).locator('.modal-error').allTextContents().catch(() => []);
     const soldErrors = await soldFormScope(page).locator('.modal-error').allTextContents().catch(() => []);
@@ -963,11 +963,11 @@ export async function fillPartBSection5dRows(page, rows = [], onLog) {
 
   const section = sectionBlock(page, /5\s*d\).*Sold to UnRegistered PIBOs/i);
   if (!(await section.isVisible({ timeout: 6000 }).catch(() => false))) {
-    const heading = page.getByText(/Sold to UnRegistered PIBOs/i).first();
+  const heading = page.getByText(/Sold to UnRegistered PIBOs/i).first();
     if (!(await heading.isVisible({ timeout: 3000 }).catch(() => false))) {
-      if (onLog) onLog('Section 5d heading not found on portal.');
-      return false;
-    }
+    if (onLog) onLog('Section 5d heading not found on portal.');
+    return false;
+  }
     await heading.scrollIntoViewIfNeeded().catch(() => {});
   }
 
@@ -986,8 +986,8 @@ export async function fillPartBSection5dRows(page, rows = [], onLog) {
       if (!clicked) continue;
 
       await page.waitForTimeout(1200);
-      const ok = await fillSec5dEntryModal(page, row, onLog);
-      if (ok) filled += 1;
+    const ok = await fillSec5dEntryModal(page, row, onLog);
+    if (ok) filled += 1;
     } catch (err) {
       if (onLog) onLog(`Section 5d row failed: ${err.message}`);
       await forceCloseAllEntryModals(page, onLog).catch(() => {});

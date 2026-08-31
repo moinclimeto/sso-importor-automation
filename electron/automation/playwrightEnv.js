@@ -27,18 +27,7 @@ function dirHasBrowser(dir) {
   }
 }
 
-export function getPlaywrightBrowsersPath() {
-  if (process.env.PLAYWRIGHT_BROWSERS_PATH && dirHasBrowser(process.env.PLAYWRIGHT_BROWSERS_PATH)) {
-    return process.env.PLAYWRIGHT_BROWSERS_PATH;
-  }
-  if (isPackaged() && process.resourcesPath) {
-    return path.join(process.resourcesPath, 'playwright-browsers');
-  }
-  if (dirHasBrowser(VENDOR_BROWSERS)) return VENDOR_BROWSERS;
-  return '';
-}
-
-export function findBundledChromiumExecutable(root = getPlaywrightBrowsersPath()) {
+export function findBundledChromiumExecutable(root = '') {
   if (!root || !fs.existsSync(root)) return '';
   const wanted = new Set(['chrome.exe', 'chrome', 'headless_shell.exe', 'headless_shell']);
   const walk = (dir, depth = 0) => {
@@ -60,6 +49,44 @@ export function findBundledChromiumExecutable(root = getPlaywrightBrowsersPath()
     return '';
   };
   return walk(root);
+}
+
+export function getPlaywrightBrowsersPath() {
+  const candidates = [];
+
+  if (dirHasBrowser(VENDOR_BROWSERS)) candidates.push(VENDOR_BROWSERS);
+  if (isPackaged() && process.resourcesPath) {
+    candidates.push(path.join(process.resourcesPath, 'playwright-browsers'));
+  }
+  if (process.env.LOCALAPPDATA) {
+    candidates.push(path.join(process.env.LOCALAPPDATA, 'ms-playwright'));
+  }
+  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
+    candidates.push(process.env.PLAYWRIGHT_BROWSERS_PATH);
+  }
+
+  const seen = new Set();
+  for (const dir of candidates) {
+    const key = path.resolve(dir).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    if (findBundledChromiumExecutable(dir)) return dir;
+  }
+
+  return '';
+}
+
+export function formatPlaywrightBrowserError(err) {
+  const raw = err?.message || String(err || 'Unknown Playwright error');
+  if (!/executable doesn't exist|browser.*not found|failed to launch/i.test(raw)) {
+    return raw;
+  }
+
+  return [
+    'Automation browser (Chromium) is not installed on this PC.',
+    'From the project folder run: npm run setup:playwright',
+    'Then restart the app and try Start Registration again.',
+  ].join(' ');
 }
 
 const browsersPath = getPlaywrightBrowsersPath();

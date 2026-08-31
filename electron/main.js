@@ -35,6 +35,30 @@ function showStartupError(title, err) {
   }
 }
 
+const DEV_SERVER_URLS = [
+  'http://127.0.0.1:5180/#/login',
+  'http://localhost:5180/#/login',
+];
+
+function isDevMode() {
+  return !app.isPackaged || process.env.NODE_ENV === 'development';
+}
+
+async function loadDevUi(win) {
+  let lastError = null;
+  for (const url of DEV_SERVER_URLS) {
+    try {
+      await win.loadURL(url);
+      appendStartupLog(`loaded dev UI ${url}`);
+      return;
+    } catch (err) {
+      lastError = err;
+      appendStartupLog(`dev load failed ${url}: ${err?.message || err}`);
+    }
+  }
+  throw lastError || new Error('Vite dev server not reachable on port 5180');
+}
+
 function createWindow() {
   const icon = nativeImage.createFromPath(APP_ICON_PATH);
   const win = new BrowserWindow({
@@ -50,7 +74,7 @@ function createWindow() {
     },
     titleBarStyle: 'default',
     show: true,
-    title: 'Climeto PWP',
+    title: 'PIBO Importer',
   });
 
   const reveal = () => {
@@ -83,17 +107,26 @@ function createWindow() {
 
   attachWindowMonitoring(win);
 
+  if (isDevMode()) {
+    win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
+      console.log(`[renderer:${level}] ${message} (${sourceId}:${line})`);
+    });
+  }
+
   win.webContents.on('did-fail-load', (_e, errorCode, errorDescription, validatedURL) => {
     if (errorCode === -3) return;
     appendStartupLog(`did-fail-load ${errorCode} ${errorDescription} ${validatedURL || ''}`);
     showStartupError(
-      'Climeto PWP could not load',
+      'Climeto Importer could not load',
       new Error(`${errorDescription || 'Failed to load UI'} (${errorCode})`),
     );
   });
 
-  if (process.env.NODE_ENV === 'development') {
-    win.loadURL('http://localhost:5180');
+  if (isDevMode()) {
+    loadDevUi(win).catch((err) => {
+      captureException(err, { type: 'startup-dev-ui', process: 'main' });
+      showStartupError('Climeto Importer could not load dev UI', err);
+    });
     return win;
   }
 
@@ -101,7 +134,7 @@ function createWindow() {
   if (!fs.existsSync(indexHtml)) {
     const missing = new Error(`UI file not found:\n${indexHtml}`);
     captureException(missing, { type: 'startup-missing-ui', process: 'main' });
-    showStartupError('Climeto PWP could not start', missing);
+    showStartupError('Climeto Importer could not start', missing);
     return win;
   }
   win.loadFile(indexHtml);
@@ -135,14 +168,14 @@ async function startApp() {
     appendStartupLog('database ready');
   } catch (err) {
     captureException(err, { type: 'startup-database', process: 'main' });
-    showStartupError('Climeto PWP database error', err);
+    showStartupError('Climeto Importer database error', err);
   }
 
   try {
     registerAuthHandlers();
   } catch (err) {
     captureException(err, { type: 'startup-auth', process: 'main' });
-    showStartupError('Climeto PWP could not register login', err);
+    showStartupError('Climeto Importer could not register login', err);
   }
 
   try {
@@ -151,13 +184,13 @@ async function startApp() {
     appendStartupLog('ipc handlers ready');
   } catch (err) {
     captureException(err, { type: 'startup-ipc', process: 'main' });
-    showStartupError('Climeto PWP background services failed', err);
+    showStartupError('Climeto Importer background services failed', err);
   }
 }
 
 app.whenReady().then(startApp).catch((err) => {
   captureException(err, { type: 'startup-fatal', process: 'main' });
-  showStartupError('Climeto PWP failed to start', err);
+  showStartupError('Climeto Importer failed to start', err);
 });
 
 app.on('window-all-closed', () => {
