@@ -1,7 +1,8 @@
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import {
   buildPartBSection4FromRecords,
   partBSection4HasData,
+  remapLegacyPartBSection4Years,
   syncPartBSection4Structure,
 } from '../../shared/partBSection4.js';
 import { resolveCompanyIdFromGstin } from './registrationPlasticConsumed.js';
@@ -15,7 +16,7 @@ export async function fetchComputedPartBSection4({
   if (!operatingStates?.length) {
     return {
       groups: [],
-      reportingYears: getImporterReportingFinancialYears(),
+      reportingYears: getCpcbPortalPartA3cYears(),
       hasData: false,
     };
   }
@@ -27,7 +28,7 @@ export async function fetchComputedPartBSection4({
   ]);
 
   const companyId = resolveCompanyIdFromGstin(companies, gstin);
-  const reportingYears = getImporterReportingFinancialYears();
+  const reportingYears = getCpcbPortalPartA3cYears();
   const groups = buildPartBSection4FromRecords({
     operatingStates,
     purchases: purchases || [],
@@ -46,9 +47,11 @@ export async function fetchComputedPartBSection4({
 
 export function shouldHydratePartBSection4(existing = [], operatingStates = []) {
   if (!operatingStates.length) return false;
-  const years = getImporterReportingFinancialYears();
+  const years = getCpcbPortalPartA3cYears();
   const expectedCount = operatingStates.length * years.length;
   if ((existing || []).length !== expectedCount) return true;
+  const hasOutOfScopeYear = (existing || []).some((group) => !years.includes(group.year));
+  if (hasOutOfScopeYear) return true;
   return !partBSection4HasData(existing);
 }
 
@@ -58,11 +61,13 @@ export {
 } from '../../shared/partBSection4.js';
 
 export function mergePartBSection4ForOperatingStates(existing = [], computed = [], operatingStates = []) {
-  const reportingYears = getImporterReportingFinancialYears();
+  const reportingYears = getCpcbPortalPartA3cYears();
   return syncPartBSection4Structure({
     operatingStates,
     reportingYears,
-    existing,
+    existing: remapLegacyPartBSection4Years(existing),
     computed,
   });
 }
+
+export { prunePartBSection4ForPortal } from '../../shared/partBSection4.js';

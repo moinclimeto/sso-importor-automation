@@ -46,17 +46,21 @@ import RegistrationAutomationModal, {
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
+import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
+import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { prunePartBSection4ForPortal } from '../utils/registrationPartBSection4.js';
 import {
-  validateSection4AgainstPlasticConsumed,
-  formatSection4PartAIssue,
-} from '../utils/registrationPartBSection4.js';
+  getRegisterApplicationBlockers,
+  navigateToRegisterBlockerSection,
+  summarizeRegisterBlockers,
+} from '../utils/registrationApplicationReadiness.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, AlertCircle, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
 
 const inputClass =
@@ -285,6 +289,13 @@ export default function CpcbRegistrationPage() {
         district: form.generalInfo.district || parsedAddr.district || prev.district,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
+        plasticConsumed: prunePlasticConsumedForPortal(
+          form.generalInfo.plasticConsumed || prev.plasticConsumed || {},
+        ),
+        partBSection4: prunePartBSection4ForPortal(
+          form.generalInfo.partBSection4 || prev.partBSection4 || [],
+          form.generalInfo.operatingStates || prev.operatingStates || [],
+        ),
       }));
     } 
 
@@ -492,10 +503,14 @@ export default function CpcbRegistrationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
-  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
   const showHistoricalEprSections = useMemo(
     () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
     [generalInfo.yearOfCommencement],
+  );
+
+  const reportingFys = useMemo(
+    () => (showHistoricalEprSections ? getCpcbPortalPartA3cYears() : []),
+    [showHistoricalEprSections],
   );
 
   useEffect(() => {
@@ -512,7 +527,10 @@ export default function CpcbRegistrationPage() {
 
         setGeneralInfo((prev) => {
           if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
-          return { ...prev, plasticConsumed: result.plasticConsumed };
+          return {
+            ...prev,
+            plasticConsumed: prunePlasticConsumedForPortal(result.plasticConsumed),
+          };
         });
         setPlasticConsumedSource(result.sourceLabel || '');
       } catch (err) {
@@ -524,8 +542,24 @@ export default function CpcbRegistrationPage() {
   }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
 
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
-    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
-  }, []);
+    const pruned = prunePlasticConsumedForPortal(nextPlasticConsumed);
+    setGeneralInfo((prev) => {
+      const next = { ...prev, plasticConsumed: pruned };
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo: next,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          }),
+        ).catch(console.error);
+      }
+      return next;
+    });
+  }, [savedRegistration, email, mobile, autoData, savedCeprId]);
 
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
@@ -1081,87 +1115,20 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleNewApplication = async () => {
-    if (!savedCeprId) {
-      showToast('CEPR ID not found — complete registration first.', 'error');
-      return;
-    }
+    const registerBlockers = getRegisterApplicationBlockers({
+      savedCeprId,
+      generalInfo,
+      autoData,
+      reportingYears: reportingFys,
+    });
 
-    // Strict Validation for Automation
-    const requiredGeneral = [
-      { key: 'typeOfBusiness', label: 'Type of Business' },
-      { key: 'typeOfCompany', label: 'Type of Company' },
-      { key: 'registeredAddressLine1', label: 'Registered Address' },
-      { key: 'yearOfCommencement', label: 'Year of Commencement' },
-      { key: 'stateUt', label: 'State/UT' },
-      { key: 'complianceStatus', label: 'Compliance Status (3d)' },
-      { key: 'thicknessOfPlastic', label: 'Thickness of Plastic (3e)' },
-      { key: 'partCCoveringLetter', label: 'Part C: Covering Letter' },
-      { key: 'partCSignature', label: 'Part C: Signature' },
-      { key: 'partCAuditedStatement', label: 'Part C: Audited Statement' },
-    ];
-
-    const missing = [];
-    for (const req of requiredGeneral) {
-      if (!generalInfo[req.key]) missing.push(req.label);
-    }
-    
-    if (!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) {
-      missing.push('Operating States (minimum 1 required)');
-    } else if (generalInfo.operatingStates.length === 2) {
-      missing.push('Operating States (Cannot select exactly 2 states. Select 1, or 3+ states)');
-    }
-    
-    if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
-      missing.push('Type of Company Document (MSME/Declaration)');
-    }
-    if (!autoData.detailsOfProductsPath) {
-      missing.push('Details (Type & Quantity) of products produced/marketed');
-    }
-    if (!autoData.representativePicturePath) {
-      missing.push('Representative picture of Plastic Packaging');
-    }
-
-    if (!generalInfo.isSameAsRegisteredAddress) {
-      if (!generalInfo.plantAddress) missing.push('Plant/Unit Address');
-      if (!generalInfo.unitGst) missing.push('Unit GST');
-      if (!autoData.unitGstDoc) missing.push('Unit GST Document');
-    }
-
-    if (missing.length > 0) {
-      const partAHints = [
-        'Type of Business',
-        'Type of Company',
-        'State/UT',
-        'Operating States',
-        'Year of Commencement',
-        'Compliance Status',
-        'Thickness',
-        'Details (Type & Quantity) of products produced/marketed',
-        'Representative picture of Plastic Packaging',
-        'Type of Company Document',
-      ];
-      if (missing.some((label) => partAHints.some((hint) => label.includes(hint)))) {
-        setWizardStep('partA');
-      } else if (missing.some((label) => label.startsWith('Part C'))) {
-        setWizardStep('partC');
-      }
-      showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
-      return;
-    }
-
-    const section4Issues = showHistoricalEprSections
-      ? validateSection4AgainstPlasticConsumed(
-        generalInfo.partBSection4 || [],
-        generalInfo.plasticConsumed || {},
-        getImporterReportingFinancialYears(),
-      )
-      : [];
-    if (section4Issues.length) {
-      setWizardStep('partB');
-      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
-      if (section4Issues.length > 1) {
+    if (registerBlockers.length > 0) {
+      navigateToRegisterBlockerSection(registerBlockers, { setWizardStep });
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
+      const section4Count = registerBlockers.filter((b) => b.section === 'partB').length;
+      if (section4Count > 1) {
         showToast(
-          `${section4Issues.length} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
+          `${section4Count} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
           'warning',
           { duration: 12000 },
         );
@@ -1234,6 +1201,11 @@ export default function CpcbRegistrationPage() {
       } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
         completeAutomationModal('Application onboarding completed successfully!');
         showToast('Application onboarding completed successfully!', 'success');
+      } else if (loginRes.step === 'APPLICATION_FILL_FAILED' || (!loginRes.success && loginRes.error)) {
+        const err = loginRes.error || 'Application form fill failed';
+        failAutomationModal(err);
+        showToast(err, 'error', { duration: 14000 });
+        if (/Section 3c/i.test(err)) setWizardStep('partA');
       } else {
         const err = loginRes.error || 'Could not start login flow';
         failAutomationModal(err);
@@ -1335,6 +1307,14 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleLoginOnboardingResult = (res) => {
+    if (!res.success && (res.step === 'APPLICATION_FILL_FAILED' || res.error)) {
+      const err = res.error || 'Application form fill failed';
+      failAutomationModal(err);
+      showToast(err, 'error', { duration: 14000 });
+      if (/Section 3c/i.test(err)) setWizardStep('partA');
+      return true;
+    }
+
     if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
       const msg = `Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`;
       completeAutomationModal(msg);
@@ -1802,6 +1782,17 @@ export default function CpcbRegistrationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartALoginCredentials
+                    ceprId={savedCeprId}
+                    password={generalInfo.password || ''}
+                    onPasswordChange={(value) =>
+                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                    }
+                    showPassword={showPassword}
+                    onToggleShowPassword={() => setShowPassword((v) => !v)}
+                    onBlur={() => persistRegistrationForm().catch(console.error)}
+                    inputClass={inputClass}
+                  />
                   <RegistrationPartACompanyProfile
                     generalInfo={generalInfo}
                     onChange={handleGeneralChange}

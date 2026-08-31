@@ -1117,15 +1117,25 @@ async function startApplicationOnboarding(page, onLog) {
         }
       }
 
-      if (onLog) onLog('Setting Year of Commencement to 2026...');
-      const yearSelect = page.getByText(/2\s*d\).*Year of Commencement/i).first()
-        .locator('xpath=following::select[1]');
-      if (await yearSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
-        await yearSelect.selectOption({ value: '2026' }).catch(() => yearSelect.selectOption({ label: '2026' })).catch(() => {});
+      if (yearOfCommencement) {
+        if (onLog) onLog(`Setting Year of Commencement to ${yearOfCommencement}...`);
+        const yearSelect = page.getByText(/2\s*d\).*Year of Commencement/i).first()
+          .locator('xpath=following::select[1]');
+        if (await yearSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
+          await yearSelect.selectOption({ value: String(yearOfCommencement) })
+            .catch(() => yearSelect.selectOption({ label: String(yearOfCommencement) }))
+            .catch(() => {});
+        }
       }
       
       if (onLog) onLog('Filling New Application Part A / B / C...');
-      await fillNewApplicationFlow(page, { ...mergedGeneralInfo, ...mergedAutoData }, onLog);
+      await fillNewApplicationFlow(page, {
+        ...mergedGeneralInfo,
+        ...mergedAutoData,
+        plasticConsumed: mergedGeneralInfo.plasticConsumed,
+        partBSection4: mergedGeneralInfo.partBSection4,
+        partBTransactions: mergedGeneralInfo.partBTransactions,
+      }, onLog);
     } catch (err) {
       if (onLog) onLog('Form fill stopped: ' + err.message);
       return {
@@ -1208,6 +1218,20 @@ export async function startLoginFlow(payload, onLog) {
            };
          }
          
+         if (!onboardingResult?.success) {
+           const err = onboardingResult?.error || 'Application form fill failed';
+           if (onLog) onLog(`Application onboarding failed: ${err}`);
+           return {
+             success: false,
+             step: onboardingResult?.step || 'APPLICATION_FILL_FAILED',
+             url: onboardingResult?.url || page.url(),
+             authenticated: true,
+             error: err,
+             applicantType: onboardingResult?.applicantType,
+             subApplicantType: onboardingResult?.subApplicantType,
+           };
+         }
+
          if (onLog) {
            onLog(`Application onboarding complete — ${onboardingResult.applicantType} / ${onboardingResult.subApplicantType}`);
          }
@@ -1461,6 +1485,20 @@ export async function runApplicationOnboardingAfterLogin(onLog, options = {}) {
     }
 
     const url = onboardingResult?.url || page.url() || '';
+    if (!onboardingResult?.success) {
+      const err = onboardingResult?.error || 'Application form fill failed';
+      if (onLog) onLog(`Application onboarding failed: ${err}`);
+      return {
+        success: false,
+        step: onboardingResult?.step || 'APPLICATION_FILL_FAILED',
+        url,
+        authenticated: isAuthenticatedUrl(url),
+        error: err,
+        applicantType: onboardingResult?.applicantType,
+        subApplicantType: onboardingResult?.subApplicantType,
+      };
+    }
+
     if (onLog) {
       onLog(
         `Application onboarding complete — ${onboardingResult.applicantType} / ${onboardingResult.subApplicantType}`

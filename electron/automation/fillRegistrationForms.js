@@ -15,7 +15,7 @@ import {
 } from './portalErrorGuard.js';
 import {
   fillPlasticConsumedGrid,
-  resolvePlasticConsumedYears,
+  resolvePlasticConsumedYearsForPortal,
 } from './portalPlasticConsumed.js';
 import { fillPartBSection4Grid } from './portalPartBSection4.js';
 import { fillPartBSection5bRows, fillPartBSection5dRows, forceCloseAllEntryModals } from './portalPartBSection5.js';
@@ -24,8 +24,13 @@ import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../../shared/partBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { requiresHistoricalEprData, getCurrentFinancialYearStartYear } from '../../shared/commencementYearScope.js';
+import {
+  validatePlasticConsumed3cForPortal,
+  formatPlasticConsumed3cIssue,
+} from '../../shared/plasticConsumed3cValidation.js';
+import { alignPlasticConsumedToYears, prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
 
 const UPLOAD_LABEL_BASE_NAMES = {
@@ -102,9 +107,9 @@ export function normalizeApplicationData(raw = {}) {
     hasProductionFacility: src.hasProductionFacility || '',
     capitalInvested: src.capitalInvested || '',
     yearOfCommencement: src.yearOfCommencement || '2026',
-    plasticConsumed: src.plasticConsumed && typeof src.plasticConsumed === 'object'
-      ? src.plasticConsumed
-      : ZERO_PLASTIC,
+    plasticConsumed: prunePlasticConsumedForPortal(
+      src.plasticConsumed && typeof src.plasticConsumed === 'object' ? src.plasticConsumed : ZERO_PLASTIC,
+    ),
     complianceStatus: src.complianceStatus || '',
     thicknessOfPlastic: src.thicknessOfPlastic || '',
     isSameAsRegisteredAddress: src.isSameAsRegisteredAddress ?? true,
@@ -339,13 +344,14 @@ function partASection2StateField(page) {
   }).first();
 }
 
-async function fillVisibleInput(page, selectors, value, onLog, name) {
+async function fillVisibleInput(page, selectors, value, onLog, name, { required = false } = {}) {
   if (value === undefined || value === null || value === '') return false;
   const wanted = String(value).trim();
   for (const sel of selectors) {
     const loc = page.locator(`${sel}:visible`).first();
     if (!(await loc.isVisible({ timeout: 1500 }).catch(() => false))) continue;
     if (onLog) onLog(`Filling ${name}: ${wanted}`);
+    let lastActual = '';
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await loc.scrollIntoViewIfNeeded().catch(() => {});
       await loc.click({ force: true }).catch(() => {});
@@ -356,14 +362,39 @@ async function fillVisibleInput(page, selectors, value, onLog, name) {
       await loc.dispatchEvent('input').catch(() => {});
       await loc.dispatchEvent('change').catch(() => {});
       await loc.blur().catch(() => {});
-      const actual = String(await loc.inputValue().catch(() => '')).trim().toUpperCase();
-      if (actual === wanted.toUpperCase()) return true;
-      if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${actual}"). Retrying.`);
+      lastActual = String(await loc.inputValue().catch(() => '')).trim().toUpperCase();
+      if (lastActual === wanted.toUpperCase()) return true;
+      if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${lastActual}"). Retrying.`);
       await page.waitForTimeout(250);
+    }
+    if (required) {
+      throw new Error(
+        lastActual && lastActual !== wanted.toUpperCase()
+          ? `${name} on portal is "${lastActual}" but the app has "${wanted.toUpperCase()}". The portal may be locked to another GST — verify company data in the app.`
+          : `${name} could not be filled on the CPCB portal.`,
+      );
     }
     return false;
   }
+  if (required) {
+    throw new Error(`${name} input was not found on the CPCB portal.`);
+  }
   return false;
+}
+
+async function fillUnitGstNumber(page, unitGstNumber, onLog) {
+  return fillVisibleInput(
+    page,
+    [
+      'xpath=//*[contains(normalize-space(.),"Unit GST Number")]/following::input[1]',
+      'input[formcontrolname="unit_gst"]',
+      'input[formcontrolname="unitGst"]',
+      'input[placeholder*="Unit GST"]',
+    ],
+    unitGstNumber,
+    onLog,
+    'Unit GST Number',
+  );
 }
 
 async function chooseOption(page, { labelRegex, placeholders = [], option, onLog, name }) {
@@ -907,17 +938,7 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
     'IEC'
   );
 
-  await fillVisibleInput(
-    page,
-    [
-      'input[formcontrolname="unit_gst"]',
-      'input[formcontrolname="unitGst"]',
-      'input[placeholder*="Unit GST"]',
-    ],
-    unitGstNumber,
-    onLog,
-    'Unit GST Number'
-  );
+  await fillUnitGstNumber(page, unitGstNumber, onLog);
 
   if (onLog) onLog('Filling Part A section 2 states (2a) only...');
   await selectOperatingStates(page, data.operatingStates, onLog);
@@ -965,17 +986,21 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await uploadNearLabel(page, 'Representative picture of Plastic Packaging', pictureFile, onLog);
 
   if (needsHistorical) {
-    const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
-      ? resolvePlasticConsumedYears(data.plasticConsumed)
-      : getImporterReportingFinancialYears();
+    const pcYears = await resolvePlasticConsumedYearsForPortal(page, data.plasticConsumed, onLog);
+    const alignedPc = alignPlasticConsumedToYears(data.plasticConsumed, pcYears);
+    const pcIssues = validatePlasticConsumed3cForPortal({
+      plasticConsumed: alignedPc,
+      yearOfCommencement: data.yearOfCommencement,
+      reportingYears: pcYears,
+    });
+    if (pcIssues.length) {
+      const msg = formatPlasticConsumed3cIssue(pcIssues[0]);
+      if (onLog) onLog(`Part A 3c validation failed: ${msg}`);
+      throw new Error(msg);
+    }
     const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
     if (!filled3c) {
-      await fillAgGridZeros(
-        page,
-        /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
-        onLog,
-        'Part A 3c fallback zeros'
-      );
+      throw new Error('Could not fill Part A Section 3c plastic consumed grid on CPCB portal.');
     }
   }
 
@@ -1010,7 +1035,7 @@ export async function fillPartBSection4(page, section4Data, onLog, plasticConsum
   const validationIssues = validateSection4AgainstPlasticConsumed(
     groups,
     plasticConsumed,
-    getImporterReportingFinancialYears(),
+    getCpcbPortalPartA3cYears(),
   );
   if (validationIssues.length && onLog) {
     onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4PartAIssue(validationIssues[0])}`);

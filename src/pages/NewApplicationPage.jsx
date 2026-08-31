@@ -45,19 +45,19 @@ import RegistrationAutomationModal, {
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
-import {
-  plasticConsumed3cHasData,
-} from '../../shared/plasticConsumed3c.js';
+import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
 import {
-  validateSection4AgainstPlasticConsumed,
-  formatSection4PartAIssue,
-} from '../utils/registrationPartBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+  getRegisterApplicationBlockers,
+  summarizeRegisterBlockers,
+} from '../utils/registrationApplicationReadiness.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
+import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { prunePartBSection4ForPortal } from '../utils/registrationPartBSection4.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -257,6 +257,13 @@ export default function NewApplicationPage() {
         ...general,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
+        plasticConsumed: prunePlasticConsumedForPortal(
+          general.plasticConsumed || prev.plasticConsumed || {},
+        ),
+        partBSection4: prunePartBSection4ForPortal(
+          general.partBSection4 || prev.partBSection4 || [],
+          general.operatingStates || prev.operatingStates || [],
+        ),
       }));
     }
 
@@ -456,10 +463,14 @@ export default function NewApplicationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
-  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
   const showHistoricalEprSections = useMemo(
     () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
     [generalInfo.yearOfCommencement],
+  );
+
+  const reportingFys = useMemo(
+    () => (showHistoricalEprSections ? getCpcbPortalPartA3cYears() : []),
+    [showHistoricalEprSections],
   );
 
   const persistRegistrationForm = useCallback(async (nextGeneral, nextAuto) => {
@@ -540,8 +551,24 @@ export default function NewApplicationPage() {
   }, [autoData, generalInfo]);
 
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
-    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
-  }, []);
+    const pruned = prunePlasticConsumedForPortal(nextPlasticConsumed);
+    setGeneralInfo((prev) => {
+      const next = { ...prev, plasticConsumed: pruned };
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo: next,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          }),
+        ).catch(console.error);
+      }
+      return next;
+    });
+  }, [savedRegistration, email, mobile, autoData, savedCeprId]);
 
   useEffect(() => {
     if (loadingSavedRegistration) return undefined;
@@ -557,7 +584,10 @@ export default function NewApplicationPage() {
 
         setGeneralInfo((prev) => {
           if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
-          return { ...prev, plasticConsumed: result.plasticConsumed };
+          return {
+            ...prev,
+            plasticConsumed: prunePlasticConsumedForPortal(result.plasticConsumed),
+          };
         });
         setPlasticConsumedSource(result.sourceLabel || '');
       } catch (err) {
@@ -939,25 +969,6 @@ export default function NewApplicationPage() {
   };
 
   const handleNewApplication = async () => {
-    if (!savedCeprId) {
-      showToast('CEPR ID not found — complete registration first.', 'error');
-      return;
-    }
-
-    const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
-    const emptyPc = Object.fromEntries(reportingFys.map((fy) => [fy, { ...zeroCats }]));
-    const plasticConsumed = plasticConsumed3cHasData(generalInfo.plasticConsumed)
-      ? generalInfo.plasticConsumed
-      : emptyPc;
-
-    if (!autoData.detailsOfProductsPath) {
-      showToast('Upload Section 3a PDF — Details (Type & Quantity) of products produced/marketed.', 'error');
-      return;
-    }
-    if (!autoData.representativePicturePath) {
-      showToast('Upload Section 3b PDF — Representative picture of Plastic Packaging.', 'error');
-      return;
-    }
     const derivedState =
       generalInfo.stateUt ||
       stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
@@ -965,24 +976,24 @@ export default function NewApplicationPage() {
     const operatingStates = (generalInfo.operatingStates || []).length
       ? generalInfo.operatingStates
       : (derivedState ? [derivedState] : []);
+    const generalForValidation = {
+      ...generalInfo,
+      operatingStates,
+    };
 
-    if (!operatingStates.length) {
-      showToast('Select the State/UT — it could not be detected from the GST documents.', 'error');
-      return;
-    }
+    const registerBlockers = getRegisterApplicationBlockers({
+      savedCeprId,
+      generalInfo: generalForValidation,
+      autoData,
+      reportingYears: reportingFys,
+    });
 
-    const section4Issues = showHistoricalEprSections
-      ? validateSection4AgainstPlasticConsumed(
-        generalInfo.partBSection4 || [],
-        plasticConsumed,
-        reportingFys.length ? reportingFys : getImporterReportingFinancialYears(),
-      )
-      : [];
-    if (section4Issues.length) {
-      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
-      if (section4Issues.length > 1) {
+    if (registerBlockers.length > 0) {
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
+      const section4Count = registerBlockers.filter((b) => b.section === 'partB').length;
+      if (section4Count > 1) {
         showToast(
-          `${section4Issues.length} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
+          `${section4Count} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
           'warning',
           { duration: 12000 },
         );
@@ -990,14 +1001,15 @@ export default function NewApplicationPage() {
       return;
     }
 
+    const plasticConsumed = generalInfo.plasticConsumed || {};
+
     const applicationDefaults = {
-      ...generalInfo,
+      ...generalForValidation,
       yearOfCommencement: generalInfo.yearOfCommencement || String(new Date().getFullYear()),
-      complianceStatus: generalInfo.complianceStatus || generalInfo.complianceStatus || 'Yes',
-      thicknessOfPlastic: generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '50',
+      complianceStatus: generalInfo.complianceStatus || 'Yes',
+      thicknessOfPlastic: generalInfo.thicknessOfPlastic || '50',
       hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
-      capitalInvested: generalInfo.capitalInvested || generalInfo.capitalInvested || '0',
-      operatingStates,
+      capitalInvested: generalInfo.capitalInvested || '0',
       plasticConsumed,
     };
 
@@ -1590,6 +1602,17 @@ export default function NewApplicationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartALoginCredentials
+                    ceprId={savedCeprId}
+                    password={generalInfo.password || ''}
+                    onPasswordChange={(value) =>
+                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                    }
+                    showPassword={showPassword}
+                    onToggleShowPassword={() => setShowPassword((v) => !v)}
+                    onBlur={() => persistRegistrationForm().catch(console.error)}
+                    inputClass={inputClass}
+                  />
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
                     <OperatingStatesMultiSelect

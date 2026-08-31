@@ -1,5 +1,8 @@
 import { aggregateByStateAndFy } from './plasticMtAggregation.js';
-import { getImporterReportingFinancialYears } from './financialYearScope.js';
+import {
+  getCpcbPortalPartA3cYears,
+  getImporterReportingFinancialYears,
+} from './financialYearScope.js';
 import { PLASTIC_CATEGORIES } from './plasticCategories.js';
 
 export const PART_B_SECTION4_CATEGORY_LABELS = [
@@ -64,7 +67,7 @@ export function buildPartBSection4Groups({
   salesByStateFy = [],
   purchasesByStateFy = [],
 } = {}) {
-  const years = reportingYears.length ? reportingYears : getImporterReportingFinancialYears();
+  const years = reportingYears.length ? reportingYears : getCpcbPortalPartA3cYears();
   const states = [...new Set((operatingStates || []).filter(Boolean))];
 
   const salesMap = new Map();
@@ -98,7 +101,7 @@ export function syncPartBSection4Structure({
   existing = [],
   computed = [],
 } = {}) {
-  const years = reportingYears.length ? reportingYears : getImporterReportingFinancialYears();
+  const years = reportingYears.length ? reportingYears : getCpcbPortalPartA3cYears();
   const computedMap = new Map();
   for (const group of computed) {
     computedMap.set(`${normalizeOperatingStateKey(group.state)}::${group.year}`, group);
@@ -125,6 +128,42 @@ export function syncPartBSection4Structure({
     }
   }
   return out;
+}
+
+/** Remap rows saved under legacy importer FY labels onto CPCB portal Section 4 years. */
+export function remapLegacyPartBSection4Years(groups = [], asOfDate = new Date()) {
+  const portalYears = getCpcbPortalPartA3cYears(asOfDate);
+  const legacyYears = getImporterReportingFinancialYears(asOfDate);
+  const legacyTail = legacyYears[1];
+  const portalHead = portalYears[0];
+  if (!legacyTail || !portalHead || legacyTail === portalHead) return groups;
+
+  const portalHeadHasData = new Set();
+  for (const group of groups || []) {
+    if (group.year !== portalHead || !partBSection4GroupHasData(group)) continue;
+    portalHeadHasData.add(normalizeOperatingStateKey(group.state));
+  }
+
+  return (groups || []).map((group) => {
+    if (group.year !== legacyTail) return group;
+    const stateKey = normalizeOperatingStateKey(group.state);
+    if (portalHeadHasData.has(stateKey)) return group;
+    return { ...group, year: portalHead };
+  });
+}
+
+export function prunePartBSection4ForPortal(
+  groups = [],
+  operatingStates = [],
+  asOfDate = new Date(),
+) {
+  const remapped = remapLegacyPartBSection4Years(groups, asOfDate);
+  return syncPartBSection4Structure({
+    operatingStates,
+    reportingYears: getCpcbPortalPartA3cYears(asOfDate),
+    existing: remapped,
+    computed: [],
+  });
 }
 
 export function flattenPartBSection4Values(groups = []) {

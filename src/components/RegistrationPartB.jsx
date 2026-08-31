@@ -9,7 +9,7 @@ import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../utils/registrationPartBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import {
   fetchComputedPartBSection5,
   mergePartBSection5b,
@@ -53,7 +53,7 @@ export default function RegistrationPartB({
       ? validateSection4AgainstPlasticConsumed(
         generalInfo.partBSection4 || [],
         generalInfo.plasticConsumed || {},
-        getImporterReportingFinancialYears(),
+        getCpcbPortalPartA3cYears(),
       )
       : []),
     [generalInfo.partBSection4, generalInfo.plasticConsumed, showHistoricalSections],
@@ -69,7 +69,7 @@ export default function RegistrationPartB({
       return undefined;
     }
 
-    const hydrateKey = `${operatingStatesKey}::${gstin || ''}`;
+    const hydrateKey = `${operatingStatesKey}::${gstin || ''}::${getCpcbPortalPartA3cYears().join('|')}`;
     if (hydrateRef.current === hydrateKey) return undefined;
 
     let cancelled = false;

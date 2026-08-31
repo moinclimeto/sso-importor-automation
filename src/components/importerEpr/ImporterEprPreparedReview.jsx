@@ -5,6 +5,10 @@ import {
   CURRENT_FY_COMMENCEMENT_HINT,
   requiresHistoricalEprData,
 } from '../../../shared/commencementYearScope.js';
+import {
+  validatePlasticConsumed3cForPortal,
+  formatPlasticConsumed3cIssue,
+} from '../../../shared/plasticConsumed3cValidation.js';
 
 export default function ImporterEprPreparedReview({
   detailsOfProductsPath = '',
@@ -18,6 +22,13 @@ export default function ImporterEprPreparedReview({
   plasticConsumedSource = '',
 }) {
   const showHistoricalSections = requiresHistoricalEprData(yearOfCommencement);
+  const plasticConsumedIssues = showHistoricalSections
+    ? validatePlasticConsumed3cForPortal({
+      plasticConsumed,
+      yearOfCommencement,
+      reportingYears,
+    })
+    : [];
   const totalsByCategory = {};
   for (const col of PLASTIC_CONSUMED_3C_COLUMNS) {
     let sum = 0;
@@ -58,6 +69,20 @@ export default function ImporterEprPreparedReview({
               <p className="text-xs text-slate-500 mt-1">
                 Edit category-wise TPA values before CPCB upload if needed.
               </p>
+              {plasticConsumedIssues.length > 0 ? (
+                <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 mt-2 space-y-1">
+                  <p className="text-xs font-semibold text-red-800">CPCB will reject Register</p>
+                  {plasticConsumedIssues.map((issue) => (
+                    <p key={issue.id} className="text-xs text-red-700">
+                      {formatPlasticConsumed3cIssue(issue)}
+                    </p>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-xs text-amber-800 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mt-2">
+                  After editing 3c values, update Part B → Section 4 so totals stay within ±40% of these figures.
+                </p>
+              )}
               {plasticConsumedSource ? (
                 <p className="text-xs text-teal-700 mt-1">
                   Data source: {plasticConsumedSource}

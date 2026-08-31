@@ -12,6 +12,7 @@ import {
   reconcileSec5dForAutomation,
 } from '../../shared/partBSection5.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 
 async function resolveCompanyIdForAutomation({ companyId = null, gstin = '' } = {}) {
   if (companyId != null && companyId !== '') return companyId;
@@ -100,6 +101,7 @@ export async function resolvePartBSection4ForAutomation({
       sales,
       companyId,
       docStatus: 'published',
+      reportingYears: getCpcbPortalPartA3cYears(),
     });
     if (partBSection4HasData(computed)) {
       if (onLog) onLog(`Computed Part B Section 4 from ${purchases.length} purchases / ${sales.length} sales.`);

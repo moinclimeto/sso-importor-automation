@@ -28,9 +28,8 @@ import {
 import { harvestPortalToasts } from './portalToastWatcher.js';
 import {
   fillPlasticConsumedGrid,
-  resolvePlasticConsumedYears,
+  resolvePlasticConsumedYearsForPortal,
 } from './portalPlasticConsumed.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import {
   getBaseNameFromPath,
@@ -636,13 +635,8 @@ async function fillGeneralInformation(page, data, onLog) {
 
   if (data.plasticConsumed && requiresHistoricalEprData(data.yearOfCommencement)) {
     if (onLog) onLog('Filling 3c) Total Quantity of Plastic Consumed...');
-    const pcYears = resolvePlasticConsumedYears(data.plasticConsumed);
-    await fillPlasticConsumedGrid(
-      page,
-      data.plasticConsumed,
-      pcYears.length ? pcYears : getImporterReportingFinancialYears(),
-      onLog,
-    );
+    const pcYears = await resolvePlasticConsumedYearsForPortal(page, data.plasticConsumed, onLog);
+    await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
   } else if (onLog) {
     onLog('Skipping 3c — operations commenced in current financial year.');
   }

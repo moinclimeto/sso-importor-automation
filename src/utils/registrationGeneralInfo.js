@@ -1,8 +1,8 @@
 import { parseGstLabeledAddress } from './registrationDataMapper.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { emptyPlasticConsumedYear } from '../../shared/plasticConsumed3c.js';
 
-const _reportingFys = getImporterReportingFinancialYears();
+const _reportingFys = getCpcbPortalPartA3cYears();
 const _defaultPlasticConsumed = Object.fromEntries(
   _reportingFys.map((fy) => [fy, emptyPlasticConsumedYear()]),
 );
