@@ -2221,7 +2221,6 @@ export default function CpcbRegistrationPage() {
         loading={loading || captchaSubmitting}
         loadingMsg={loadingMsg}
         onClose={closeAutomationModal}
-        canClose={automationPhase === 'error' || automationPhase === 'complete' || (!loading && automationPhase === 'running')}
         email={email}
         emailOtp={emailOtp}
         onEmailOtpChange={(value) => {

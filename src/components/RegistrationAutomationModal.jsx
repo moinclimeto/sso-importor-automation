@@ -38,7 +38,6 @@ export default function RegistrationAutomationModal({
   loading = false,
   loadingMsg = '',
   onClose,
-  canClose = false,
   // Email OTP
   email = '',
   emailOtp = '',
@@ -114,15 +113,14 @@ export default function RegistrationAutomationModal({
               Live progress from the automation browser
             </p>
           </div>
-          {canClose && (
-            <button
-              type="button"
-              onClick={onClose}
-              className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100"
-            >
-              <X size={18} />
-            </button>
-          )}
+          <button
+            type="button"
+            onClick={onClose}
+            aria-label="Close registration modal"
+            className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 shrink-0"
+          >
+            <X size={18} />
+          </button>
         </div>
 
         <div className={`mx-5 mt-4 rounded-lg border px-3 py-2.5 ${phaseTone}`}>
@@ -192,9 +190,6 @@ export default function RegistrationAutomationModal({
               }`}
               autoFocus
             />
-            {otpError && (
-              <p className="text-xs text-red-600">{otpError} — enter the correct OTP and try again.</p>
-            )}
             <div className="flex items-center justify-between gap-3">
               {!isResendActive ? (
                 <span className="text-xs text-slate-500">
@@ -237,9 +232,6 @@ export default function RegistrationAutomationModal({
               }`}
               autoFocus
             />
-            {otpError && (
-              <p className="text-xs text-red-600">{otpError} — enter the correct OTP and try again.</p>
-            )}
             {otpResending && (
               <p className="text-xs text-slate-500 flex items-center gap-1.5">
                 <Loader2 size={12} className="animate-spin" />
