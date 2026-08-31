@@ -1466,7 +1466,7 @@ async function syncSupplierMasterFromRecord(
 
   ipcMain.handle('scraper:submitLoginCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitLoginCaptcha(captchaText, (msg) => sendScraperLog(event, msg));
+    return await submitLoginCaptcha(captchaText, (msg) => sendScraperLog(event, msg), payload);
   });
 
   ipcMain.handle('scraper:refreshLoginCaptcha', async (event) => {

@@ -171,6 +171,7 @@ export default function CpcbRegistrationPage() {
   const [showAutomationModal, setShowAutomationModal] = useState(false);
   const [automationPhase, setAutomationPhase] = useState('running');
   const [currentAutomationStep, setCurrentAutomationStep] = useState('');
+  const [automationFlow, setAutomationFlow] = useState('registration');
   const [otpInputError, setOtpInputError] = useState('');
   const [registrationBlocker, setRegistrationBlocker] = useState('');
   const [wizardStep, setWizardStep] = useState('account');
@@ -186,9 +187,10 @@ export default function CpcbRegistrationPage() {
     [],
   );
 
-  const openAutomationModal = useCallback((step = 'Starting CPCB registration…') => {
+  const openAutomationModal = useCallback((step = 'Starting CPCB registration…', flow = 'registration') => {
     flushSync(() => {
       setAutomationLogs([]);
+      setAutomationFlow(flow);
       setCurrentAutomationStep(step);
       setOtpInputError('');
       setShowAutomationModal(true);
@@ -200,6 +202,7 @@ export default function CpcbRegistrationPage() {
     automationBusyRef.current = false;
     setShowAutomationModal(false);
     setAutomationPhase('running');
+    setAutomationFlow('registration');
     setCurrentAutomationStep('');
     setLoading(false);
     setLoadingMsg('');
@@ -207,17 +210,21 @@ export default function CpcbRegistrationPage() {
     setShowEmailOtp(false);
     setShowMobileOtp(false);
     setShowCaptchaModal(false);
+    setShowLoginCaptchaModal(false);
+    setShowLoginOtpModal(false);
+    setLoginCaptchaSubmitting(false);
+    setLoginOtpSubmitting(false);
     setOtpInputError('');
   }, []);
 
   const completeAutomationModal = useCallback((message) => {
     if (message) appendAutomationLog(setAutomationLogs, message, 'success');
     setAutomationPhase('complete');
-    setCurrentAutomationStep('Registration complete');
+    setCurrentAutomationStep(automationFlow === 'login' ? 'Application complete' : 'Registration complete');
     window.setTimeout(() => {
       closeAutomationModal();
     }, 2500);
-  }, [closeAutomationModal]);
+  }, [automationFlow, closeAutomationModal]);
 
   const failAutomationModal = useCallback((message) => {
     if (message) appendAutomationLog(setAutomationLogs, message, 'error');
@@ -233,6 +240,8 @@ export default function CpcbRegistrationPage() {
     setCurrentAutomationStep(text);
     setOtpInputError(text);
   }, []);
+
+  const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -345,14 +354,14 @@ export default function CpcbRegistrationPage() {
 
   useEffect(() => {
     let interval = null;
-    if (showLoginOtpModal && loginOtpTimer > 0) {
+    if (loginOtpActive && loginOtpTimer > 0) {
       interval = setInterval(() => setLoginOtpTimer((prev) => prev - 1), 1000);
-    } else if (showLoginOtpModal && loginOtpTimer === 0) {
+    } else if (loginOtpActive && loginOtpTimer === 0) {
       setLoginOtpResendActive(true);
       if (interval) clearInterval(interval);
     }
     return () => { if (interval) clearInterval(interval); };
-  }, [showLoginOtpModal, loginOtpTimer]);
+  }, [loginOtpActive, loginOtpTimer]);
 
   useEffect(() => {
     if (!window.pwp?.scraper?.onLog) return undefined;
@@ -1181,15 +1190,26 @@ export default function CpcbRegistrationPage() {
       }
     }
 
-    setAutomationLogs([]);
     clearPortalToasts();
+    openAutomationModal('Preparing new application…', 'login');
+    appendAutomationLog(setAutomationLogs, 'Saving application data…', 'info');
     setLoading(true);
-    await beginLoginFlow(savedCeprId);
-    setLoading(false);
+    setCurrentAutomationStep('Starting CPCB login…');
+    try {
+      await beginLoginFlow(savedCeprId);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const beginLoginFlow = async (ceprId) => {
     setSavedCeprId(ceprId || '');
+    flushSync(() => {
+      setShowAutomationModal(true);
+      setAutomationFlow('login');
+      setAutomationPhase('running');
+      setCurrentAutomationStep('Starting CPCB login…');
+    });
     setLoadingMsg('Starting CPCB login...');
     const loginCreds = resolveRegistrationLoginCredentials({
       email,
@@ -1207,19 +1227,22 @@ export default function CpcbRegistrationPage() {
         setLoginCaptchaImage(loginRes.captchaImage || '');
         setLoginCaptchaText('');
         setLoginCaptchaError('');
-        setShowLoginCaptchaModal(true);
-        showToast('Enter login captcha to continue to application form.', 'success', { duration: 10000 });
+        setShowLoginCaptchaModal(false);
+        setAutomationPhase('captcha');
+        setCurrentAutomationStep('Enter captcha to request login OTP');
+        appendAutomationLog(setAutomationLogs, 'Enter login captcha to continue', 'success');
       } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
-        setAutomationLogs(prev => [...prev, { type: 'success', message: 'Application onboarding completed successfully!' }]);
+        completeAutomationModal('Application onboarding completed successfully!');
         showToast('Application onboarding completed successfully!', 'success');
       } else {
         const err = loginRes.error || 'Could not start login flow';
-        setAutomationLogs(prev => [...prev, { type: 'error', message: err }]);
+        failAutomationModal(err);
         showToast(err, 'error');
       }
     } catch (err) {
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login error: ' + err.message }]);
-      showToast('Login error: ' + err.message, 'error');
+      const errMsg = 'Login error: ' + err.message;
+      failAutomationModal(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setLoadingMsg('');
     }
@@ -1253,18 +1276,28 @@ export default function CpcbRegistrationPage() {
     setLoginCaptchaError('');
     setLoadingMsg('Submitting login captcha on CPCB portal...');
     try {
-      const res = await window.pwp.scraper.submitLoginCaptcha({ captcha: text });
+      const loginCreds = resolveRegistrationLoginCredentials({
+        email,
+        mobile,
+        password: generalInfo.password,
+      });
+      const res = await window.pwp.scraper.submitLoginCaptcha({
+        captcha: text,
+        ceprId: savedCeprId,
+        password: loginCreds.password,
+      });
 
       if (res.success && res.step === 'WAITING_LOGIN_OTP') {
         setShowLoginCaptchaModal(false);
         setLoginCaptchaText('');
-        setLoginCaptchaImage('');
         setLoginOtp('');
-        setLoginOtpError('');
+        setOtpInputError('');
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
-        setShowLoginOtpModal(true);
-        showToast('Login OTP sent — enter OTP from email/SMS.', 'success');
+        setShowLoginOtpModal(false);
+        setAutomationPhase('login_otp');
+        setCurrentAutomationStep('Login OTP sent — enter the code below');
+        appendAutomationLog(setAutomationLogs, 'Login OTP sent — enter OTP from email/SMS', 'success');
         return;
       }
 
@@ -1273,8 +1306,9 @@ export default function CpcbRegistrationPage() {
       }
       setLoginCaptchaText('');
       const errMsg = res.error || 'Invalid captcha. Please try again.';
-      setLoginCaptchaError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      appendAutomationLog(setAutomationLogs, errMsg, 'error');
+      setAutomationPhase('captcha');
+      setCurrentAutomationStep(errMsg);
     } catch (err) {
       setLoginCaptchaError(err.message);
       setAutomationLogs(prev => [...prev, { type: 'error', message: 'Captcha submit error: ' + err.message }]);
@@ -1290,6 +1324,7 @@ export default function CpcbRegistrationPage() {
       if (res.success) {
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
+        appendAutomationLog(setAutomationLogs, 'Login OTP resent', 'success');
         showToast('Login OTP resent', 'success');
       } else {
         showToast(res.error || 'Resend failed', 'error');
@@ -1301,6 +1336,8 @@ export default function CpcbRegistrationPage() {
 
   const handleLoginOnboardingResult = (res) => {
     if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      const msg = `Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`;
+      completeAutomationModal(msg);
       showToast(
         `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
         'success',
@@ -1309,11 +1346,13 @@ export default function CpcbRegistrationPage() {
       return true;
     }
 
-    if (
-      res.success &&
-      (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE')
-    ) {
+    if (res.success && res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE') {
       const scrapeOk = res.scrape?.success !== false;
+      if (scrapeOk) {
+        completeAutomationModal('Application started and portal data synced');
+      } else {
+        failAutomationModal(`Application started — sync failed: ${res.scrape?.error || 'Unknown error'}`);
+      }
       showToast(
         scrapeOk
           ? 'Registration pipeline complete! Application started and portal data synced to the app.'
@@ -1325,11 +1364,9 @@ export default function CpcbRegistrationPage() {
     }
 
     if (res.success && res.step === 'LOGIN_COMPLETE') {
-      setAutomationLogs((prev) => [
-        ...prev,
-        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
-      ]);
-      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      const msg = 'Login succeeded but application onboarding failed: ' + (res.error || 'unknown error');
+      failAutomationModal(msg);
+      showToast('Login successful, but onboarding failed. See progress for details.', 'error', { duration: 15000 });
       return true;
     }
 
@@ -1339,11 +1376,12 @@ export default function CpcbRegistrationPage() {
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
-      setLoginOtpError('Please enter 6-digit OTP');
+      reportOtpRetryError('login_otp', 'Please enter 6-digit OTP');
       return;
     }
     setLoginOtpSubmitting(true);
     setLoginOtpError('');
+    setOtpInputError('');
     setLoadingMsg('Verifying login OTP on CPCB portal...');
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
@@ -1351,16 +1389,14 @@ export default function CpcbRegistrationPage() {
       if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setLoginOtpSubmitting(false);
+        setAutomationPhase('running');
+        setCurrentAutomationStep('Filling application on CPCB portal…');
+        appendAutomationLog(setAutomationLogs, 'Login OTP verified — filling application form', 'success');
         setLoading(true);
-        setLoadingMsg('Filling application on CPCB portal...');
-        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
         try {
           const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: false });
-          handleLoginOnboardingResult(onboard);
-          if (!onboard.success) {
-            const errMsg = onboard.error || 'Application onboarding failed.';
-            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          if (!handleLoginOnboardingResult(onboard) && !onboard.success) {
+            failAutomationModal(onboard.error || 'Application onboarding failed.');
           }
         } finally {
           setLoading(false);
@@ -1375,12 +1411,9 @@ export default function CpcbRegistrationPage() {
         return;
       }
 
-      const errMsg = res.error || 'Invalid OTP. Please try again.';
-      setLoginOtpError(errMsg);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+      reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
     } catch (err) {
-      setLoginOtpError(err.message);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      reportOtpRetryError('login_otp', err.message);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -2195,10 +2228,19 @@ export default function CpcbRegistrationPage() {
             <button
               type="button"
               onClick={handleNewApplication}
-              disabled={loading}
+              disabled={
+                loading
+                || loginCaptchaSubmitting
+                || loginOtpSubmitting
+                || (showAutomationModal && automationPhase !== 'error')
+              }
               className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <FilePlus size={16} />}
+              {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <FilePlus size={16} />
+              )}
               Register
             </button>
           )}
@@ -2215,10 +2257,23 @@ export default function CpcbRegistrationPage() {
 
       <RegistrationAutomationModal
         open={showAutomationModal}
+        title={automationFlow === 'login' ? 'CPCB New Application' : 'CPCB Registration'}
+        subtitle="Live progress from the automation browser"
+        completeMessage={
+          automationFlow === 'login'
+            ? 'Application submitted successfully. Closing…'
+            : 'CPCB account created successfully. Closing…'
+        }
+        captchaStepHint={
+          automationFlow === 'login'
+            ? 'Enter captcha to request login OTP'
+            : 'Enter the captcha to finish registration'
+        }
+        submitCaptchaLabel={automationFlow === 'login' ? 'Get OTP' : 'Submit Captcha'}
         phase={automationPhase}
         currentStep={currentAutomationStep}
         logs={automationLogs}
-        loading={loading || captchaSubmitting}
+        loading={loading || captchaSubmitting || loginCaptchaSubmitting || loginOtpSubmitting}
         loadingMsg={loadingMsg}
         onClose={closeAutomationModal}
         email={email}
@@ -2229,10 +2284,10 @@ export default function CpcbRegistrationPage() {
         }}
         onVerifyEmailOtp={handleVerifyEmailOtp}
         onResendEmailOtp={handleResendEmailOtp}
-        otpTimer={otpTimer}
-        isResendActive={isResendActive}
+        otpTimer={automationPhase === 'login_otp' ? loginOtpTimer : otpTimer}
+        isResendActive={automationPhase === 'login_otp' ? loginOtpResendActive : isResendActive}
         formatTimer={formatTimer}
-        otpSubmitting={otpSubmitting}
+        otpSubmitting={automationPhase === 'login_otp' ? loginOtpSubmitting : otpSubmitting}
         otpResending={resendingMobileOtp}
         mobile={mobile}
         mobileOtp={mobileOtp}
@@ -2243,20 +2298,30 @@ export default function CpcbRegistrationPage() {
         otpError={otpInputError}
         onVerifyMobileOtp={handleVerifyMobileOtp}
         onResendMobileOtp={handleResendMobileOtp}
-        captchaImage={captchaImage}
-        captchaText={captchaText}
+        captchaImage={automationFlow === 'login' ? loginCaptchaImage : captchaImage}
+        captchaText={automationFlow === 'login' ? loginCaptchaText : captchaText}
         onCaptchaTextChange={(value) => {
-          setCaptchaText(String(value || '').slice(0, 6));
-          if (captchaError) setCaptchaError('');
+          if (automationFlow === 'login') {
+            setLoginCaptchaText(String(value || '').slice(0, 6));
+          } else {
+            setCaptchaText(String(value || '').slice(0, 6));
+            if (captchaError) setCaptchaError('');
+          }
         }}
-        onSubmitCaptcha={handleSubmitCaptcha}
-        onRefreshCaptcha={handleRefreshCaptcha}
-        captchaError={captchaError}
-        captchaSubmitting={captchaSubmitting}
-        captchaRefreshing={captchaRefreshing}
+        onSubmitCaptcha={automationFlow === 'login' ? handleSubmitLoginCaptcha : handleSubmitCaptcha}
+        onRefreshCaptcha={automationFlow === 'login' ? handleRefreshLoginCaptcha : handleRefreshCaptcha}
+        captchaSubmitting={automationFlow === 'login' ? loginCaptchaSubmitting : captchaSubmitting}
+        captchaRefreshing={automationFlow === 'login' ? loginCaptchaRefreshing : captchaRefreshing}
+        loginOtp={loginOtp}
+        onLoginOtpChange={(value) => {
+          setLoginOtp(value);
+          if (otpInputError) setOtpInputError('');
+        }}
+        onVerifyLoginOtp={handleVerifyLoginOtp}
+        onResendLoginOtp={handleResendLoginOtp}
       />
 
-      {showLoginCaptchaModal && (
+      {showLoginCaptchaModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b flex items-center justify-between">
@@ -2344,7 +2409,7 @@ export default function CpcbRegistrationPage() {
         </div>
       )}
 
-      {showLoginOtpModal && (
+      {showLoginOtpModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">

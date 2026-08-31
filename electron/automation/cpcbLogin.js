@@ -9,6 +9,7 @@ import {
   getCaptchaImageDataUrl,
   fillCaptchaField,
   refreshCaptcha,
+  findCaptchaElement,
   attachCaptchaNetworkListener,
   attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
@@ -27,6 +28,7 @@ function escapeRegex(value) {
 
 let loginBrowser = null;
 let loginPage = null;
+let pendingLoginCredentials = { ceprId: '', password: '' };
 
 function isPageAlive(page) {
   try {
@@ -112,9 +114,133 @@ function loginInput(page, formControlName) {
   return page.locator(`app-input[formcontrolname="${formControlName}"] input`).first();
 }
 
+async function getLoginCaptchaImageDataUrl(page, onLog) {
+  attachCaptchaNetworkListener(page);
+  const element = await findCaptchaElement(page);
+  if (element?.locator) {
+    await element.locator.scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(300);
+    const buffer = await element.locator.screenshot();
+    if (onLog) onLog('Login captcha synced from portal canvas');
+    return { captchaImage: `data:image/png;base64,${buffer.toString('base64')}` };
+  }
+  return getCaptchaImageDataUrl(page, onLog);
+}
+
+async function readVisibleCaptchaValue(page) {
+  return page.evaluate(() => {
+    const inputs = [...document.querySelectorAll('input[placeholder="Enter Captcha"], input.captcha-input')];
+    const visible = inputs.find((el) => el.offsetParent !== null);
+    return (visible?.value || '').trim();
+  });
+}
+
+async function resolveActiveLoginPage(onLog) {
+  const session = getLoginSession();
+  const candidates = [];
+
+  if (session.page && isPageAlive(session.page)) candidates.push(session.page);
+
+  try {
+    const browser = session.browser;
+    const contexts = typeof browser?.contexts === 'function' ? browser.contexts() : [];
+    for (const ctx of contexts) {
+      if (typeof ctx.pages === 'function') candidates.push(...ctx.pages());
+    }
+    if (typeof browser?.pages === 'function') candidates.push(...browser.pages());
+  } catch {
+    /* ignore */
+  }
+
+  const seen = new Set();
+  for (const candidate of [...candidates].reverse()) {
+    if (!candidate || seen.has(candidate)) continue;
+    seen.add(candidate);
+    if (!isPageAlive(candidate)) continue;
+    const onLogin = await candidate
+      .locator('input[placeholder="Enter CEPR User ID"], app-input[formcontrolname="userId"] input')
+      .first()
+      .isVisible({ timeout: 800 })
+      .catch(() => false);
+    if (!onLogin) continue;
+    await prepareCpcbBrowserPage(candidate);
+    if (onLog) onLog('Using active CPCB login tab');
+    return candidate;
+  }
+
+  if (session.page && isPageAlive(session.page)) {
+    await prepareCpcbBrowserPage(session.page);
+    return session.page;
+  }
+  return null;
+}
+
+async function resolveLoginCaptchaInput(page) {
+  const visible = page.getByRole('textbox', { name: /Enter Captcha/i }).first();
+  if (await visible.isVisible({ timeout: 1500 }).catch(() => false)) return visible;
+  return page.locator('input.captcha-input[placeholder="Enter Captcha"], app-captcha input.captcha-input').first();
+}
+
 async function clearLoginCaptchaField(page) {
-  const inp = page.locator('app-captcha input.captcha-input, input[placeholder="Enter Captcha"]').first();
+  const inp = await resolveLoginCaptchaInput(page);
+  if ((await inp.count().catch(() => 0)) === 0) return;
+  await inp.click({ force: true }).catch(() => {});
   await inp.fill('').catch(() => {});
+}
+
+async function fillLoginCaptchaField(page, text, onLog) {
+  await page
+    .locator('input[placeholder="Enter CEPR User ID"], app-input[formcontrolname="userId"] input')
+    .first()
+    .waitFor({ state: 'visible', timeout: 15000 });
+
+  const inp = await resolveLoginCaptchaInput(page);
+  await inp.waitFor({ state: 'visible', timeout: 15000 });
+
+  let v = String(text || '').replace(/[^a-zA-Z0-9]/g, '').trim();
+  const maxAttr = await inp.getAttribute('maxlength');
+  const maxLen = maxAttr ? Number.parseInt(maxAttr, 10) : NaN;
+  if (Number.isFinite(maxLen) && maxLen > 0 && v.length > maxLen) v = v.slice(0, maxLen);
+
+  await inp.scrollIntoViewIfNeeded();
+  await inp.click({ force: true });
+  await inp.fill('');
+  await page.waitForTimeout(120);
+  await page.keyboard.type(v, { delay: 55 });
+  await inp.dispatchEvent('input');
+  await inp.dispatchEvent('change');
+  await inp.blur();
+  await page.waitForTimeout(250);
+
+  let actual = await readVisibleCaptchaValue(page);
+  if (actual !== v) {
+    await inp.evaluate((el, val) => {
+      el.focus();
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value')?.set;
+      if (setter) setter.call(el, '');
+      else el.value = '';
+      for (const ch of val) {
+        if (setter) setter.call(el, el.value + ch);
+        else el.value += ch;
+        el.dispatchEvent(new InputEvent('input', { bubbles: true, data: ch, inputType: 'insertText' }));
+      }
+      el.dispatchEvent(new Event('change', { bubbles: true }));
+      el.dispatchEvent(new Event('blur', { bubbles: true }));
+    }, v);
+    await page.waitForTimeout(200);
+    actual = await readVisibleCaptchaValue(page);
+  }
+
+  if (actual !== v) {
+    await fillCaptchaField(page, v);
+    actual = await readVisibleCaptchaValue(page);
+  }
+
+  if (actual !== v) {
+    throw new Error(`Login captcha fill failed: expected "${v}", got "${actual}"`);
+  }
+
+  if (onLog) onLog(`Login captcha filled on portal (${v.length} chars)`);
 }
 
 async function checkLoginPortalError(page) {
@@ -209,9 +335,9 @@ async function clickGetOtp(page, onLog) {
   if (onLog) onLog('Clicking Get OTP...');
 
   const candidates = [
-    page.locator('.login-form button[type="submit"], form button[type="submit"]').filter({ hasText: /Login|Get OTP/i }).first(),
+    page.getByRole('button', { name: /^Get OTP$/i }).first(),
+    page.locator('form button[type="submit"]').filter({ hasText: /Login|Get OTP/i }).first(),
     page.getByRole('button', { name: /^(Login|Get OTP)$/i }).first(),
-    page.locator('.final-submit-signup-form button[type="submit"]').first(),
     page.locator('button').filter({ hasText: /^(Login|Get OTP)$/i }).first(),
   ];
 
@@ -1101,8 +1227,9 @@ export async function startLoginFlow(payload, onLog) {
 
     await navigateToLoginPage(page, onLog);
     await fillLoginCredentials(page, ceprId, password, onLog);
+    pendingLoginCredentials = { ceprId, password };
 
-    const captchaData = await getCaptchaImageDataUrl(page, onLog);
+    const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
     if (onLog) onLog('Enter login captcha in the app');
 
     return {
@@ -1118,7 +1245,7 @@ export async function startLoginFlow(payload, onLog) {
       try {
         const { page } = await ensureLoginPage(onLog);
         await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-        const captchaData = await getCaptchaImageDataUrl(page, onLog);
+        const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
         return {
           success: true,
           step: 'WAITING_LOGIN_CAPTCHA',
@@ -1135,27 +1262,36 @@ export async function startLoginFlow(payload, onLog) {
 
 export async function refreshLoginCaptcha(onLog) {
   try {
-    const { page } = getLoginSession();
+    const page = await resolveActiveLoginPage(onLog) || getLoginSession().page;
     if (!page) throw new Error('Browser session not active');
 
+    await navigateToLoginPage(page, onLog);
     if (onLog) onLog('Refreshing login captcha...');
-    await refreshCaptcha(page);
+
+    const refreshBtn = page.locator('app-captcha button.btnCaptcha, button.btnCaptcha').first();
+    if (await refreshBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+      await refreshBtn.click();
+      await page.waitForTimeout(1500);
+    } else {
+      await refreshCaptcha(page);
+    }
+
     await clearLoginCaptchaField(page);
-    const captchaData = await getCaptchaImageDataUrl(page, onLog);
+    const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
     return { success: true, captchaImage: captchaData.captchaImage };
   } catch (err) {
     return { success: false, error: err.message };
   }
 }
 
-export async function submitLoginCaptcha(captchaText, onLog) {
+export async function submitLoginCaptcha(captchaText, onLog, payload = {}) {
   try {
-    let { page } = getLoginSession();
+    let page = await resolveActiveLoginPage(onLog);
     if (!page) {
       if (onLog) onLog('Browser was closed. Opening again...');
       ({ page } = await ensureLoginPage(onLog));
       await page.goto(LOGIN_URL, { waitUntil: 'domcontentloaded', timeout: 30000 });
-      const captchaData = await getCaptchaImageDataUrl(page, onLog);
+      const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
       return {
         success: false,
         error: 'Browser was closed and reopened. Enter the new captcha.',
@@ -1169,10 +1305,24 @@ export async function submitLoginCaptcha(captchaText, onLog) {
       return { success: false, error: 'Please enter captcha' };
     }
 
+    const ceprId = String(payload?.ceprId || payload?.userId || pendingLoginCredentials.ceprId || '').trim();
+    const password = String(payload?.password || pendingLoginCredentials.password || '').trim();
+
+    await navigateToLoginPage(page, onLog);
+    if (ceprId && password) {
+      await fillLoginCredentials(page, ceprId, password, onLog);
+      pendingLoginCredentials = { ceprId, password };
+    }
+
     if (onLog) onLog('Filling login captcha...');
     await clearLoginCaptchaField(page);
-    await fillCaptchaField(page, text);
-    await page.waitForTimeout(600);
+    await fillLoginCaptchaField(page, text, onLog);
+    await page.waitForTimeout(400);
+
+    const filledValue = await readVisibleCaptchaValue(page);
+    if (!filledValue) {
+      throw new Error('Captcha did not appear in the login form — try Refresh and enter again');
+    }
 
     await clickGetOtp(page, onLog);
 
@@ -1184,7 +1334,7 @@ export async function submitLoginCaptcha(captchaText, onLog) {
     const portalErr = await checkLoginPortalError(page);
     if (portalErr && /captcha|invalid|incorrect/i.test(portalErr)) {
       await clearLoginCaptchaField(page);
-      const captchaData = await getCaptchaImageDataUrl(page, onLog);
+      const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
       return {
         success: false,
         error: portalErr,
@@ -1199,7 +1349,7 @@ export async function submitLoginCaptcha(captchaText, onLog) {
     if (onLog) onLog('ERROR: OTP modal did not appear. Saving screenshot to login_stuck.png');
     await page.screenshot({ path: 'login_stuck.png', fullPage: true }).catch(() => {});
 
-    const captchaData = await getCaptchaImageDataUrl(page, onLog);
+    const captchaData = await getLoginCaptchaImageDataUrl(page, onLog);
     return {
       success: false,
       error: portalErr || 'Could not request login OTP. Check captcha and try again.',
@@ -1209,9 +1359,9 @@ export async function submitLoginCaptcha(captchaText, onLog) {
     if (onLog) onLog('Login captcha error: ' + err.message);
     let captchaImage;
     try {
-      const { page } = getLoginSession();
-      if (page) {
-        const captchaData = await getCaptchaImageDataUrl(page, onLog);
+      const activePage = await resolveActiveLoginPage(onLog) || getLoginSession().page;
+      if (activePage) {
+        const captchaData = await getLoginCaptchaImageDataUrl(activePage, onLog);
         captchaImage = captchaData.captchaImage;
       }
     } catch {

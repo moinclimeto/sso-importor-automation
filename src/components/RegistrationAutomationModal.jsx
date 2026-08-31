@@ -12,7 +12,6 @@ import {
 import {
   classifyAutomationLog,
   MAX_AUTOMATION_LOG_ITEMS,
-  sanitizeAutomationUserError,
 } from '../utils/automationLogFilter.js';
 
 function logTone(message = '', type = 'info') {
@@ -38,6 +37,11 @@ export default function RegistrationAutomationModal({
   loading = false,
   loadingMsg = '',
   onClose,
+  title = 'CPCB Registration',
+  subtitle = 'Live progress from the automation browser',
+  completeMessage = 'CPCB account created successfully. Closing…',
+  captchaStepHint = 'Enter the captcha to finish registration',
+  submitCaptchaLabel = 'Submit Captcha',
   // Email OTP
   email = '',
   emailOtp = '',
@@ -65,6 +69,11 @@ export default function RegistrationAutomationModal({
   captchaSubmitting = false,
   captchaRefreshing = false,
   otpError = '',
+  // Login OTP (new application flow)
+  loginOtp = '',
+  onLoginOtpChange,
+  onVerifyLoginOtp,
+  onResendLoginOtp,
 }) {
   const logsEndRef = useRef(null);
 
@@ -81,8 +90,9 @@ export default function RegistrationAutomationModal({
     running: 'Automation in progress',
     email_otp: 'Email OTP required',
     mobile_otp: 'Mobile OTP required',
+    login_otp: 'Login OTP required',
     captcha: 'Captcha required',
-    complete: 'Registration complete',
+    complete: 'Complete',
     error: 'Automation stopped',
   }[phase] || 'Automation';
 
@@ -107,16 +117,14 @@ export default function RegistrationAutomationModal({
               ) : (
                 <Sparkles size={18} className="text-green-600 shrink-0" />
               )}
-              <h3 className="text-lg font-semibold text-slate-800">CPCB Registration</h3>
+              <h3 className="text-lg font-semibold text-slate-800">{title}</h3>
             </div>
-            <p className="text-xs text-slate-500 mt-1">
-              Live progress from the automation browser
-            </p>
+            <p className="text-xs text-slate-500 mt-1">{subtitle}</p>
           </div>
           <button
             type="button"
             onClick={onClose}
-            aria-label="Close registration modal"
+            aria-label="Close automation modal"
             className="text-slate-400 hover:text-slate-600 p-1 rounded-lg hover:bg-slate-100 shrink-0"
           >
             <X size={18} />
@@ -127,14 +135,16 @@ export default function RegistrationAutomationModal({
           <p className="text-xs font-semibold uppercase tracking-wide opacity-80">{phaseLabel}</p>
           <p className="text-sm font-medium mt-0.5 break-words">
             {phase === 'complete'
-              ? 'CPCB account created successfully. Closing…'
+              ? completeMessage
               : phase === 'email_otp'
                 ? `Enter the OTP sent to ${email}`
                 : phase === 'mobile_otp'
                   ? `Enter the SMS OTP sent to ${mobile}`
-                  : phase === 'captcha'
-                    ? 'Enter the captcha to finish registration'
-                    : currentStep || loadingMsg || 'Starting automation…'}
+                  : phase === 'login_otp'
+                    ? 'Enter the 6-digit login OTP from email/SMS'
+                    : phase === 'captcha'
+                      ? captchaStepHint
+                      : currentStep || loadingMsg || 'Starting automation…'}
           </p>
           {loading && phase === 'running' && (
             <p className="text-xs mt-1 flex items-center gap-1.5 opacity-80">
@@ -294,10 +304,9 @@ export default function RegistrationAutomationModal({
               placeholder="Enter captcha"
               maxLength={6}
               disabled={captchaSubmitting}
-              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60"
+              className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 uppercase tracking-widest"
               autoFocus
             />
-            {captchaError && <p className="text-xs text-red-600">{captchaError}</p>}
             <div className="flex justify-end">
               <button
                 type="button"
@@ -306,7 +315,51 @@ export default function RegistrationAutomationModal({
                 className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
               >
                 {captchaSubmitting && <Loader2 size={14} className="animate-spin" />}
-                Submit Captcha
+                {submitCaptchaLabel}
+              </button>
+            </div>
+          </div>
+        )}
+
+        {phase === 'login_otp' && (
+          <div className="px-5 pb-4 space-y-3 border-t border-slate-100 pt-4">
+            <input
+              type="text"
+              inputMode="numeric"
+              value={loginOtp}
+              onChange={(e) => onLoginOtpChange?.(e.target.value.replace(/\D/g, '').slice(0, 6))}
+              onKeyDown={(e) => e.key === 'Enter' && !otpSubmitting && onVerifyLoginOtp?.()}
+              placeholder="Enter 6-digit login OTP"
+              disabled={otpSubmitting}
+              maxLength={6}
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 tracking-widest ${
+                otpError ? 'border-red-400 focus:ring-red-500' : 'border-slate-300'
+              }`}
+              autoFocus
+            />
+            <div className="flex items-center justify-between gap-3">
+              {!isResendActive ? (
+                <span className="text-xs text-slate-500">
+                  Resend in <span className="font-medium">{formatTimer?.(otpTimer)}</span>
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  disabled={otpSubmitting}
+                  onClick={onResendLoginOtp}
+                  className="text-xs text-green-600 font-medium underline disabled:opacity-50"
+                >
+                  Resend OTP
+                </button>
+              )}
+              <button
+                type="button"
+                onClick={onVerifyLoginOtp}
+                disabled={otpSubmitting || loginOtp.replace(/\D/g, '').length !== 6}
+                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
+              >
+                {otpSubmitting && <Loader2 size={14} className="animate-spin" />}
+                Verify Login OTP
               </button>
             </div>
           </div>
