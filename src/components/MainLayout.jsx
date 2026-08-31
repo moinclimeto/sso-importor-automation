@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet, Activity
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
 import { getApi } from '../utils/pwpApi.js';
@@ -35,6 +35,7 @@ const navLinks = [
   */
   { to: '/doc-processor', icon: FileScan, label: 'Doc Processor' },
   { to: '/master-data', icon: Database, label: 'Master Data' },
+  { to: '/diagnostics', icon: Activity, label: 'Diagnostics' },
 ];
 
 const pageHeaders = {
@@ -66,6 +67,7 @@ const pageHeaders = {
     subtitle: 'Upload and track documents by category',
     showUpload: true,
   },
+  '/diagnostics': { title: 'Diagnostics', subtitle: 'Crash reports, Windows compatibility and error monitoring' },
   '/production-entry': {
     title: 'Production Data',
     subtitle: 'Manage production entries',

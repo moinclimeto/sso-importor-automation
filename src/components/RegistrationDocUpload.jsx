@@ -11,6 +11,7 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
+  formatCpcbFileNameRenameNotice,
   validateCpcbPortalFileName,
   validateCpcbPortalFilePath,
 } from '../utils/registrationDataMapper.js';
@@ -227,7 +228,7 @@ function DocListRow({ item, onRemove, removing }) {
           {item.status === 'processing' && 'Extracting…'}
           {item.status === 'done' && !nameIssue.valid && (
             <span className="block text-amber-700 mt-1">
-              CPCB naam issue: &quot;{nameIssue.fileName}&quot; → &quot;{nameIssue.suggestedName}&quot; rakhein
+              CPCB file name issue: &quot;{nameIssue.fileName}&quot; will be saved as &quot;{nameIssue.suggestedName}&quot;
             </span>
           )}
         </p>
@@ -387,7 +388,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       const check = validateCpcbPortalFileName(file.name, 'document');
       if (!check.valid) {
         showToast?.(
-          `"${file.name}" CPCB portal par reject ho sakta hai. App save karte waqt "${check.suggestedName}" naam use karegi — ya pehle khud rename kar dein.`,
+          formatCpcbFileNameRenameNotice(file.name, check.suggestedName),
           'warning',
           { duration: 12000 }
         );
@@ -738,7 +739,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
             Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically.
-            CPCB portal simple file names accept karta hai (jaise <strong>person_pan.pdf</strong>) — spaces/brackets avoid karein.
+            The CPCB portal accepts simple file names (for example <strong>person_pan.pdf</strong>). Avoid spaces and brackets.
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">

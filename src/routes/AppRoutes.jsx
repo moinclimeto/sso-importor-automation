@@ -1,4 +1,4 @@
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import LoginPage from '../pages/Login.jsx';
 import MainLayout from '../components/MainLayout.jsx';
@@ -26,6 +26,7 @@ import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 import MasterDataPage from '../pages/MasterDataPage.jsx';
 import CpcbRegistrationPage from '../pages/CpcbRegistrationPage.jsx';
 import NewApplicationPage from '../pages/NewApplicationPage.jsx';
+import DiagnosticsPage from '../pages/DiagnosticsPage.jsx';
 
 function ProtectedRoute({ children }) {
   const { isLoggedIn, loading } = useAuth();
@@ -41,7 +42,7 @@ function ProtectedRoute({ children }) {
 
 export default function AppRoutes() {
   return (
-    <BrowserRouter>
+    <HashRouter>
       <Routes>
         <Route path="/login" element={<LoginPage />} />
         <Route path="/" element={<Navigate to="/cpcb-dashboard" replace />} />
@@ -78,10 +79,12 @@ export default function AppRoutes() {
           <Route path="registration-form" element={<Navigate to="/cpcb-registration" replace />} />
           <Route path="cpcb-registration" element={<CpcbRegistrationPage />} />
           <Route path="new-application" element={<NewApplicationPage />} />
+          <Route path="diagnostics" element={<DiagnosticsPage />} />
           <Route path="supplier-master" element={<Navigate to="/master-data?tab=supplier" replace />} />
           <Route path="packaging-master" element={<Navigate to="/master-data?tab=packaging" replace />} />
         </Route>
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
-    </BrowserRouter>
+    </HashRouter>
   );
 }

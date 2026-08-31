@@ -101,13 +101,17 @@ export function formatCpcbFileNameIssue(issue = {}) {
   const label = issue.label || 'Document';
   const fileName = issue.fileName || '';
   const suggestedName = issue.suggestedName || 'document.pdf';
-  return `${label}: "${fileName}" CPCB portal par accept nahi hoga. File ka naam badal kar "${suggestedName}" rakhein — spaces, brackets ( ) aur double extension allowed nahi hain.`;
+  return `${label}: "${fileName}" is not accepted by the CPCB portal. Rename it to "${suggestedName}" — spaces, brackets ( ), and double extensions are not allowed.`;
 }
 
 export function formatCpcbFileNameIssueShort(issue = {}) {
   const fileName = issue.fileName || '';
   const suggestedName = issue.suggestedName || 'document.pdf';
-  return `"${fileName}" → "${suggestedName}" (simple naam, bina space/brackets ke)`;
+  return `"${fileName}" → "${suggestedName}" (use a simple name without spaces or brackets)`;
+}
+
+export function formatCpcbFileNameRenameNotice(originalName = '', suggestedName = 'document.pdf') {
+  return `The CPCB portal rejects file names like "${originalName}". The app will save it as "${suggestedName}".`;
 }
 
 const DOC_TYPE_LABELS = {

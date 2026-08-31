@@ -277,6 +277,7 @@ export {
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
   formatCpcbFileNameIssueShort,
+  formatCpcbFileNameRenameNotice,
   validateCpcbPortalFileName,
   validateCpcbPortalFilePath,
 } from '../../shared/cpcbPortalFileName.js';

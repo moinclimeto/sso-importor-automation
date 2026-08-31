@@ -678,12 +678,12 @@ export default function RegistrationPartB({
             ) : null}
             {section4PartAIssues.length > 0 ? (
               <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 space-y-1">
-                <p className="font-semibold">Part A 3c aur Section 4 match nahi kar rahe (CPCB ±40% rule)</p>
+                <p className="font-semibold">Part A 3c and Section 4 do not match (CPCB ±40% rule)</p>
                 {section4PartAIssues.map((issue) => (
                   <p key={`${issue.year}-${issue.catKey}`}>{formatSection4PartAIssue(issue)}</p>
                 ))}
                 <p className="text-amber-800">
-                  Part A → Plastic Consumed (3c) aur Part B → Section 4 totals ko align karein, phir Register/automation chalayein.
+                  Align Part A → Plastic Consumed (3c) with Part B → Section 4 totals, then run Register / automation.
                 </p>
               </div>
             ) : null}

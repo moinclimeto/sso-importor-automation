@@ -187,7 +187,7 @@ export function validateSection4AgainstPlasticConsumed(
           section4Sum,
           minAllowed: 0,
           maxAllowed: 0,
-          message: `Section 4 ${label} (${year}): total ${section4Sum} TPA hai lekin Part A 3c me ${catKey}=0. Pehle Part A me plastic consumed bharein ya Section 4 adjust karein.`,
+          message: `Section 4 ${label} (${year}): total is ${section4Sum} TPA, but Part A 3c has ${catKey}=0. Enter plastic consumed in Part A first, or adjust Section 4.`,
         });
         continue;
       }
@@ -203,7 +203,7 @@ export function validateSection4AgainstPlasticConsumed(
           section4Sum,
           minAllowed,
           maxAllowed,
-          message: `Section 4 ${label} (${year}): pre+post+export total ${section4Sum} TPA Part A 3c value ${partAVal} ke ±40% range (${minAllowed}–${maxAllowed}) me nahi hai.`,
+          message: `Section 4 ${label} (${year}): pre+post+export total ${section4Sum} TPA is outside the ±40% range of Part A 3c value ${partAVal} (${minAllowed}–${maxAllowed}).`,
         });
       }
     }
@@ -214,7 +214,7 @@ export function validateSection4AgainstPlasticConsumed(
 
 export function formatSection4PartAIssue(issue = {}) {
   return issue.message
-    || `Section 4 ${issue.category || ''} (${issue.year || ''}) Part A 3c se match nahi kar raha.`;
+    || `Section 4 ${issue.category || ''} (${issue.year || ''}) does not match Part A 3c.`;
 }
 
 function filterByCompany(records = [], companyId = null) {

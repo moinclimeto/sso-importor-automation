@@ -8,6 +8,7 @@ import {
   AUTO_FILLED_FIELDS,
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
+  formatCpcbFileNameRenameNotice,
   validateCpcbPortalFileName,
 } from '../utils/registrationDataMapper.js';
 import {
@@ -427,7 +428,7 @@ export default function NewApplicationPage() {
       const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
       if (!nameCheck.valid) {
         showToast(
-          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+          formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
           'warning',
           { duration: 12000 }
         );
@@ -516,7 +517,7 @@ export default function NewApplicationPage() {
       showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
       if (uploadNameIssues.length > 1) {
         showToast(
-          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          `${uploadNameIssues.length} file names do not meet CPCB portal rules. Rename them and upload again.`,
           'warning',
           { duration: 12000 }
         );
@@ -907,7 +908,7 @@ export default function NewApplicationPage() {
       showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
       if (section4Issues.length > 1) {
         showToast(
-          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          `${section4Issues.length} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
           'warning',
           { duration: 12000 },
         );
@@ -1349,7 +1350,7 @@ export default function NewApplicationPage() {
                       const nameCheck = validateCpcbPortalFileName(file.name, 'supporting_category_doc');
                       if (!nameCheck.valid) {
                         showToast(
-                          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+                          formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
                           'warning',
                           { duration: 12000 }
                         );
@@ -1460,7 +1461,7 @@ export default function NewApplicationPage() {
                           const nameCheck = validateCpcbPortalFileName(file.name, 'unit_gst');
                           if (!nameCheck.valid) {
                             showToast(
-                              `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+                              formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
                               'warning',
                               { duration: 12000 }
                             );

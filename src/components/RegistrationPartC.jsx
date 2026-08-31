@@ -10,7 +10,7 @@ import {
   resolveIecNumber,
 } from '../utils/partCLetterValues.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
-import { validateCpcbPortalFileName } from '../utils/registrationDataMapper.js';
+import { formatCpcbFileNameRenameNotice, validateCpcbPortalFileName } from '../utils/registrationDataMapper.js';
 
 function DocumentCard({
   title,
@@ -135,7 +135,7 @@ export default function RegistrationPartC({
     const nameCheck = validateCpcbPortalFileName(file.name, docBase);
     if (!nameCheck.valid) {
       showToast?.(
-        `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
+        formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
         'warning',
         { duration: 12000 }
       );

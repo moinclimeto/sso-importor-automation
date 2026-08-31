@@ -1,36 +1,7 @@
-import fs from 'fs';
-import path from 'path';
-import { fileURLToPath } from 'url';
-
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+import { loadEnvFile } from './loadEnv.js';
 
 const DEFAULT_CLIMETO_API = 'https://api.climeto.in/api';
 export const CLIMETO_SESSION_KEY = 'climeto_user_session';
-
-function loadEnvFile() {
-  const candidates = [
-    path.join(process.cwd(), '.env'),
-    path.join(__dirname, '../.env'),
-  ];
-  for (const file of candidates) {
-    if (!fs.existsSync(file)) continue;
-    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"'))
-        || (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      if (!process.env[key]) process.env[key] = value;
-    }
-  }
-}
 
 function normalizeBaseUrl(value) {
   const raw = String(value || '').trim();

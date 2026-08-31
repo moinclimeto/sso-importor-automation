@@ -11,6 +11,7 @@ import {
   parseGstLabeledAddress,
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
+  formatCpcbFileNameRenameNotice,
   validateCpcbPortalFileName,
 } from '../utils/registrationDataMapper.js';
 import {
@@ -481,7 +482,7 @@ export default function CpcbRegistrationPage() {
     const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
     if (!nameCheck.valid) {
       showToast(
-        `"${file.name}" jaisa naam CPCB portal reject karta hai. App ise "${nameCheck.suggestedName}" ke naam se save karegi.`,
+        formatCpcbFileNameRenameNotice(file.name, nameCheck.suggestedName),
         'warning',
         { duration: 12000 }
       );
@@ -584,7 +585,7 @@ export default function CpcbRegistrationPage() {
       showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
       if (uploadNameIssues.length > 1) {
         showToast(
-          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          `${uploadNameIssues.length} file names do not meet CPCB portal rules. Rename them and upload again.`,
           'warning',
           { duration: 12000 }
         );
@@ -1018,7 +1019,7 @@ export default function CpcbRegistrationPage() {
       showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
       if (section4Issues.length > 1) {
         showToast(
-          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          `${section4Issues.length} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
           'warning',
           { duration: 12000 },
         );
@@ -1366,7 +1367,7 @@ export default function CpcbRegistrationPage() {
         {fileNameIssues.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
             <p className="text-sm font-semibold text-amber-900">
-              CPCB file name issue — registration tab tak fix karein
+              CPCB file name issue — fix this before registration
             </p>
             <ul className="space-y-1.5">
               {fileNameIssues.map((issue) => (
@@ -1376,7 +1377,7 @@ export default function CpcbRegistrationPage() {
               ))}
             </ul>
             <p className="text-xs text-amber-800">
-              Simple naam use karein jaise <strong>person_pan.pdf</strong> — bina space, brackets ( ) ya double extension ke.
+              Use a simple name such as <strong>person_pan.pdf</strong> — no spaces, brackets ( ), or double extensions.
             </p>
           </div>
         )}

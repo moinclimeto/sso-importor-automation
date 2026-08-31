@@ -1,6 +1,6 @@
 import os from 'os';
 import path from 'path';
-import { chromium } from 'playwright';
+import { chromium } from './playwrightRuntime.js';
 import { getRegSession, uploadDocumentByLabel } from './cpcbRegistration.js';
 import { resolveRegistrationLoginCredentials } from '../db/registrationDummyData.js';
 import { getRegistrationDetails } from '../db/registrationDb.js';
@@ -13,7 +13,7 @@ import {
   attachCaptchaNetworkListenerToContext,
 } from '../ocr_captcha/captchaPortal.js';
 import { runEprExtraction } from './cpcbEprScraper.js';
-import { CPCB_PERSISTENT_LAUNCH_OPTS, prepareCpcbBrowserPage } from './cpcbBrowserLaunch.js';
+import { getCpcbPersistentLaunchOpts, prepareCpcbBrowserPage } from './cpcbBrowserLaunch.js';
 import {
   fillNewApplicationFlow,
 } from './fillRegistrationForms.js';
@@ -86,15 +86,11 @@ async function ensureLoginPage(onLog) {
   const userDataDir = path.join(os.tmpdir(), 'playwright_cpcb_login_session');
 
   try {
-    loginBrowser = await chromium.launchPersistentContext(userDataDir, {
-      ...CPCB_PERSISTENT_LAUNCH_OPTS,
-    });
+    loginBrowser = await chromium.launchPersistentContext(userDataDir, getCpcbPersistentLaunchOpts());
   } catch (err) {
     if (onLog) onLog('Previous browser lock found — relaunching...');
     await discardLoginBrowser();
-    loginBrowser = await chromium.launchPersistentContext(userDataDir, {
-      ...CPCB_PERSISTENT_LAUNCH_OPTS,
-    });
+    loginBrowser = await chromium.launchPersistentContext(userDataDir, getCpcbPersistentLaunchOpts());
   }
 
   const pages = loginBrowser.pages();

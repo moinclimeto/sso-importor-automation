@@ -2,6 +2,8 @@
   "name": "sso-importor-automation",
   "version": "1.0.0",
   "private": true,
+  "description": "Climeto PWP desktop app for CPCB EPR registration and document processing",
+  "author": "Climeto",
   "type": "module",
   "main": "electron/main.js",
   "scripts": {
@@ -10,7 +12,10 @@
     "electron:dev": "concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://localhost:5180 && cross-env NODE_ENV=development electron .\"",
     "electron:build": "npm run build && electron-builder",
     "setup:ghostscript": "node scripts/setup-ghostscript.mjs",
-    "preelectron:build": "node scripts/setup-ghostscript.mjs",
+    "setup:playwright": "node scripts/setup-playwright.mjs",
+    "setup:vcredist": "node scripts/setup-vcredist.mjs",
+    "prepare:installer": "node scripts/prepare-installer.mjs",
+    "preelectron:build": "node scripts/prepare-installer.mjs",
     "db:sync": "node sync_to_sqlite.js",
     "qr:docker:build": "docker build -t pwp-qr-scanner:latest ./scripts/qr_scanner",
     "qr:scan": "node scripts/test-qr-scan.mjs",
@@ -20,6 +25,7 @@
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
     "@napi-rs/canvas": "^1.0.3",
+    "@sentry/electron": "^7.17.0",
     "@undecaf/barcode-detector-polyfill": "^0.9.23",
     "@undecaf/zbar-wasm": "^0.11.0",
     "@zxing/library": "^0.21.3",
@@ -73,9 +79,25 @@
       "output": "release",
       "buildResources": "assets"
     },
+    "npmRebuild": false,
     "files": [
       "dist/**/*",
-      "electron/**/*"
+      "electron/**/*",
+      "shared/**/*",
+      "src/extractors/**/*",
+      "!node_modules/bullmq/**",
+      "!node_modules/ioredis/**",
+      "!node_modules/msgpackr/**",
+      "!node_modules/msgpackr-extract/**",
+      "!node_modules/@msgpackr-extract/**"
+    ],
+    "asarUnpack": [
+      "node_modules/playwright/**",
+      "node_modules/playwright-core/**",
+      "node_modules/sqlite3/**",
+      "node_modules/sharp/**",
+      "node_modules/@napi-rs/**",
+      "node_modules/@undecaf/zbar-wasm/**"
     ],
     "extraResources": [
       {
@@ -88,11 +110,35 @@
         "filter": [
           "**/*"
         ]
+      },
+      {
+        "from": "vendor/playwright-browsers",
+        "to": "playwright-browsers",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/vcredist",
+        "to": "vcredist",
+        "filter": [
+          "**/*"
+        ]
+      },
+      {
+        "from": "vendor/app-env",
+        "to": "app-env",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
       "target": "nsis",
       "icon": "assets/icon.png"
+    },
+    "nsis": {
+      "include": "build/installer.nsh"
     },
     "mac": {
       "target": "dmg",

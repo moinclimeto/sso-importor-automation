@@ -1,4 +1,4 @@
-import { chromium } from 'playwright';
+import { chromium, withPlaywrightLaunchOptions } from './playwrightRuntime.js';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -1588,7 +1588,10 @@ export async function startRegistrationFlow(data, onLog) {
     if (onLog) onLog('Starting registration flow...');
     
     // Launch browser
-    regBrowser = await chromium.launch({ headless: false, args: CPCB_CHROMIUM_ARGS });
+    regBrowser = await chromium.launch(withPlaywrightLaunchOptions({
+      headless: false,
+      args: CPCB_CHROMIUM_ARGS,
+    }));
     regContext = await regBrowser.newContext({ viewport: null });
     regPage = await regContext.newPage();
     await prepareCpcbBrowserPage(regPage);

@@ -54,9 +54,13 @@ export function registerAuthHandlers() {
     }
   });
 
-  restoreClimetoSession(getDb()).catch((err) => {
+  try {
+    restoreClimetoSession(getDb()).catch((err) => {
+      console.warn('Failed to restore Climeto session on startup', err.message);
+    });
+  } catch (err) {
     console.warn('Failed to restore Climeto session on startup', err.message);
-  });
+  }
 
   console.log('[auth] IPC handlers registered (auth:login, auth:logout, auth:getSession, auth:syncToken)');
 }
