@@ -49,14 +49,10 @@ export async function fetchComputedPartBSection5b(args = {}) {
 }
 
 export function mergePartBSection5b(existing = [], computed = []) {
-  if (!computed.length) return [];
-  if (!existing.length) return computed;
   return mergeSec5bRows(existing, computed);
 }
 
 export function mergePartBSection5d(existing = [], computed = []) {
-  if (!computed.length) return [];
-  if (!existing.length) return computed;
   return mergeSec5dRows(existing, computed);
 }
 

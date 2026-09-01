@@ -141,7 +141,7 @@ export default function RegistrationAutomationModal({
                 : phase === 'mobile_otp'
                   ? `Enter the SMS OTP sent to ${mobile}`
                   : phase === 'login_otp'
-                    ? 'Enter the 6-digit login OTP from email/SMS'
+                    ? (otpError || 'Enter the 6-digit login OTP from email/SMS')
                     : phase === 'captcha'
                       ? captchaStepHint
                       : currentStep || loadingMsg || 'Starting automation…'}
@@ -332,11 +332,14 @@ export default function RegistrationAutomationModal({
               placeholder="Enter 6-digit login OTP"
               disabled={otpSubmitting}
               maxLength={6}
-              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 tracking-widest ${
+              className={`w-full px-3 py-2 border rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 tracking-widest text-center text-lg ${
                 otpError ? 'border-red-400 focus:ring-red-500' : 'border-slate-300'
               }`}
               autoFocus
             />
+            {otpError ? (
+              <p className="text-xs text-red-600">{otpError}</p>
+            ) : null}
             <div className="flex items-center justify-between gap-3">
               {!isResendActive ? (
                 <span className="text-xs text-slate-500">

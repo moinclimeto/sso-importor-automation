@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   alignSec5bRowsToPlasticConsumed,
   prepareSec5bForPortal,
+  reconcileSec5bForAutomation,
   validateSection5bAgainstPlasticConsumed,
 } from './partBSection5.js';
 
@@ -38,4 +39,53 @@ test('alignSec5bRowsToPlasticConsumed scales existing 5b rows to Part A 3c', () 
   assert.equal(Number(aligned.find((r) => r.category.includes('Cat-III')).quantity), 7);
   assert.equal(issues.filter((i) => i.year === '2025-26' && i.catKey === 'cat2').length, 0);
   assert.equal(issues.filter((i) => i.year === '2025-26' && i.catKey === 'cat3').length, 0);
+});
+
+test('reconcileSec5bForAutomation keeps manual rows without purchase sourceRecordId', () => {
+  const existing = [
+    {
+      entityName: 'Manual Vendor',
+      quantity: '3',
+      category: 'Rigid Plastic (Cat-I)',
+      financialYear: '2024-25',
+      invoiceDoc: 'manual.pdf',
+    },
+    {
+      entityName: 'BlueGram Distributors',
+      quantity: '1',
+      category: 'Flexible Plastic (Cat-II)',
+      financialYear: '2025-26',
+      sourceRecordId: 42,
+      invoiceDoc: 'published.pdf',
+    },
+  ];
+  const computed = [
+    {
+      entityName: 'BlueGram Distributors',
+      quantity: '1',
+      category: 'Flexible Plastic (Cat-II)',
+      financialYear: '2025-26',
+      sourceRecordId: 42,
+      invoiceDoc: 'published.pdf',
+    },
+  ];
+
+  const merged = reconcileSec5bForAutomation(existing, computed);
+  assert.equal(merged.length, 2);
+  assert.ok(merged.some((row) => row.entityName === 'Manual Vendor'));
+  assert.ok(merged.some((row) => String(row.sourceRecordId) === '42'));
+});
+
+test('reconcileSec5bForAutomation keeps manual-only rows when computed is empty', () => {
+  const existing = [
+    {
+      entityName: 'Manual Vendor',
+      quantity: '3',
+      category: 'Compostable Plastic (Cat-IV)',
+      financialYear: '2024-25',
+    },
+  ];
+  const merged = reconcileSec5bForAutomation(existing, []);
+  assert.equal(merged.length, 1);
+  assert.equal(merged[0].entityName, 'Manual Vendor');
 });

@@ -594,53 +594,96 @@ export function normalizeSec5dRowForPortal(row = {}) {
   };
 }
 
+function sec5RowCompositeKey(row = {}) {
+  const name = String(row.entityName || '').trim().toLowerCase();
+  const invoice = String(row.sourceInvoiceNo || row.invoiceNo || '').trim().toLowerCase();
+  const date = String(row.date || '').trim();
+  return `${name}::${invoice}::${date}`;
+}
+
+function preserveManualSec5Rows(existing = [], fromComputed = [], computed = []) {
+  const normalizedExisting = existing.map(normalizeSec5bRowForPortal).filter(sec5bRowHasData);
+  const computedSourceIds = new Set(
+    computed.map((row) => String(row.sourceRecordId ?? '')).filter(Boolean),
+  );
+  const computedKeys = new Set(fromComputed.map(sec5RowCompositeKey));
+
+  return normalizedExisting.filter((row) => {
+    if (row.sourceRecordId != null && row.sourceRecordId !== '') {
+      return !computedSourceIds.has(String(row.sourceRecordId));
+    }
+    return !computedKeys.has(sec5RowCompositeKey(row));
+  });
+}
+
 export function reconcileSec5bForAutomation(existing = [], computed = []) {
-  if (computed.length) {
-    const maps = existingSec5RowMaps(existing);
-    return computed
-      .map((computedRow) => {
-        const prev = findExistingSec5Row(maps, computedRow);
-        return normalizeSec5bRowForPortal({
-          ...(prev || {}),
-          ...computedRow,
-          entityType: computedRow.entityType,
-          materialType: computedRow.materialType,
-          plastic_type: computedRow.plastic_type || computedRow.materialType,
-          category: computedRow.category || prev?.category || '',
-          date: computedRow.date || prev?.date || '',
-          invoiceDoc: computedRow.invoiceDoc || prev?.invoiceDoc || '',
-        });
-      })
-      .filter((row) => row.entityName || row.quantity);
+  const normalizedExisting = existing.map(normalizeSec5bRowForPortal).filter(sec5bRowHasData);
+
+  if (!computed.length) {
+    return normalizedExisting;
   }
 
-  return existing
-    .map(normalizeSec5bRowForPortal)
-    .filter((row) => row.entityName || row.quantity);
+  const maps = existingSec5RowMaps(normalizedExisting);
+  const fromComputed = computed
+    .map((computedRow) => {
+      const prev = findExistingSec5Row(maps, computedRow);
+      return normalizeSec5bRowForPortal({
+        ...(prev || {}),
+        ...computedRow,
+        entityType: computedRow.entityType,
+        materialType: computedRow.materialType,
+        plastic_type: computedRow.plastic_type || computedRow.materialType,
+        category: computedRow.category || prev?.category || '',
+        date: computedRow.date || prev?.date || '',
+        invoiceDoc: computedRow.invoiceDoc || prev?.invoiceDoc || '',
+      });
+    })
+    .filter(sec5bRowHasData);
+
+  const manualRows = preserveManualSec5Rows(normalizedExisting, fromComputed, computed);
+  return [...fromComputed, ...manualRows];
+}
+
+function preserveManualSec5dRows(existing = [], fromComputed = [], computed = []) {
+  const normalizedExisting = existing.map(normalizeSec5dRowForPortal).filter(sec5dRowHasData);
+  const computedSourceIds = new Set(
+    computed.map((row) => String(row.sourceRecordId ?? '')).filter(Boolean),
+  );
+  const computedKeys = new Set(fromComputed.map(sec5RowCompositeKey));
+
+  return normalizedExisting.filter((row) => {
+    if (row.sourceRecordId != null && row.sourceRecordId !== '') {
+      return !computedSourceIds.has(String(row.sourceRecordId));
+    }
+    return !computedKeys.has(sec5RowCompositeKey(row));
+  });
 }
 
 export function reconcileSec5dForAutomation(existing = [], computed = []) {
-  if (computed.length) {
-    const maps = existingSec5RowMaps(existing);
-    return computed
-      .map((computedRow) => {
-        const prev = findExistingSec5Row(maps, computedRow);
-        return normalizeSec5dRowForPortal({
-          ...(prev || {}),
-          ...computedRow,
-          entityType: computedRow.entityType,
-          materialType: computedRow.materialType,
-          plastic_type: computedRow.plastic_type || computedRow.materialType,
-          category: computedRow.category || prev?.category || '',
-          invoiceDoc: computedRow.invoiceDoc || prev?.invoiceDoc || '',
-        });
-      })
-      .filter((row) => row.entityName || row.quantity);
+  const normalizedExisting = existing.map(normalizeSec5dRowForPortal).filter(sec5dRowHasData);
+
+  if (!computed.length) {
+    return normalizedExisting;
   }
 
-  return existing
-    .map(normalizeSec5dRowForPortal)
-    .filter((row) => row.entityName || row.quantity);
+  const maps = existingSec5RowMaps(normalizedExisting);
+  const fromComputed = computed
+    .map((computedRow) => {
+      const prev = findExistingSec5Row(maps, computedRow);
+      return normalizeSec5dRowForPortal({
+        ...(prev || {}),
+        ...computedRow,
+        entityType: computedRow.entityType,
+        materialType: computedRow.materialType,
+        plastic_type: computedRow.plastic_type || computedRow.materialType,
+        category: computedRow.category || prev?.category || '',
+        invoiceDoc: computedRow.invoiceDoc || prev?.invoiceDoc || '',
+      });
+    })
+    .filter(sec5dRowHasData);
+
+  const manualRows = preserveManualSec5dRows(normalizedExisting, fromComputed, computed);
+  return [...fromComputed, ...manualRows];
 }
 
 export function sec5bRowHasData(row = {}) {

@@ -46,12 +46,17 @@ export default function RegistrationPartB({
   generalInfo,
   setGeneralInfo,
   gstin = '',
+  onPersist,
 }) {
   const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState({});
   const operatingStatesKey = JSON.stringify(generalInfo.operatingStates || []);
   const hydrateRef = useRef('');
   const showHistoricalSections = requiresHistoricalEprData(generalInfo.yearOfCommencement);
+
+  const persistPartB = () => {
+    onPersist?.().catch((err) => console.error('Failed to save Part B:', err));
+  };
 
   const section4PartAIssues = useMemo(
     () => (showHistoricalSections
@@ -257,6 +262,7 @@ export default function RegistrationPartB({
       };
     });
     setActiveModal(null);
+    persistPartB();
   };
 
   const renderInput = (label, field, type="text", placeholder="") => (
@@ -504,6 +510,7 @@ export default function RegistrationPartB({
                                 sec5b: prev.partBTransactions.sec5b.filter((_, idx) => idx !== i),
                               },
                             }));
+                            persistPartB();
                           }}
                           className="text-red-500 hover:text-red-700 p-1"
                           title="Delete"
@@ -592,6 +599,7 @@ export default function RegistrationPartB({
                                 sec5d: prev.partBTransactions.sec5d.filter((_, idx) => idx !== i),
                               },
                             }));
+                            persistPartB();
                           }}
                           className="text-red-500 hover:text-red-700 p-1"
                           title="Delete"
@@ -658,6 +666,7 @@ export default function RegistrationPartB({
                             const newRows = prev.partBTransactions[secKey].filter((_, idx) => idx !== i);
                             return { ...prev, partBTransactions: { ...prev.partBTransactions, [secKey]: newRows } };
                           });
+                          persistPartB();
                         }} className="text-red-500 hover:text-red-700 p-1" title="Delete">
                           <Trash2 size={16} />
                         </button>
@@ -708,7 +717,11 @@ export default function RegistrationPartB({
                   Align Part A → Plastic Consumed (3c) with Part B → Section 4 totals, then run Register / automation.
                 </p>
               </div>
-            ) : null}
+            ) : (
+              <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 rounded-md px-3 py-2 mt-2">
+                Section 4 totals match Part A 3c (±40% rule) — no change needed here.
+              </div>
+            )}
           </div>
           
           <div className="overflow-x-auto border border-slate-300">
@@ -791,15 +804,14 @@ export default function RegistrationPartB({
           <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
           {section5bPartAIssues.length > 0 ? (
             <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-4 space-y-1">
-              <p className="font-semibold">Part A 3c and Section 5b (unregistered purchases) do not match (CPCB ±40% rule)</p>
-              {section5bPartAIssues.slice(0, 6).map((issue) => (
+              <p className="font-semibold">
+                Part A 3c and Section 5b (unregistered purchases) do not match — this blocks Register ({section5bPartAIssues.length} issue(s))
+              </p>
+              {section5bPartAIssues.map((issue) => (
                 <p key={`${issue.year}-${issue.catKey}`}>{formatSection5bPartAIssue(issue)}</p>
               ))}
-              {section5bPartAIssues.length > 6 ? (
-                <p>+{section5bPartAIssues.length - 6} more year/category mismatch(es)</p>
-              ) : null}
               <p className="text-amber-800">
-                Add published unregistered purchase invoices for missing years/categories, or edit 5b quantities. Automation scales existing 5b rows to Part A 3c where rows exist. Section 5a is manual for now.
+                Section 5a is empty/manual, so Section 5b alone must cover Part A 3c per year and category. Add published unregistered purchase invoices for missing years/categories, or add manual 5b rows with invoice PDFs. Automation scales existing 5b quantities (e.g. 1→5, 2→7) but cannot create rows without purchase data.
               </p>
             </div>
           ) : null}

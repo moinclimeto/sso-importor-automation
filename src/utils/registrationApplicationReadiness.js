@@ -206,3 +206,30 @@ export function summarizeRegisterBlockers(blockers = []) {
   if (blockers.length === 1) return blockers[0].label;
   return `${blockers[0].label} (+${blockers.length - 1} more)`;
 }
+
+/** Split Part B ±40% blockers — Section 4 (PW generated) vs Section 5b (unregistered purchases). */
+export function getPartBPlasticValidationSummary(blockers = []) {
+  const section4 = blockers.filter((b) => String(b.id || '').startsWith('section4-'));
+  const section5b = blockers.filter((b) => String(b.id || '').startsWith('section5b-'));
+  return { section4, section5b };
+}
+
+/** User-facing toasts for Part B plastic validation (avoids mislabeling 5b issues as Section 4). */
+export function formatPartBPlasticValidationToasts(blockers = []) {
+  const { section4, section5b } = getPartBPlasticValidationSummary(blockers);
+  const messages = [];
+
+  if (section4.length) {
+    messages.push({
+      type: 'warning',
+      text: `${section4.length} Section 4 total(s) are outside ±40% of Part A 3c. Update Part B → Section 4 (PW generated table).`,
+    });
+  }
+  if (section5b.length) {
+    messages.push({
+      type: 'warning',
+      text: `${section5b.length} Section 5b total(s) are outside ±40% of Part A 3c. Add published unregistered purchases or manual 5b rows (5a is manual).`,
+    });
+  }
+  return messages;
+}

@@ -37,7 +37,7 @@ import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
-import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
 import RegistrationAutomationModal, {
   appendAutomationLog,
   applyAutomationLogUpdate,
@@ -228,6 +228,10 @@ export default function NewApplicationPage() {
     setAutomationPhase(phase);
     setCurrentAutomationStep(text);
     setOtpInputError(text);
+    if (phase === 'login_otp') {
+      setLoginOtp('');
+      setLoginOtpError(text);
+    }
   }, []);
 
   const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
@@ -424,7 +428,7 @@ export default function NewApplicationPage() {
   }, [applyRegistrationData, applySavedRegistration, showToast]);
 
   useEffect(() => {
-    if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
+    if (loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
       if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
@@ -1241,6 +1245,11 @@ export default function NewApplicationPage() {
         return;
       }
 
+      if (isLoginOtpFailureResult(res)) {
+        reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
+        return;
+      }
+
       if (handleLoginOnboardingResult(res)) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
@@ -1785,7 +1794,12 @@ export default function NewApplicationPage() {
         </div>
         </div>
 
-        <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
+        <RegistrationPartB
+          generalInfo={generalInfo}
+          setGeneralInfo={setGeneralInfo}
+          gstin={autoData.gstin}
+          onPersist={() => persistRegistrationForm()}
+        />
 
         <RegistrationPartC
           generalInfo={generalInfo}

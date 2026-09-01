@@ -1542,10 +1542,13 @@ export default function DocTable() {
 
 
 
-    downloadExcelTemplate(type);
-
-
-    showToast(`${title} Excel template downloaded.`, 'success');
+    downloadExcelTemplate(type)
+      .then(() => {
+        showToast(`${title} Excel template downloaded.`, 'success');
+      })
+      .catch((err) => {
+        setError(err?.message || 'Failed to download Excel template.');
+      });
 
 
   };

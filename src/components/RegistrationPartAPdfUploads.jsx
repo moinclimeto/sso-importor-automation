@@ -33,7 +33,7 @@ export default function RegistrationPartAPdfUploads({
     : FIELDS.filter((field) => field.key !== 'detailsOfProductsPath');
 
   return (
-    <div className="space-y-4">
+    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
       {visibleFields.map((field) => {
         const filePath = paths[field.key] || '';
         const uploading = uploadingField === field.key;
@@ -41,15 +41,15 @@ export default function RegistrationPartAPdfUploads({
         return (
           <div
             key={field.key}
-            className="rounded-lg border border-slate-200 bg-white p-4 space-y-2"
+            className="rounded-lg border border-slate-200 bg-white p-4 space-y-2 h-full flex flex-col"
           >
-            <label className="block text-sm font-medium text-slate-800">
+            <label className="block text-sm font-medium text-slate-800 leading-snug">
               {field.label} *
             </label>
             <p className="text-xs text-slate-500">{field.hint}</p>
 
-            <div className="flex flex-wrap items-center gap-3">
-              <label className="inline-flex items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg bg-[#0b6c7a] text-white hover:bg-teal-800 cursor-pointer">
+            <div className="flex flex-wrap items-center gap-2 mt-auto">
+              <label className="inline-flex shrink-0 items-center gap-2 text-sm font-medium px-4 py-2 rounded-lg bg-[#0b6c7a] text-white hover:bg-teal-800 cursor-pointer">
                 {uploading ? <Loader2 size={16} className="animate-spin" /> : null}
                 {filePath ? 'Replace PDF' : 'Upload PDF'}
                 <input
@@ -68,7 +68,7 @@ export default function RegistrationPartAPdfUploads({
               {filePath ? (
                 <UploadedFilePreview
                   filePath={filePath}
-                  className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-2 min-w-0 flex-1 mt-0"
+                  className="bg-emerald-50 border border-emerald-100 rounded-lg px-3 py-1.5 min-w-0 flex-1"
                 />
               ) : (
                 <span className="text-xs text-slate-400 italic">No file selected</span>

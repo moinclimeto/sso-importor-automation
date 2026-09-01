@@ -1423,18 +1423,19 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
 
     const portalErrAfterVerify = await checkLoginPortalError(page);
     if (portalErrAfterVerify) {
-      return { success: false, error: portalErrAfterVerify };
+      return { success: false, error: portalErrAfterVerify, step: 'WAITING_LOGIN_OTP' };
     }
 
     const verified = await isLoginOtpVerified(page);
     if (!verified) {
       const portalErr = await checkLoginPortalError(page);
       if (portalErr) {
-        return { success: false, error: portalErr };
+        return { success: false, error: portalErr, step: 'WAITING_LOGIN_OTP' };
       }
       return {
         success: false,
         error: 'Login OTP verification failed — check OTP and try again',
+        step: 'WAITING_LOGIN_OTP',
       };
     }
 

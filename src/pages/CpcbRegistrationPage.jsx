@@ -6,6 +6,7 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import PlasticThicknessMinInfoIcon from '../components/PlasticThicknessMinInfoIcon.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
@@ -37,7 +38,7 @@ import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import { getStartRegistrationBlockers } from '../utils/registrationStartReadiness.js';
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
-import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import RegistrationAutomationModal, {
   appendAutomationLog,
@@ -60,8 +61,12 @@ import {
   getRegisterApplicationBlockers,
   navigateToRegisterBlockerSection,
   summarizeRegisterBlockers,
+  formatPartBPlasticValidationToasts,
 } from '../utils/registrationApplicationReadiness.js';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, AlertCircle, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
+
+/** Dev-only shortcut — hidden for full Register automation testing. */
+const SHOW_RESUME_DRAFT_DEV_BUTTON = false;
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -245,6 +250,10 @@ export default function CpcbRegistrationPage() {
     setAutomationPhase(phase);
     setCurrentAutomationStep(text);
     setOtpInputError(text);
+    if (phase === 'login_otp') {
+      setLoginOtp('');
+      setLoginOtpError(text);
+    }
   }, []);
 
   const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
@@ -298,6 +307,14 @@ export default function CpcbRegistrationPage() {
           form.generalInfo.partBSection4 || prev.partBSection4 || [],
           form.generalInfo.operatingStates || prev.operatingStates || [],
         ),
+        partBTransactions: {
+          sec5a: [],
+          sec5b: [],
+          sec5c: [],
+          sec5d: [],
+          ...(prev.partBTransactions || {}),
+          ...(form.generalInfo.partBTransactions || {}),
+        },
       }));
     } 
 
@@ -469,7 +486,7 @@ export default function CpcbRegistrationPage() {
   }, [applyRegistrationData, applySavedRegistration]);
 
   useEffect(() => {
-    if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
+    if (loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
       if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
@@ -1128,13 +1145,8 @@ export default function CpcbRegistrationPage() {
     if (registerBlockers.length > 0) {
       navigateToRegisterBlockerSection(registerBlockers, { setWizardStep });
       showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
-      const section4Count = registerBlockers.filter((b) => b.section === 'partB').length;
-      if (section4Count > 1) {
-        showToast(
-          `${section4Count} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
-          'warning',
-          { duration: 12000 },
-        );
+      for (const msg of formatPartBPlasticValidationToasts(registerBlockers)) {
+        showToast(msg.text, msg.type, { duration: 12000 });
       }
       return;
     }
@@ -1359,7 +1371,10 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleLoginOnboardingResult = (res) => {
-    if (!res.success && (res.step === 'DRAFT_RESUME_FAILED' || res.step === 'APPLICATION_FILL_FAILED' || res.error)) {
+    if (
+      !res.success
+      && (res.step === 'DRAFT_RESUME_FAILED' || res.step === 'APPLICATION_FILL_FAILED' || res.step === 'LOGIN_COMPLETE')
+    ) {
       const err = res.error || (res.step === 'DRAFT_RESUME_FAILED' ? 'Draft resume failed' : 'Application form fill failed');
       failAutomationModal(err);
       showToast(err, 'error', { duration: 14000 });
@@ -1456,6 +1471,11 @@ export default function CpcbRegistrationPage() {
         return;
       }
 
+      if (isLoginOtpFailureResult(res)) {
+        reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
+        return;
+      }
+
       if (handleLoginOnboardingResult(res)) {
         setShowLoginOtpModal(false);
         setLoginOtp('');
@@ -1544,21 +1564,6 @@ export default function CpcbRegistrationPage() {
         <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
           <Loader2 size={16} className="animate-spin" />
           Loading saved registration...
-        </div>
-      )}
-
-      {registrationComplete && (
-        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4 flex items-start gap-3">
-          <CheckCircle2 size={22} className="text-green-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-green-800">Registration Complete</p>
-            <p className="text-sm text-green-700 mt-1">
-              CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
-            </p>
-            <p className="text-xs text-green-600 mt-1">
-              Fill Part A, B and C in steps, then click <strong>Register</strong> to send data to the CPCB portal.
-            </p>
-          </div>
         </div>
       )}
 
@@ -2010,47 +2015,42 @@ export default function CpcbRegistrationPage() {
                     plasticConsumedSource={plasticConsumedSource}
                   />
 
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
-                    <select
-                      name="complianceStatus"
-                      value={generalInfo.complianceStatus || ''}
-                      onChange={handleGeneralChange}
-                      className={inputClass}
-                    >
-                      <option value="">Select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                    {generalInfo.complianceStatus === 'No' && (
-                      <p className="text-xs text-red-600 mt-1 font-medium">
-                        ⚠️ Alert: Selecting "No" can lead to rejection of your application.
-                      </p>
-                    )}
-                  </div>
+                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                      <select
+                        name="complianceStatus"
+                        value={generalInfo.complianceStatus || ''}
+                        onChange={handleGeneralChange}
+                        className={inputClass}
+                      >
+                        <option value="">Select</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                      {generalInfo.complianceStatus === 'No' && (
+                        <p className="text-xs text-red-600 mt-1 font-medium">
+                          ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                        </p>
+                      )}
+                    </div>
 
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                3e) Thickness of Plastic Packaging (In Microns) *
-              </label>
-              <input
-                type="text"
-                name="thicknessOfPlastic"
-                value={generalInfo.thicknessOfPlastic || ''}
-                onChange={handleGeneralChange}
-                placeholder="Enter thickness"
-                className={inputClass}
-                required
-              />
-              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
-                <strong>Approved Minimum Thickness:</strong>
-                <ul className="list-disc pl-4 mt-1 space-y-0.5">
-                  <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
-                  <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
-                  <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
-                </ul>
-              </div>
-            </div>
+                    <div>
+                      <label className="flex items-center text-sm font-medium text-slate-700 mb-1">
+                        <span>3e) Thickness of Plastic Packaging (In Microns) *</span>
+                        <PlasticThicknessMinInfoIcon />
+                      </label>
+                      <input
+                        type="text"
+                        name="thicknessOfPlastic"
+                        value={generalInfo.thicknessOfPlastic || ''}
+                        onChange={handleGeneralChange}
+                        placeholder="Enter thickness"
+                        className={inputClass}
+                        required
+                      />
+                    </div>
+                  </div>
           </div>
         </div>
         </div>
@@ -2058,7 +2058,12 @@ export default function CpcbRegistrationPage() {
         )}
 
         {registrationComplete && wizardStep === 'partB' && (
-          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
+          <RegistrationPartB
+            generalInfo={generalInfo}
+            setGeneralInfo={setGeneralInfo}
+            gstin={autoData.gstin}
+            onPersist={persistRegistrationForm}
+          />
         )}
 
         {registrationComplete && wizardStep === 'partC' && (
@@ -2288,25 +2293,27 @@ export default function CpcbRegistrationPage() {
             </button>
           ) : (
             <div className="flex items-center gap-2 flex-wrap justify-end">
-              <button
-                type="button"
-                onClick={handleResumeDraftPartB}
-                disabled={
-                  loading
-                  || loginCaptchaSubmitting
-                  || loginOtpSubmitting
-                  || (showAutomationModal && automationPhase !== 'error')
-                }
-                title="Dev only: open first DRAFT on CPCB, Save & Next Part A, then fill Part B"
-                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
-              >
-                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                  <Loader2 size={16} className="animate-spin" />
-                ) : (
-                  <Eye size={16} />
-                )}
-                Resume Draft → Part B (Dev)
-              </button>
+              {SHOW_RESUME_DRAFT_DEV_BUTTON ? (
+                <button
+                  type="button"
+                  onClick={handleResumeDraftPartB}
+                  disabled={
+                    loading
+                    || loginCaptchaSubmitting
+                    || loginOtpSubmitting
+                    || (showAutomationModal && automationPhase !== 'error')
+                  }
+                  title="Dev only: open first DRAFT on CPCB, Save & Next Part A, then fill Part B"
+                  className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
+                >
+                  {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Eye size={16} />
+                  )}
+                  Resume Draft → Part B (Dev)
+                </button>
+              ) : null}
               <button
                 type="button"
                 onClick={handleNewApplication}
@@ -2399,6 +2406,7 @@ export default function CpcbRegistrationPage() {
         onLoginOtpChange={(value) => {
           setLoginOtp(value);
           if (otpInputError) setOtpInputError('');
+          if (loginOtpError) setLoginOtpError('');
         }}
         onVerifyLoginOtp={handleVerifyLoginOtp}
         onResendLoginOtp={handleResendLoginOtp}
