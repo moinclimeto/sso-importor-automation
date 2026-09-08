@@ -1,25 +1,46 @@
 import path from 'path';
-import { app } from 'electron';
 import sqlite3 from 'sqlite3';
 import { open } from 'sqlite';
-import fs from 'fs'; // Import fs
-import { fileURLToPath } from 'url';
+import fs from 'fs';
+import { fileURLToPath, pathToFileURL } from 'url';
+import { getAppDbPath } from '../appPaths.js';
 
 const currentModuleUrl = import.meta.url;
 const __dirname = fileURLToPath(new URL('.', currentModuleUrl));
 
 let db = null;
 let dbFilePath = '';
+let initPromise = null;
 export let dbJsonPath = '';
 
-// Path to the database file
 export function getDbFilePath() {
-  return path.join(__dirname, '..', '..', 'sso_importer.db');
+  return dbFilePath || getAppDbPath();
 }
 
-// Initialize main application database connection
 export async function initDatabase(onDbReadyCallback) {
-  dbFilePath = getDbFilePath();
+  if (db) {
+    if (onDbReadyCallback) await onDbReadyCallback(db);
+    return db;
+  }
+  if (initPromise) {
+    await initPromise;
+    if (onDbReadyCallback) await onDbReadyCallback(db);
+    return db;
+  }
+
+  initPromise = openAndMigrate(onDbReadyCallback);
+  try {
+    await initPromise;
+    return db;
+  } catch (err) {
+    initPromise = null;
+    throw err;
+  }
+}
+
+async function openAndMigrate(onDbReadyCallback) {
+  dbFilePath = getAppDbPath();
+  fs.mkdirSync(path.dirname(dbFilePath), { recursive: true });
   dbJsonPath = path.join(path.dirname(dbFilePath), 'db.json');
   db = await open({
     filename: dbFilePath,
@@ -96,7 +117,7 @@ async function runMigrations() {
 
   for (const file of migrationFiles) {
     if (!appliedMigrations.has(file)) {
-      const migration = await import('file:///' + path.join(migrationsDir, file));
+      const migration = await import(pathToFileURL(path.join(migrationsDir, file)).href);
       console.log(`Applying migration: ${file}`);
       if (typeof migration.up === 'function') {
         await migration.up(db);

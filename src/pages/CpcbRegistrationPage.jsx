@@ -1,17 +1,19 @@
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import { flushSync } from 'react-dom';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import PlasticThicknessMinInfoIcon from '../components/PlasticThicknessMinInfoIcon.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
-  validateCpcbPortalFileName,
+  registrationDocFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -33,23 +35,38 @@ import {
   pickNonEmpty,
 } from '../utils/registrationFormPersistence.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
-import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
+import { getStartRegistrationBlockers } from '../utils/registrationStartReadiness.js';
+import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
+import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
+import RegistrationAutomationModal, {
+  appendAutomationLog,
+  applyAutomationLogUpdate,
+} from '../components/RegistrationAutomationModal.jsx';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
+import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
+import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { prunePartBSection4ForPortal } from '../utils/registrationPartBSection4.js';
 import {
-  validateSection4AgainstPlasticConsumed,
-  formatSection4PartAIssue,
-} from '../utils/registrationPartBSection4.js';
-import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
+  getRegisterApplicationBlockers,
+  navigateToRegisterBlockerSection,
+  summarizeRegisterBlockers,
+  formatPartBPlasticValidationToasts,
+} from '../utils/registrationApplicationReadiness.js';
+import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, AlertCircle, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
+
+/** Dev-only shortcut — hidden for full Register automation testing. */
+const SHOW_RESUME_DRAFT_DEV_BUTTON = false;
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -123,6 +140,7 @@ export default function CpcbRegistrationPage() {
   const [loading, setLoading] = useState(false);
   const [loadingMsg, setLoadingMsg] = useState('');
   const [otpSubmitting, setOtpSubmitting] = useState(false);
+  const [resendingMobileOtp, setResendingMobileOtp] = useState(false);
 
   const [showEmailOtp, setShowEmailOtp] = useState(false);
   const [emailOtp, setEmailOtp] = useState('');
@@ -159,6 +177,11 @@ export default function CpcbRegistrationPage() {
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
+  const [showAutomationModal, setShowAutomationModal] = useState(false);
+  const [automationPhase, setAutomationPhase] = useState('running');
+  const [currentAutomationStep, setCurrentAutomationStep] = useState('');
+  const [automationFlow, setAutomationFlow] = useState('registration');
+  const [otpInputError, setOtpInputError] = useState('');
   const [registrationBlocker, setRegistrationBlocker] = useState('');
   const [wizardStep, setWizardStep] = useState('account');
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
@@ -166,6 +189,74 @@ export default function CpcbRegistrationPage() {
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
+  const automationBusyRef = useRef(false);
+  /** 'full' = normal Register; 'resumeDraft' = open draft View → Part B (dev). */
+  const automationModeRef = useRef('full');
+
+  const formatTimer = useCallback(
+    (time) => `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`,
+    [],
+  );
+
+  const openAutomationModal = useCallback((step = 'Starting CPCB registration…', flow = 'registration') => {
+    flushSync(() => {
+      setAutomationLogs([]);
+      setAutomationFlow(flow);
+      setCurrentAutomationStep(step);
+      setOtpInputError('');
+      setShowAutomationModal(true);
+      setAutomationPhase('running');
+    });
+  }, []);
+
+  const closeAutomationModal = useCallback(() => {
+    automationBusyRef.current = false;
+    setShowAutomationModal(false);
+    setAutomationPhase('running');
+    setAutomationFlow('registration');
+    setCurrentAutomationStep('');
+    setLoading(false);
+    setLoadingMsg('');
+    setOtpSubmitting(false);
+    setShowEmailOtp(false);
+    setShowMobileOtp(false);
+    setShowCaptchaModal(false);
+    setShowLoginCaptchaModal(false);
+    setShowLoginOtpModal(false);
+    setLoginCaptchaSubmitting(false);
+    setLoginOtpSubmitting(false);
+    setOtpInputError('');
+  }, []);
+
+  const completeAutomationModal = useCallback((message) => {
+    if (message) appendAutomationLog(setAutomationLogs, message, 'success');
+    setAutomationPhase('complete');
+    setCurrentAutomationStep(automationFlow === 'login' ? 'Application complete' : 'Registration complete');
+    window.setTimeout(() => {
+      closeAutomationModal();
+    }, 2500);
+  }, [automationFlow, closeAutomationModal]);
+
+  const failAutomationModal = useCallback((message) => {
+    if (message) appendAutomationLog(setAutomationLogs, message, 'error');
+    setAutomationPhase('error');
+    setCurrentAutomationStep(message || 'Automation failed');
+    setOtpInputError('');
+  }, []);
+
+  const reportOtpRetryError = useCallback((phase, message) => {
+    const text = sanitizeAutomationUserError(message || 'Incorrect OTP — please try again');
+    appendAutomationLog(setAutomationLogs, text, 'error');
+    setAutomationPhase(phase);
+    setCurrentAutomationStep(text);
+    setOtpInputError(text);
+    if (phase === 'login_otp') {
+      setLoginOtp('');
+      setLoginOtpError(text);
+    }
+  }, []);
+
+  const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -209,6 +300,21 @@ export default function CpcbRegistrationPage() {
         district: form.generalInfo.district || parsedAddr.district || prev.district,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
+        plasticConsumed: prunePlasticConsumedForPortal(
+          form.generalInfo.plasticConsumed || prev.plasticConsumed || {},
+        ),
+        partBSection4: prunePartBSection4ForPortal(
+          form.generalInfo.partBSection4 || prev.partBSection4 || [],
+          form.generalInfo.operatingStates || prev.operatingStates || [],
+        ),
+        partBTransactions: {
+          sec5a: [],
+          sec5b: [],
+          sec5c: [],
+          sec5d: [],
+          ...(prev.partBTransactions || {}),
+          ...(form.generalInfo.partBTransactions || {}),
+        },
       }));
     } 
 
@@ -246,6 +352,11 @@ export default function CpcbRegistrationPage() {
   }, []);
 
   useEffect(() => {
+    setLoading(false);
+    automationBusyRef.current = false;
+  }, []);
+
+  useEffect(() => {
     setPageHeader({
       title: 'Registration Form',
       subtitle: registrationComplete
@@ -258,30 +369,38 @@ export default function CpcbRegistrationPage() {
 
   useEffect(() => {
     let interval = null;
-    if ((showEmailOtp || showMobileOtp) && otpTimer > 0) {
+    if (
+      showAutomationModal
+      && (automationPhase === 'email_otp' || automationPhase === 'mobile_otp')
+      && otpTimer > 0
+    ) {
       interval = setInterval(() => setOtpTimer((prev) => prev - 1), 1000);
     } else if (otpTimer === 0) {
       setIsResendActive(true);
       if (interval) clearInterval(interval);
     }
     return () => { if (interval) clearInterval(interval); };
-  }, [showEmailOtp, showMobileOtp, otpTimer]);
+  }, [showAutomationModal, automationPhase, otpTimer]);
 
   useEffect(() => {
     let interval = null;
-    if (showLoginOtpModal && loginOtpTimer > 0) {
+    if (loginOtpActive && loginOtpTimer > 0) {
       interval = setInterval(() => setLoginOtpTimer((prev) => prev - 1), 1000);
-    } else if (showLoginOtpModal && loginOtpTimer === 0) {
+    } else if (loginOtpActive && loginOtpTimer === 0) {
       setLoginOtpResendActive(true);
       if (interval) clearInterval(interval);
     }
     return () => { if (interval) clearInterval(interval); };
-  }, [showLoginOtpModal, loginOtpTimer]);
+  }, [loginOtpActive, loginOtpTimer]);
 
   useEffect(() => {
-    if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog(() => {});
-    }
+    if (!window.pwp?.scraper?.onLog) return undefined;
+    return window.pwp.scraper.onLog((payload) => {
+      const text = typeof payload === 'string' ? payload : (payload?.text || payload?.message || '');
+      if (!text) return;
+      const { stepHint } = applyAutomationLogUpdate(setAutomationLogs, text);
+      if (stepHint) setCurrentAutomationStep(stepHint);
+    });
   }, []);
 
   useEffect(() => {
@@ -367,7 +486,7 @@ export default function CpcbRegistrationPage() {
   }, [applyRegistrationData, applySavedRegistration]);
 
   useEffect(() => {
-    if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
+    if (loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
       if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
@@ -403,10 +522,14 @@ export default function CpcbRegistrationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
-  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
   const showHistoricalEprSections = useMemo(
     () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
     [generalInfo.yearOfCommencement],
+  );
+
+  const reportingFys = useMemo(
+    () => (showHistoricalEprSections ? getCpcbPortalPartA3cYears() : []),
+    [showHistoricalEprSections],
   );
 
   useEffect(() => {
@@ -423,7 +546,10 @@ export default function CpcbRegistrationPage() {
 
         setGeneralInfo((prev) => {
           if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
-          return { ...prev, plasticConsumed: result.plasticConsumed };
+          return {
+            ...prev,
+            plasticConsumed: prunePlasticConsumedForPortal(result.plasticConsumed),
+          };
         });
         setPlasticConsumedSource(result.sourceLabel || '');
       } catch (err) {
@@ -435,8 +561,24 @@ export default function CpcbRegistrationPage() {
   }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
 
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
-    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
-  }, []);
+    const pruned = prunePlasticConsumedForPortal(nextPlasticConsumed);
+    setGeneralInfo((prev) => {
+      const next = { ...prev, plasticConsumed: pruned };
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo: next,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          }),
+        ).catch(console.error);
+      }
+      return next;
+    });
+  }, [savedRegistration, email, mobile, autoData, savedCeprId]);
 
   const handleDocExtracted = useCallback(async (data) => {
     await applyRegistrationData(data);
@@ -445,12 +587,29 @@ export default function CpcbRegistrationPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const normalized = await normalizeRegistrationPaths({ autoData, generalInfo });
+      if (cancelled) return;
+      if (normalized.changed) {
+        setAutoData(normalized.autoData);
+        setGeneralInfo(normalized.generalInfo);
+        return;
+      }
+
       let docs = [];
       if (window.pwp?.documents?.getAll) {
         docs = await window.pwp.documents.getAll();
       }
       if (cancelled) return;
-      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+      const { ready, missing } = isRegistrationReadyWithFallback(docs, normalized.autoData);
+      setDocReady(ready);
+      setMissingDocs(missing);
+      setFileNameIssues(
+        collectRegistrationUploadFileIssues({
+          docs,
+          autoData: normalized.autoData,
+          generalInfo: normalized.generalInfo,
+        }),
+      );
     })();
     return () => {
       cancelled = true;
@@ -473,22 +632,19 @@ export default function CpcbRegistrationPage() {
   };
 
   const persistPartCFile = async (file, field) => {
-    const docBase = field === 'detailsOfProductsPath'
-      ? 'operations_details'
-      : field === 'representativePicturePath'
-        ? 'plastic_packaging_picture'
-        : 'document';
-    const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
-    if (!nameCheck.valid) {
-      showToast(
-        `"${file.name}" jaisa naam CPCB portal reject karta hai. App ise "${nameCheck.suggestedName}" ke naam se save karegi.`,
-        'warning',
-        { duration: 12000 }
-      );
-    }
+    const PART_C_DOC_BASE = {
+      detailsOfProductsPath: 'operations_details',
+      representativePicturePath: 'plastic_packaging_picture',
+      typeOfCompanyDoc: 'supporting_category_doc',
+    };
+    const docBase = PART_C_DOC_BASE[field] || 'document';
+    const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
+    const portalFileName = registrationDocFileName(docBase, ext);
     const stored = await storeCompressedUpload(file, {
-      destSubdir: 'processed_registration_docs',
-      fileName: nameCheck.suggestedName,
+      destSubdir: field === 'typeOfCompanyDoc' || field === 'detailsOfProductsPath' || field === 'representativePicturePath'
+        ? 'processed_registration_docs'
+        : 'processed_part_c',
+      fileName: portalFileName,
     });
     if (!stored.success || !stored.filePath) {
       showToast(stored.message || 'Could not save this file for preview. Please upload it again from the desktop app.', 'error');
@@ -565,12 +721,26 @@ export default function CpcbRegistrationPage() {
     }
   };
 
-  const handleSubmit = async (e) => {
-    e.preventDefault();
+  const handleStartRegistration = async () => {
     if (registrationComplete) return;
+    if (automationBusyRef.current) return;
 
-    if (!docReady) {
-      showToast(`Please upload required documents: ${missingDocs.join(', ')}`, 'error');
+    openAutomationModal();
+    clearPortalToasts();
+
+    const blockers = getStartRegistrationBlockers({
+      docReady,
+      missingDocs,
+      fileNameIssues,
+      autoData,
+      email,
+      mobile,
+      generalInfo,
+    });
+    if (blockers.length > 0) {
+      const msg = blockers.map((item) => item.label).join(', ');
+      failAutomationModal(msg);
+      showToast(`Complete pending items: ${msg}`, 'error', { duration: 12000 });
       return;
     }
 
@@ -581,79 +751,16 @@ export default function CpcbRegistrationPage() {
     const uploadNameIssues = collectRegistrationUploadFileIssues({ docs, autoData, generalInfo });
     if (uploadNameIssues.length) {
       setFileNameIssues(uploadNameIssues);
-      showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
-      if (uploadNameIssues.length > 1) {
-        showToast(
-          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
-          'warning',
-          { duration: 12000 }
-        );
-      }
-      return;
-    }
-    const missingAutoFields = [];
-    if (!autoData.gstin) missingAutoFields.push('GSTIN');
-    if (!autoData.authPan) missingAutoFields.push('Auth PAN');
-    if (!autoData.authName) missingAutoFields.push('Auth Name');
-    if (!autoData.authDob) missingAutoFields.push('Auth DOB');
-    
-    if (missingAutoFields.length > 0) {
-      showToast(`Registration data incomplete. Missing: ${missingAutoFields.join(', ')} (Please upload documents)`, 'error');
-      return;
-    }
-    if (!email || !mobile) {
-      showToast('Email and Mobile Number are required.', 'error');
+      const issueMsg = formatCpcbFileNameIssue(uploadNameIssues[0]);
+      failAutomationModal(issueMsg);
+      showToast(issueMsg, 'error', { duration: 14000 });
       return;
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
-      showToast('Please enter a valid email address.', 'error');
+    if (!window.pwp?.scraper?.startRegistrationFlow) {
+      failAutomationModal('Start the desktop app (Electron) to run CPCB automation.');
+      showToast('CPCB automation is only available in the desktop app.', 'error');
       return;
-    }
-
-    const mobileRegex = /^[0-9]{10}$/;
-    if (!mobileRegex.test(mobile)) {
-      showToast('Please enter a valid 10-digit mobile number.', 'error');
-      return;
-    }
-
-    if (!generalInfo.typeOfBusiness || !generalInfo.typeOfCompany) {
-      showToast('Type of Business and Type of Company are required.', 'error');
-      return;
-    }
-
-    if (!generalInfo.registeredAddressLine1?.trim()) {
-      showToast('Registered Address Line 1 is required.', 'error');
-      return;
-    }
-    if (!generalInfo.stateUt || !generalInfo.district?.trim()) {
-      showToast('State/UT and District are required.', 'error');
-      return;
-    }
-    if (!generalInfo.authDesignation?.trim()) {
-      showToast('Authorised Person Designation is required.', 'error');
-      return;
-    }
-    if (!generalInfo.password || generalInfo.password.length < 8) {
-      showToast('Password must be at least 8 characters.', 'error');
-      return;
-    }
-    if (generalInfo.password !== generalInfo.confirmPassword) {
-      showToast('Password and Confirm Password do not match.', 'error');
-      return;
-    }
-
-    if (autoData.authDob) {
-      const dobDate = new Date(autoData.authDob);
-      const today = new Date();
-      let age = today.getFullYear() - dobDate.getFullYear();
-      const m = today.getMonth() - dobDate.getMonth();
-      if (m < 0 || (m === 0 && today.getDate() < dobDate.getDate())) age--;
-      if (age < 18) {
-        showToast('Authorised Person age must be at least 18 years.', 'error');
-        return;
-      }
     }
 
     const payload = {
@@ -691,9 +798,9 @@ export default function CpcbRegistrationPage() {
       thicknessOfPlastic: generalInfo.thicknessOfPlastic,
     };
 
+    automationBusyRef.current = true;
     setLoading(true);
     setLoadingMsg('Starting automation process...');
-    clearPortalToasts();
 
     try {
       if (window.pwp?.registration?.save) {
@@ -708,19 +815,30 @@ export default function CpcbRegistrationPage() {
       const res = await window.pwp.scraper.startRegistrationFlow(payload);
       if (res.success && res.step === 'WAITING_EMAIL_OTP') {
         setRegistrationBlocker('');
-        setShowEmailOtp(true);
+        setAutomationPhase('email_otp');
+        setCurrentAutomationStep('Waiting for Email OTP');
+        setOtpInputError('');
+        appendAutomationLog(setAutomationLogs, 'Email OTP sent — enter the code below', 'success');
         setOtpTimer(120);
         setIsResendActive(false);
       } else {
         const errMsg = res.error || 'Unexpected step received.';
         setRegistrationBlocker(errMsg);
+        failAutomationModal(errMsg);
         showRegistrationAutomationError(showToast, setAutomationLogs, errMsg);
       }
     } catch (err) {
+      failAutomationModal(err.message);
       showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
     } finally {
+      automationBusyRef.current = false;
       setLoading(false);
+      setLoadingMsg('');
     }
+  };
+
+  const handleFormSubmit = (e) => {
+    e.preventDefault();
   };
 
   const handleResendEmailOtp = async () => {
@@ -748,19 +866,26 @@ export default function CpcbRegistrationPage() {
       return;
     }
     setOtpSubmitting(true);
+    setOtpInputError('');
+    setCurrentAutomationStep('Verifying email OTP…');
     try {
       const res = await window.pwp.scraper.submitEmailOtp({ otp: emailOtp.trim(), mobile });
       if (res.success && res.step === 'WAITING_MOBILE_OTP') {
-        setShowEmailOtp(false);
         setEmailOtp('');
-        setShowMobileOtp(true);
+        setOtpInputError('');
+        setAutomationPhase('mobile_otp');
+        setCurrentAutomationStep('Waiting for Mobile OTP');
+        appendAutomationLog(setAutomationLogs, `Email verified — OTP sent to ${mobile}`, 'success');
         setOtpTimer(120);
         setIsResendActive(false);
         showToast(`Email verified! Mobile OTP sent to ${mobile}.`, 'success');
       } else {
-        showToast('Email OTP failed: ' + (res.error || 'Unknown error'), 'error');
+        const errText = res.error || 'Incorrect OTP — please try again';
+        reportOtpRetryError('email_otp', errText);
+        showToast('Email OTP failed: ' + errText, 'error');
       }
     } catch (err) {
+      reportOtpRetryError('email_otp', err.message);
       showToast('Error: ' + err.message, 'error');
     } finally {
       setOtpSubmitting(false);
@@ -768,21 +893,29 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleResendMobileOtp = async () => {
+    if (resendingMobileOtp || otpSubmitting) return;
+    setResendingMobileOtp(true);
+    setOtpInputError('');
     try {
-      setLoading(true);
-      setLoadingMsg('Resending Mobile OTP...');
       const res = await window.pwp.scraper.resendMobileOtp();
       if (res.success) {
-        showToast('OTP Resent to Mobile', 'success');
+        appendAutomationLog(setAutomationLogs, 'Mobile OTP resent', 'success');
+        setAutomationPhase('mobile_otp');
+        setCurrentAutomationStep(mobile ? `Enter OTP sent to ${mobile}` : 'Enter OTP sent to mobile number');
+        showToast('OTP resent to mobile', 'success');
+        setMobileOtp('');
         setOtpTimer(120);
         setIsResendActive(false);
       } else {
-        showToast('Failed to resend OTP: ' + res.error, 'error');
+        const errText = res.error || 'Failed to resend OTP';
+        reportOtpRetryError('mobile_otp', errText);
+        showToast('Failed to resend OTP: ' + errText, 'error');
       }
     } catch (err) {
+      reportOtpRetryError('mobile_otp', err.message);
       showToast('Error: ' + err.message, 'error');
     } finally {
-      setLoading(false);
+      setResendingMobileOtp(false);
     }
   };
 
@@ -792,20 +925,55 @@ export default function CpcbRegistrationPage() {
       return;
     }
     setOtpSubmitting(true);
-    setLoadingMsg('Verifying mobile OTP on CPCB portal...');
+    setOtpInputError('');
+    setCurrentAutomationStep('Verifying mobile OTP…');
     try {
-      const res = await window.pwp.scraper.submitMobileOtp({ mobile, otp: mobileOtp.trim() });
+      const verifyRes = await window.pwp.scraper.submitMobileOtp({
+        mobile,
+        otp: mobileOtp.trim(),
+        verifyOnly: true,
+      });
+
+      if (!verifyRes.success) {
+        const errText = verifyRes.error || 'Incorrect OTP — please try again';
+        setRegistrationBlocker(errText);
+        reportOtpRetryError('mobile_otp', errText);
+        showToast('Mobile OTP failed: ' + errText, 'error');
+        return;
+      }
+
+      setOtpSubmitting(false);
+      appendAutomationLog(setAutomationLogs, 'Mobile OTP verified', 'success');
+      setAutomationPhase('running');
+      setCurrentAutomationStep('Filling registration form on CPCB portal…');
+      setLoading(true);
+      setLoadingMsg('Completing registration on CPCB portal...');
+
+      const res = await window.pwp.scraper.submitMobileOtp({
+        mobile,
+        otp: mobileOtp.trim(),
+        skipOtpVerify: true,
+      });
+
+      if (res.success && res.warning && res.step !== 'WAITING_CAPTCHA') {
+        const warnText = res.warning;
+        setRegistrationBlocker(warnText);
+        failAutomationModal(warnText);
+        showToast(warnText, 'error', { duration: 15000 });
+        return;
+      }
 
       if (res.success && res.step === 'WAITING_CAPTCHA') {
         setRegistrationBlocker('');
-        setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
         setIsResendActive(false);
         setCaptchaImage(res.captchaImage || '');
         setCaptchaText('');
         setCaptchaError('');
-        setShowCaptchaModal(true);
+        setAutomationPhase('captcha');
+        setCurrentAutomationStep('Enter captcha to complete registration');
+        appendAutomationLog(setAutomationLogs, 'Mobile OTP verified — enter captcha below', 'success');
         showToast('PAN uploaded. Enter the captcha below to complete registration.', 'success', { duration: 8000 });
         return;
       }
@@ -820,7 +988,6 @@ export default function CpcbRegistrationPage() {
           res.step === 'COMPLETED')
       ) {
         setRegistrationBlocker('');
-        setShowMobileOtp(false);
         setMobileOtp('');
         setOtpTimer(0);
         setIsResendActive(false);
@@ -840,19 +1007,26 @@ export default function CpcbRegistrationPage() {
 
         if (res.warning && res.step !== 'REGISTRATION_COMPLETE') {
           showToast(`Registration partial: ${res.warning}`, 'warning', { duration: 12000 });
+          completeAutomationModal('Registration partially complete');
         } else if (res.step === 'REGISTRATION_COMPLETE') {
+          await saveRegistrationSnapshot(res.ceprId, res.screenshotPath);
           showToast(
             `Registration complete! CEPR ID: ${res.ceprId || 'saved'} — screenshot stored in database.`,
             'success',
             { duration: 12000 }
           );
+          completeAutomationModal(`Registration complete — CEPR ID: ${res.ceprId || 'saved'}`);
         } else if (res.step === 'SUPPORTING_DOC_COMPLETE') {
           showToast(
             'Registration complete! User Verification, General Information & PAN upload done on CPCB portal.',
             'success',
             { duration: 10000 }
           );
+          completeAutomationModal('Supporting documents uploaded on CPCB portal');
         } else if (res.step === 'SUPPORTING_DOC_UPLOADED') {
+          setAutomationPhase('captcha');
+          setCurrentAutomationStep('Enter captcha to finish registration');
+          appendAutomationLog(setAutomationLogs, 'PAN uploaded — enter captcha to finish', 'success');
           showToast(
             'PAN uploaded on CPCB portal. Enter captcha in the app to finish.',
             'success',
@@ -866,17 +1040,39 @@ export default function CpcbRegistrationPage() {
             'success',
             { duration: 8000 }
           );
+          completeAutomationModal('CPCB portal step completed');
         }
       } else {
-        const errText = res.error || 'Unknown error';
+        const errText = res.error || res.warning || 'Registration failed on CPCB portal';
         setRegistrationBlocker(errText);
-        showRegistrationAutomationError(showToast, setAutomationLogs, errText);
+        if (
+          res.errorCode === 'DUPLICATE_AUTH_PERSON'
+          || /already exists|authorised person|authorized person/i.test(errText)
+        ) {
+          failAutomationModal(errText);
+          showToast(errText, 'error', { duration: 15000 });
+        } else if (automationPhase === 'email_otp' || automationPhase === 'mobile_otp') {
+          reportOtpRetryError(automationPhase, errText);
+          showToast(errText, 'error');
+        } else {
+          failAutomationModal(errText);
+          showToast(errText, 'error', { duration: 12000 });
+        }
       }
     } catch (err) {
-      setRegistrationBlocker(err.message);
-      showRegistrationAutomationError(showToast, setAutomationLogs, err.message);
+      const errText = sanitizeAutomationUserError(err.message);
+      setRegistrationBlocker(errText);
+      if (/already exists|authorised person|authorized person/i.test(errText)) {
+        failAutomationModal(errText);
+      } else if (automationPhase === 'email_otp' || automationPhase === 'mobile_otp') {
+        reportOtpRetryError(automationPhase, errText);
+      } else {
+        failAutomationModal(errText);
+      }
+      showToast('Error: ' + errText, 'error');
     } finally {
       setOtpSubmitting(false);
+      setLoading(false);
       setLoadingMsg('');
     }
   };
@@ -938,90 +1134,19 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleNewApplication = async () => {
-    if (!savedCeprId) {
-      showToast('CEPR ID not found — complete registration first.', 'error');
-      return;
-    }
+    automationModeRef.current = 'full';
+    const registerBlockers = getRegisterApplicationBlockers({
+      savedCeprId,
+      generalInfo,
+      autoData,
+      reportingYears: reportingFys,
+    });
 
-    // Strict Validation for Automation
-    const requiredGeneral = [
-      { key: 'typeOfBusiness', label: 'Type of Business' },
-      { key: 'typeOfCompany', label: 'Type of Company' },
-      { key: 'registeredAddressLine1', label: 'Registered Address' },
-      { key: 'yearOfCommencement', label: 'Year of Commencement' },
-      { key: 'stateUt', label: 'State/UT' },
-      { key: 'complianceStatus', label: 'Compliance Status (3d)' },
-      { key: 'thicknessOfPlastic', label: 'Thickness of Plastic (3e)' },
-      { key: 'partCCoveringLetter', label: 'Part C: Covering Letter' },
-      { key: 'partCSignature', label: 'Part C: Signature' },
-      { key: 'partCAuditedStatement', label: 'Part C: Audited Statement' },
-    ];
-
-    const missing = [];
-    for (const req of requiredGeneral) {
-      if (!generalInfo[req.key]) missing.push(req.label);
-    }
-    
-    if (!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) {
-      missing.push('Operating States (minimum 1 required)');
-    } else if (generalInfo.operatingStates.length === 2) {
-      missing.push('Operating States (Cannot select exactly 2 states. Select 1, or 3+ states)');
-    }
-    
-    if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
-      missing.push('Type of Company Document (MSME/Declaration)');
-    }
-    if (!autoData.detailsOfProductsPath) {
-      missing.push('Details (Type & Quantity) of products produced/marketed');
-    }
-    if (!autoData.representativePicturePath) {
-      missing.push('Representative picture of Plastic Packaging');
-    }
-
-    if (!generalInfo.isSameAsRegisteredAddress) {
-      if (!generalInfo.plantAddress) missing.push('Plant/Unit Address');
-      if (!generalInfo.unitGst) missing.push('Unit GST');
-      if (!autoData.unitGstDoc) missing.push('Unit GST Document');
-    }
-
-    if (missing.length > 0) {
-      const partAHints = [
-        'Type of Business',
-        'Type of Company',
-        'State/UT',
-        'Operating States',
-        'Year of Commencement',
-        'Compliance Status',
-        'Thickness',
-        'Details (Type & Quantity) of products produced/marketed',
-        'Representative picture of Plastic Packaging',
-        'Type of Company Document',
-      ];
-      if (missing.some((label) => partAHints.some((hint) => label.includes(hint)))) {
-        setWizardStep('partA');
-      } else if (missing.some((label) => label.startsWith('Part C'))) {
-        setWizardStep('partC');
-      }
-      showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
-      return;
-    }
-
-    const section4Issues = showHistoricalEprSections
-      ? validateSection4AgainstPlasticConsumed(
-        generalInfo.partBSection4 || [],
-        generalInfo.plasticConsumed || {},
-        getImporterReportingFinancialYears(),
-      )
-      : [];
-    if (section4Issues.length) {
-      setWizardStep('partB');
-      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
-      if (section4Issues.length > 1) {
-        showToast(
-          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
-          'warning',
-          { duration: 12000 },
-        );
+    if (registerBlockers.length > 0) {
+      navigateToRegisterBlockerSection(registerBlockers, { setWizardStep });
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
+      for (const msg of formatPartBPlasticValidationToasts(registerBlockers)) {
+        showToast(msg.text, msg.type, { duration: 12000 });
       }
       return;
     }
@@ -1047,15 +1172,68 @@ export default function CpcbRegistrationPage() {
       }
     }
 
-    setAutomationLogs([]);
     clearPortalToasts();
+    openAutomationModal('Preparing new application…', 'login');
+    appendAutomationLog(setAutomationLogs, 'Saving application data…', 'info');
     setLoading(true);
-    await beginLoginFlow(savedCeprId);
-    setLoading(false);
+    setCurrentAutomationStep('Starting CPCB login…');
+    try {
+      await beginLoginFlow(savedCeprId, { automationMode: 'full' });
+    } finally {
+      setLoading(false);
+    }
   };
 
-  const beginLoginFlow = async (ceprId) => {
+  /** DEV: login → Applications list → first draft View → Save & Next (Part A skip fill) → Part B automation. */
+  const handleResumeDraftPartB = async () => {
+    automationModeRef.current = 'resumeDraft';
+
+    if (!String(savedCeprId || '').trim()) {
+      showToast('CEPR ID required — complete registration first.', 'error');
+      return;
+    }
+    if (!String(generalInfo.password || '').trim()) {
+      showToast('Enter CPCB portal Password in Part A → Login credentials.', 'error');
+      setWizardStep('partA');
+      return;
+    }
+
+    if (window.pwp?.registration?.save) {
+      try {
+        await window.pwp.registration.save({
+          email,
+          mobile,
+          applicant_type: generalInfo.applicantType || 'PIBO',
+          sub_applicant_type: generalInfo.subApplicantType || 'Importer',
+          cepr_id: savedCeprId || '',
+          form_data_json: JSON.stringify({ email, mobile, generalInfo, autoData }),
+        });
+      } catch (err) {
+        console.error('Failed to save data before draft resume', err);
+      }
+    }
+
+    clearPortalToasts();
+    openAutomationModal('Resuming draft application…', 'login');
+    appendAutomationLog(setAutomationLogs, '[Dev] Resume draft → Part B (skip Part A fill)', 'info');
+    setLoading(true);
+    setCurrentAutomationStep('Starting CPCB login…');
+    try {
+      await beginLoginFlow(savedCeprId, { automationMode: 'resumeDraft' });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const beginLoginFlow = async (ceprId, { automationMode = 'full' } = {}) => {
+    automationModeRef.current = automationMode;
     setSavedCeprId(ceprId || '');
+    flushSync(() => {
+      setShowAutomationModal(true);
+      setAutomationFlow('login');
+      setAutomationPhase('running');
+      setCurrentAutomationStep('Starting CPCB login…');
+    });
     setLoadingMsg('Starting CPCB login...');
     const loginCreds = resolveRegistrationLoginCredentials({
       email,
@@ -1068,24 +1246,39 @@ export default function CpcbRegistrationPage() {
         password: loginCreds.password,
         email: loginCreds.email,
         mobile: loginCreds.mobile,
+        automationMode,
       });
       if (loginRes.success && loginRes.step === 'WAITING_LOGIN_CAPTCHA') {
         setLoginCaptchaImage(loginRes.captchaImage || '');
         setLoginCaptchaText('');
         setLoginCaptchaError('');
-        setShowLoginCaptchaModal(true);
-        showToast('Enter login captcha to continue to application form.', 'success', { duration: 10000 });
+        setShowLoginCaptchaModal(false);
+        setAutomationPhase('captcha');
+        setCurrentAutomationStep('Enter captcha to request login OTP');
+        appendAutomationLog(setAutomationLogs, 'Enter login captcha to continue', 'success');
       } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
-        setAutomationLogs(prev => [...prev, { type: 'success', message: 'Application onboarding completed successfully!' }]);
+        completeAutomationModal('Application onboarding completed successfully!');
         showToast('Application onboarding completed successfully!', 'success');
+      } else if (loginRes.success && loginRes.step === 'DRAFT_RESUMED_PART_B') {
+        completeAutomationModal('Draft opened — Part B automation finished (dev flow).');
+        showToast('Draft resumed on CPCB portal — Part B fill attempted. Browser is open.', 'success', { duration: 15000 });
+      } else if (!loginRes.success && loginRes.step === 'DRAFT_RESUME_FAILED') {
+        failAutomationModal(loginRes.error || 'Draft resume failed');
+        showToast(loginRes.error || 'Draft resume failed', 'error', { duration: 14000 });
+      } else if (loginRes.step === 'APPLICATION_FILL_FAILED' || (!loginRes.success && loginRes.error)) {
+        const err = loginRes.error || 'Application form fill failed';
+        failAutomationModal(err);
+        showToast(err, 'error', { duration: 14000 });
+        if (/Section 3c/i.test(err)) setWizardStep('partA');
       } else {
         const err = loginRes.error || 'Could not start login flow';
-        setAutomationLogs(prev => [...prev, { type: 'error', message: err }]);
+        failAutomationModal(err);
         showToast(err, 'error');
       }
     } catch (err) {
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login error: ' + err.message }]);
-      showToast('Login error: ' + err.message, 'error');
+      const errMsg = 'Login error: ' + err.message;
+      failAutomationModal(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setLoadingMsg('');
     }
@@ -1119,18 +1312,28 @@ export default function CpcbRegistrationPage() {
     setLoginCaptchaError('');
     setLoadingMsg('Submitting login captcha on CPCB portal...');
     try {
-      const res = await window.pwp.scraper.submitLoginCaptcha({ captcha: text });
+      const loginCreds = resolveRegistrationLoginCredentials({
+        email,
+        mobile,
+        password: generalInfo.password,
+      });
+      const res = await window.pwp.scraper.submitLoginCaptcha({
+        captcha: text,
+        ceprId: savedCeprId,
+        password: loginCreds.password,
+      });
 
       if (res.success && res.step === 'WAITING_LOGIN_OTP') {
         setShowLoginCaptchaModal(false);
         setLoginCaptchaText('');
-        setLoginCaptchaImage('');
         setLoginOtp('');
-        setLoginOtpError('');
+        setOtpInputError('');
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
-        setShowLoginOtpModal(true);
-        showToast('Login OTP sent — enter OTP from email/SMS.', 'success');
+        setShowLoginOtpModal(false);
+        setAutomationPhase('login_otp');
+        setCurrentAutomationStep('Login OTP sent — enter the code below');
+        appendAutomationLog(setAutomationLogs, 'Login OTP sent — enter OTP from email/SMS', 'success');
         return;
       }
 
@@ -1139,8 +1342,9 @@ export default function CpcbRegistrationPage() {
       }
       setLoginCaptchaText('');
       const errMsg = res.error || 'Invalid captcha. Please try again.';
-      setLoginCaptchaError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      appendAutomationLog(setAutomationLogs, errMsg, 'error');
+      setAutomationPhase('captcha');
+      setCurrentAutomationStep(errMsg);
     } catch (err) {
       setLoginCaptchaError(err.message);
       setAutomationLogs(prev => [...prev, { type: 'error', message: 'Captcha submit error: ' + err.message }]);
@@ -1156,6 +1360,7 @@ export default function CpcbRegistrationPage() {
       if (res.success) {
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
+        appendAutomationLog(setAutomationLogs, 'Login OTP resent', 'success');
         showToast('Login OTP resent', 'success');
       } else {
         showToast(res.error || 'Resend failed', 'error');
@@ -1166,7 +1371,26 @@ export default function CpcbRegistrationPage() {
   };
 
   const handleLoginOnboardingResult = (res) => {
+    if (
+      !res.success
+      && (res.step === 'DRAFT_RESUME_FAILED' || res.step === 'APPLICATION_FILL_FAILED' || res.step === 'LOGIN_COMPLETE')
+    ) {
+      const err = res.error || (res.step === 'DRAFT_RESUME_FAILED' ? 'Draft resume failed' : 'Application form fill failed');
+      failAutomationModal(err);
+      showToast(err, 'error', { duration: 14000 });
+      if (/Section 3c/i.test(err)) setWizardStep('partA');
+      return true;
+    }
+
+    if (res.success && res.step === 'DRAFT_RESUMED_PART_B') {
+      completeAutomationModal('Draft opened — Part B automation finished (dev flow).');
+      showToast('Draft resumed on CPCB portal — Part B fill attempted. Browser is open.', 'success', { duration: 15000 });
+      return true;
+    }
+
     if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
+      const msg = `Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`;
+      completeAutomationModal(msg);
       showToast(
         `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
         'success',
@@ -1175,11 +1399,13 @@ export default function CpcbRegistrationPage() {
       return true;
     }
 
-    if (
-      res.success &&
-      (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE')
-    ) {
+    if (res.success && res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE') {
       const scrapeOk = res.scrape?.success !== false;
+      if (scrapeOk) {
+        completeAutomationModal('Application started and portal data synced');
+      } else {
+        failAutomationModal(`Application started — sync failed: ${res.scrape?.error || 'Unknown error'}`);
+      }
       showToast(
         scrapeOk
           ? 'Registration pipeline complete! Application started and portal data synced to the app.'
@@ -1191,11 +1417,9 @@ export default function CpcbRegistrationPage() {
     }
 
     if (res.success && res.step === 'LOGIN_COMPLETE') {
-      setAutomationLogs((prev) => [
-        ...prev,
-        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
-      ]);
-      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      const msg = 'Login succeeded but application onboarding failed: ' + (res.error || 'unknown error');
+      failAutomationModal(msg);
+      showToast('Login successful, but onboarding failed. See progress for details.', 'error', { duration: 15000 });
       return true;
     }
 
@@ -1205,11 +1429,12 @@ export default function CpcbRegistrationPage() {
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
-      setLoginOtpError('Please enter 6-digit OTP');
+      reportOtpRetryError('login_otp', 'Please enter 6-digit OTP');
       return;
     }
     setLoginOtpSubmitting(true);
     setLoginOtpError('');
+    setOtpInputError('');
     setLoadingMsg('Verifying login OTP on CPCB portal...');
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
@@ -1217,21 +1442,37 @@ export default function CpcbRegistrationPage() {
       if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setLoginOtpSubmitting(false);
+        setAutomationPhase('running');
+        setCurrentAutomationStep(
+          automationModeRef.current === 'resumeDraft'
+            ? 'Resuming draft on CPCB portal…'
+            : 'Filling application on CPCB portal…',
+        );
+        appendAutomationLog(
+          setAutomationLogs,
+          automationModeRef.current === 'resumeDraft'
+            ? 'Login OTP verified — resuming draft (Part B dev flow)'
+            : 'Login OTP verified — filling application form',
+          'success',
+        );
         setLoading(true);
-        setLoadingMsg('Filling application on CPCB portal...');
-        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
         try {
-          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: false });
-          handleLoginOnboardingResult(onboard);
-          if (!onboard.success) {
-            const errMsg = onboard.error || 'Application onboarding failed.';
-            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({
+            autoScrape: false,
+            automationMode: automationModeRef.current,
+          });
+          if (!handleLoginOnboardingResult(onboard) && !onboard.success) {
+            failAutomationModal(onboard.error || 'Application onboarding failed.');
           }
         } finally {
           setLoading(false);
           setLoadingMsg('');
         }
+        return;
+      }
+
+      if (isLoginOtpFailureResult(res)) {
+        reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
         return;
       }
 
@@ -1241,12 +1482,9 @@ export default function CpcbRegistrationPage() {
         return;
       }
 
-      const errMsg = res.error || 'Invalid OTP. Please try again.';
-      setLoginOtpError(errMsg);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+      reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
     } catch (err) {
-      setLoginOtpError(err.message);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      reportOtpRetryError('login_otp', err.message);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -1262,11 +1500,12 @@ export default function CpcbRegistrationPage() {
     setCaptchaSubmitting(true);
     setCaptchaError('');
     setLoadingMsg('Submitting captcha on CPCB portal...');
+    appendAutomationLog(setAutomationLogs, 'Submitting captcha…');
+    setCurrentAutomationStep('Submitting captcha…');
     try {
       const res = await window.pwp.scraper.submitRegistrationCaptcha({ captcha: text });
 
       if (res.success && res.step === 'REGISTRATION_COMPLETE') {
-        setShowCaptchaModal(false);
         setCaptchaText('');
         setCaptchaImage('');
         setCaptchaSubmitting(false);
@@ -1277,6 +1516,7 @@ export default function CpcbRegistrationPage() {
           'success',
           { duration: 15000 }
         );
+        completeAutomationModal(`Registration complete — CEPR ID: ${res.ceprId || 'saved'}`);
         return;
       }
 
@@ -1285,16 +1525,28 @@ export default function CpcbRegistrationPage() {
       }
       setCaptchaText('');
       setCaptchaError(res.error || 'Invalid captcha. Please try again.');
+      appendAutomationLog(setAutomationLogs, res.error || 'Invalid captcha — try again', 'error');
     } catch (err) {
       setCaptchaError(err.message);
+      appendAutomationLog(setAutomationLogs, err.message, 'error');
     } finally {
       setCaptchaSubmitting(false);
       setLoadingMsg('');
     }
   };
 
-  const formatTimer = (time) =>
-    `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
+  const startRegistrationBlockers = useMemo(
+    () => getStartRegistrationBlockers({
+      docReady,
+      missingDocs,
+      fileNameIssues,
+      autoData,
+      email,
+      mobile,
+      generalInfo,
+    }),
+    [docReady, missingDocs, fileNameIssues, autoData, email, mobile, generalInfo],
+  );
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative">
@@ -1312,21 +1564,6 @@ export default function CpcbRegistrationPage() {
         <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
           <Loader2 size={16} className="animate-spin" />
           Loading saved registration...
-        </div>
-      )}
-
-      {registrationComplete && (
-        <div className="mb-6 rounded-xl border border-green-200 bg-green-50 p-4 flex items-start gap-3">
-          <CheckCircle2 size={22} className="text-green-600 shrink-0 mt-0.5" />
-          <div>
-            <p className="font-semibold text-green-800">Registration Complete</p>
-            <p className="text-sm text-green-700 mt-1">
-              CEPR ID: <span className="font-mono font-medium">{savedCeprId}</span>
-            </p>
-            <p className="text-xs text-green-600 mt-1">
-              Fill Part A, B and C in steps, then click <strong>Register</strong> to send data to the CPCB portal.
-            </p>
-          </div>
         </div>
       )}
 
@@ -1366,7 +1603,7 @@ export default function CpcbRegistrationPage() {
         {fileNameIssues.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
             <p className="text-sm font-semibold text-amber-900">
-              CPCB file name issue — registration tab tak fix karein
+              Some uploaded files still need processing
             </p>
             <ul className="space-y-1.5">
               {fileNameIssues.map((issue) => (
@@ -1376,7 +1613,7 @@ export default function CpcbRegistrationPage() {
               ))}
             </ul>
             <p className="text-xs text-amber-800">
-              Simple naam use karein jaise <strong>person_pan.pdf</strong> — bina space, brackets ( ) ya double extension ke.
+              Re-upload from Doc Processor — the app will auto-rename and compress files for CPCB.
             </p>
           </div>
         )}
@@ -1396,7 +1633,7 @@ export default function CpcbRegistrationPage() {
         </div>
       ) : null}
 
-      <form onSubmit={handleSubmit} className="space-y-8">
+      <form onSubmit={handleFormSubmit} noValidate className="space-y-8">
         {!registrationComplete && (
         <div>
           <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
@@ -1621,6 +1858,17 @@ export default function CpcbRegistrationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartALoginCredentials
+                    ceprId={savedCeprId}
+                    password={generalInfo.password || ''}
+                    onPasswordChange={(value) =>
+                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                    }
+                    showPassword={showPassword}
+                    onToggleShowPassword={() => setShowPassword((v) => !v)}
+                    onBlur={() => persistRegistrationForm().catch(console.error)}
+                    inputClass={inputClass}
+                  />
                   <RegistrationPartACompanyProfile
                     generalInfo={generalInfo}
                     onChange={handleGeneralChange}
@@ -1767,47 +2015,42 @@ export default function CpcbRegistrationPage() {
                     plasticConsumedSource={plasticConsumedSource}
                   />
 
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
-                    <select
-                      name="complianceStatus"
-                      value={generalInfo.complianceStatus || ''}
-                      onChange={handleGeneralChange}
-                      className={inputClass}
-                    >
-                      <option value="">Select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                    {generalInfo.complianceStatus === 'No' && (
-                      <p className="text-xs text-red-600 mt-1 font-medium">
-                        ⚠️ Alert: Selecting "No" can lead to rejection of your application.
-                      </p>
-                    )}
-                  </div>
+                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                      <select
+                        name="complianceStatus"
+                        value={generalInfo.complianceStatus || ''}
+                        onChange={handleGeneralChange}
+                        className={inputClass}
+                      >
+                        <option value="">Select</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                      {generalInfo.complianceStatus === 'No' && (
+                        <p className="text-xs text-red-600 mt-1 font-medium">
+                          ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                        </p>
+                      )}
+                    </div>
 
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                3e) Thickness of Plastic Packaging (In Microns) *
-              </label>
-              <input
-                type="text"
-                name="thicknessOfPlastic"
-                value={generalInfo.thicknessOfPlastic || ''}
-                onChange={handleGeneralChange}
-                placeholder="Enter thickness"
-                className={inputClass}
-                required
-              />
-              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
-                <strong>Approved Minimum Thickness:</strong>
-                <ul className="list-disc pl-4 mt-1 space-y-0.5">
-                  <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
-                  <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
-                  <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
-                </ul>
-              </div>
-            </div>
+                    <div>
+                      <label className="flex items-center text-sm font-medium text-slate-700 mb-1">
+                        <span>3e) Thickness of Plastic Packaging (In Microns) *</span>
+                        <PlasticThicknessMinInfoIcon />
+                      </label>
+                      <input
+                        type="text"
+                        name="thicknessOfPlastic"
+                        value={generalInfo.thicknessOfPlastic || ''}
+                        onChange={handleGeneralChange}
+                        placeholder="Enter thickness"
+                        className={inputClass}
+                        required
+                      />
+                    </div>
+                  </div>
           </div>
         </div>
         </div>
@@ -1815,7 +2058,12 @@ export default function CpcbRegistrationPage() {
         )}
 
         {registrationComplete && wizardStep === 'partB' && (
-          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
+          <RegistrationPartB
+            generalInfo={generalInfo}
+            setGeneralInfo={setGeneralInfo}
+            gstin={autoData.gstin}
+            onPersist={persistRegistrationForm}
+          />
         )}
 
         {registrationComplete && wizardStep === 'partC' && (
@@ -1958,6 +2206,41 @@ export default function CpcbRegistrationPage() {
         </>
         )}
 
+        {!registrationComplete && (
+          <div
+            className={`rounded-xl border px-4 py-3 ${
+              startRegistrationBlockers.length === 0
+                ? 'border-green-200 bg-green-50'
+                : 'border-amber-200 bg-amber-50'
+            }`}
+          >
+            <div className="flex items-start gap-2">
+              {startRegistrationBlockers.length === 0 ? (
+                <CheckCircle2 size={18} className="text-green-600 shrink-0 mt-0.5" />
+              ) : (
+                <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
+              )}
+              <div className="min-w-0">
+                <p className={`text-sm font-semibold ${startRegistrationBlockers.length === 0 ? 'text-green-800' : 'text-amber-900'}`}>
+                  {startRegistrationBlockers.length === 0
+                    ? 'Ready — you can start CPCB registration'
+                    : `Complete ${startRegistrationBlockers.length} item${startRegistrationBlockers.length === 1 ? '' : 's'} to enable Start Registration`}
+                </p>
+                {startRegistrationBlockers.length > 0 && (
+                  <ul className="mt-2 space-y-1">
+                    {startRegistrationBlockers.map((item) => (
+                      <li key={item.id} className="text-xs text-amber-900 flex items-start gap-1.5">
+                        <span className="text-amber-500 mt-0.5">•</span>
+                        <span>{item.label}</span>
+                      </li>
+                    ))}
+                  </ul>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div className="pt-4 border-t border-slate-100 flex justify-between gap-3">
           {registrationComplete && wizardStep !== 'partA' ? (
             <button
@@ -1982,9 +2265,18 @@ export default function CpcbRegistrationPage() {
 
           {!registrationComplete ? (
             <button
-              type="submit"
-              disabled={loading || !docReady || fileNameIssues.length > 0}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+              type="button"
+              onClick={handleStartRegistration}
+              disabled={
+                startRegistrationBlockers.length > 0
+                || (showAutomationModal && automationPhase !== 'error')
+              }
+              title={
+                startRegistrationBlockers.length > 0
+                  ? `Complete ${startRegistrationBlockers.length} pending item(s) above`
+                  : 'Start CPCB account registration'
+              }
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
             >
               {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
               Start Registration
@@ -2000,243 +2292,127 @@ export default function CpcbRegistrationPage() {
               <ChevronRight size={16} />
             </button>
           ) : (
-            <button
-              type="button"
-              onClick={handleNewApplication}
-              disabled={loading}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
-            >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <FilePlus size={16} />}
-              Register
-            </button>
+            <div className="flex items-center gap-2 flex-wrap justify-end">
+              {SHOW_RESUME_DRAFT_DEV_BUTTON ? (
+                <button
+                  type="button"
+                  onClick={handleResumeDraftPartB}
+                  disabled={
+                    loading
+                    || loginCaptchaSubmitting
+                    || loginOtpSubmitting
+                    || (showAutomationModal && automationPhase !== 'error')
+                  }
+                  title="Dev only: open first DRAFT on CPCB, Save & Next Part A, then fill Part B"
+                  className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
+                >
+                  {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                    <Loader2 size={16} className="animate-spin" />
+                  ) : (
+                    <Eye size={16} />
+                  )}
+                  Resume Draft → Part B (Dev)
+                </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleNewApplication}
+                disabled={
+                  loading
+                  || loginCaptchaSubmitting
+                  || loginOtpSubmitting
+                  || (showAutomationModal && automationPhase !== 'error')
+                }
+                className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+              >
+                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FilePlus size={16} />
+                )}
+                Register
+              </button>
+            </div>
           )}
         </div>
       </form>
 
-      {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && (
+      {loading && !showAutomationModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && (
         <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
           <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-800 font-semibold">Please wait</p>
-          <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
-          <p className="text-xs text-slate-400 mt-2">CPCB portal messages appear live in the chat at the bottom-right</p>
+          <p className="text-sm text-slate-500 mt-1">{loadingMsg || 'Your request is being processed'}</p>
         </div>
       )}
 
-      {showEmailOtp && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-lg font-semibold text-slate-800">Email OTP</h3>
-              <button
-                type="button"
-                disabled={otpSubmitting}
-                onClick={() => setShowEmailOtp(false)}
-                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-slate-600 mb-4">Enter OTP sent to {email}</p>
-              <input
-                type="text"
-                value={emailOtp}
-                onChange={(e) => setEmailOtp(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !otpSubmitting && handleVerifyEmailOtp()}
-                placeholder="Enter Email OTP"
-                disabled={otpSubmitting}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60"
-                autoFocus
-              />
-              <div className="mt-4 flex items-center justify-between text-sm">
-                {!isResendActive ? (
-                  <span className="text-slate-500">
-                    Resend OTP in <span className="font-medium">{formatTimer(otpTimer)}</span>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={otpSubmitting}
-                    onClick={handleResendEmailOtp}
-                    className="text-green-600 font-medium underline disabled:opacity-50"
-                  >
-                    Resend OTP
-                  </button>
-                )}
-              </div>
-            </div>
-            <div className="px-6 py-4 bg-slate-50 border-t flex justify-end">
-              <button
-                type="button"
-                onClick={handleVerifyEmailOtp}
-                disabled={otpSubmitting || !emailOtp.trim()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {otpSubmitting && <Loader2 size={14} className="animate-spin" />}
-                Verify
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
+      <RegistrationAutomationModal
+        open={showAutomationModal}
+        title={automationFlow === 'login' ? 'CPCB New Application' : 'CPCB Registration'}
+        subtitle="Live progress from the automation browser"
+        completeMessage={
+          automationFlow === 'login'
+            ? 'Application submitted successfully. Closing…'
+            : 'CPCB account created successfully. Closing…'
+        }
+        captchaStepHint={
+          automationFlow === 'login'
+            ? 'Enter captcha to request login OTP'
+            : 'Enter the captcha to finish registration'
+        }
+        submitCaptchaLabel={automationFlow === 'login' ? 'Get OTP' : 'Submit Captcha'}
+        phase={automationPhase}
+        currentStep={currentAutomationStep}
+        logs={automationLogs}
+        loading={loading || captchaSubmitting || loginCaptchaSubmitting || loginOtpSubmitting}
+        loadingMsg={loadingMsg}
+        onClose={closeAutomationModal}
+        email={email}
+        emailOtp={emailOtp}
+        onEmailOtpChange={(value) => {
+          setEmailOtp(value);
+          if (otpInputError) setOtpInputError('');
+        }}
+        onVerifyEmailOtp={handleVerifyEmailOtp}
+        onResendEmailOtp={handleResendEmailOtp}
+        otpTimer={automationPhase === 'login_otp' ? loginOtpTimer : otpTimer}
+        isResendActive={automationPhase === 'login_otp' ? loginOtpResendActive : isResendActive}
+        formatTimer={formatTimer}
+        otpSubmitting={automationPhase === 'login_otp' ? loginOtpSubmitting : otpSubmitting}
+        otpResending={resendingMobileOtp}
+        mobile={mobile}
+        mobileOtp={mobileOtp}
+        onMobileOtpChange={(value) => {
+          setMobileOtp(value);
+          if (otpInputError) setOtpInputError('');
+        }}
+        otpError={otpInputError}
+        onVerifyMobileOtp={handleVerifyMobileOtp}
+        onResendMobileOtp={handleResendMobileOtp}
+        captchaImage={automationFlow === 'login' ? loginCaptchaImage : captchaImage}
+        captchaText={automationFlow === 'login' ? loginCaptchaText : captchaText}
+        onCaptchaTextChange={(value) => {
+          if (automationFlow === 'login') {
+            setLoginCaptchaText(String(value || '').slice(0, 6));
+          } else {
+            setCaptchaText(String(value || '').slice(0, 6));
+            if (captchaError) setCaptchaError('');
+          }
+        }}
+        onSubmitCaptcha={automationFlow === 'login' ? handleSubmitLoginCaptcha : handleSubmitCaptcha}
+        onRefreshCaptcha={automationFlow === 'login' ? handleRefreshLoginCaptcha : handleRefreshCaptcha}
+        captchaSubmitting={automationFlow === 'login' ? loginCaptchaSubmitting : captchaSubmitting}
+        captchaRefreshing={automationFlow === 'login' ? loginCaptchaRefreshing : captchaRefreshing}
+        loginOtp={loginOtp}
+        onLoginOtpChange={(value) => {
+          setLoginOtp(value);
+          if (otpInputError) setOtpInputError('');
+          if (loginOtpError) setLoginOtpError('');
+        }}
+        onVerifyLoginOtp={handleVerifyLoginOtp}
+        onResendLoginOtp={handleResendLoginOtp}
+      />
 
-      {showMobileOtp && (
-        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
-            <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
-              <h3 className="text-lg font-semibold text-slate-800">Mobile OTP</h3>
-              <button
-                type="button"
-                disabled={otpSubmitting}
-                onClick={() => setShowMobileOtp(false)}
-                className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
-              >
-                <X size={20} />
-              </button>
-            </div>
-            <div className="p-6">
-              <p className="text-sm text-slate-600 mb-4">
-                OTP sent to <strong>{mobile}</strong>. Enter the SMS code below.
-              </p>
-              <input
-                type="text"
-                value={mobileOtp}
-                onChange={(e) => setMobileOtp(e.target.value)}
-                onKeyDown={(e) => e.key === 'Enter' && !otpSubmitting && handleVerifyMobileOtp()}
-                placeholder="Enter Mobile OTP"
-                disabled={otpSubmitting}
-                className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60"
-                autoFocus
-              />
-              <div className="mt-4 flex items-center justify-between text-sm">
-                {!isResendActive ? (
-                  <span className="text-slate-500">
-                    Resend OTP in <span className="font-medium">{formatTimer(otpTimer)}</span>
-                  </span>
-                ) : (
-                  <button
-                    type="button"
-                    disabled={otpSubmitting}
-                    onClick={handleResendMobileOtp}
-                    className="text-green-600 font-medium underline disabled:opacity-50"
-                  >
-                    Resend OTP
-                  </button>
-                )}
-              </div>
-              {otpSubmitting && (
-                <div className="mt-4 rounded-lg border border-green-200 bg-green-50 px-3 py-2">
-                  <p className="text-xs font-medium text-green-800 flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin shrink-0" />
-                    Please wait
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="px-6 py-4 bg-slate-50 border-t flex justify-end">
-              <button
-                type="button"
-                onClick={handleVerifyMobileOtp}
-                disabled={otpSubmitting || !mobileOtp.trim()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {otpSubmitting && <Loader2 size={14} className="animate-spin" />}
-                Verify & Finish
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showCaptchaModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
-            <div className="px-6 py-4 border-b flex items-center justify-between">
-              <div>
-                <h3 className="text-lg font-semibold text-slate-900">Enter Captcha</h3>
-                <p className="text-xs text-slate-500 mt-0.5">Type the characters shown below to complete registration</p>
-              </div>
-              <button
-                type="button"
-                onClick={() => !captchaSubmitting && setShowCaptchaModal(false)}
-                disabled={captchaSubmitting}
-                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 hover:bg-slate-100 disabled:opacity-50"
-              >
-                <X size={18} />
-              </button>
-            </div>
-            <div className="px-6 py-5 space-y-4">
-              <div className="flex items-center gap-3">
-                {captchaImage ? (
-                  <img
-                    src={captchaImage}
-                    alt="Captcha"
-                    className="h-12 border border-slate-200 rounded bg-slate-50"
-                  />
-                ) : (
-                  <div className="h-12 w-32 border border-dashed border-slate-300 rounded bg-slate-50 flex items-center justify-center text-xs text-slate-400">
-                    No image
-                  </div>
-                )}
-                <button
-                  type="button"
-                  onClick={handleRefreshCaptcha}
-                  disabled={captchaRefreshing || captchaSubmitting}
-                  className="inline-flex items-center gap-1.5 px-3 py-2 text-sm font-medium text-slate-700 border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-                >
-                  {captchaRefreshing ? (
-                    <Loader2 size={14} className="animate-spin" />
-                  ) : (
-                    <RefreshCw size={14} />
-                  )}
-                  Refresh
-                </button>
-              </div>
-              <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">Captcha</label>
-                <input
-                  type="text"
-                  value={captchaText}
-                  onChange={(e) => {
-                    setCaptchaText(e.target.value.slice(0, 6));
-                    if (captchaError) setCaptchaError('');
-                  }}
-                  onKeyDown={(e) => e.key === 'Enter' && handleSubmitCaptcha()}
-                  placeholder="Enter captcha"
-                  maxLength={6}
-                  disabled={captchaSubmitting}
-                  className={`${inputClass} uppercase tracking-widest ${captchaError ? 'border-red-400 focus:ring-red-500 focus:border-red-500' : ''}`}
-                  autoFocus
-                />
-                {captchaError && (
-                  <p className="text-xs text-red-600 mt-1.5">{captchaError}</p>
-                )}
-              </div>
-              {captchaSubmitting && (
-                <div className="rounded-lg border border-green-200 bg-green-50 px-3 py-2">
-                  <p className="text-xs font-medium text-green-800 flex items-center gap-2">
-                    <Loader2 size={12} className="animate-spin shrink-0" />
-                    Please wait
-                  </p>
-                </div>
-              )}
-            </div>
-            <div className="px-6 py-4 bg-slate-50 border-t flex justify-end">
-              <button
-                type="button"
-                onClick={handleSubmitCaptcha}
-                disabled={captchaSubmitting || !captchaText.trim()}
-                className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50"
-              >
-                {captchaSubmitting && <Loader2 size={14} className="animate-spin" />}
-                Submit & Complete
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {showLoginCaptchaModal && (
+      {showLoginCaptchaModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b flex items-center justify-between">
@@ -2324,7 +2500,7 @@ export default function CpcbRegistrationPage() {
         </div>
       )}
 
-      {showLoginOtpModal && (
+      {showLoginOtpModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">

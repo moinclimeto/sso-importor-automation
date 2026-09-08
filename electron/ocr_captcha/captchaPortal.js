@@ -5,16 +5,13 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import {
   mergeCaseWithHint,
   resolveGoogleVisionApiKey,
   runGoogleVisionCaptchaOcrBest,
 } from './captchaGoogleVision.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+import { loadEnvFile, getGeminiApiKeys } from '../loadEnv.js';
 
 const portalCaptchaCache = new WeakMap();
 
@@ -82,28 +79,6 @@ async function waitForCaptchaWidget(page) {
     .waitFor({ state: 'visible', timeout: 15000 })
     .catch(() => {});
   await page.waitForTimeout(400);
-}
-
-function loadEnvFile() {
-  const candidates = [path.join(process.cwd(), '.env'), path.join(__dirname, '../.env')];
-  for (const file of candidates) {
-    if (!fs.existsSync(file)) continue;
-    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      if (!process.env[key]) process.env[key] = value;
-    }
-  }
 }
 
 async function getArtifactsDir() {
@@ -361,9 +336,7 @@ async function refineVisionCaseWithTesseract(visionText, imagePaths) {
 
 async function solveCaptchaWithGemini(imageBuffer) {
   loadEnvFile();
-  const apiKeys = Object.entries(process.env)
-    .filter(([k, v]) => k.startsWith('GEMINI_API_KEY') && v?.trim())
-    .map(([, v]) => v.trim());
+  const apiKeys = getGeminiApiKeys();
   if (!apiKeys.length) throw new Error('GEMINI_API_KEY not found in .env');
 
   const prompt =

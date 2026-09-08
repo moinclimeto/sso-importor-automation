@@ -1,3 +1,5 @@
+import { withPlaywrightLaunchOptions } from './playwrightRuntime.js';
+
 /** Shared Chromium flags for CPCB portal (upload API / HTTP2 stability + full window). */
 export const CPCB_CHROMIUM_ARGS = [
   '--start-maximized',
@@ -11,6 +13,13 @@ export const CPCB_PERSISTENT_LAUNCH_OPTS = {
   viewport: null,
   args: CPCB_CHROMIUM_ARGS,
 };
+
+export function getCpcbPersistentLaunchOpts(extra = {}) {
+  return withPlaywrightLaunchOptions({
+    ...CPCB_PERSISTENT_LAUNCH_OPTS,
+    ...extra,
+  });
+}
 
 /** Maximize the Playwright browser window (viewport: null alone is not always enough on Windows). */
 export async function maximizeCpcbBrowserWindow(page) {

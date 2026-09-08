@@ -52,7 +52,7 @@ const GUIDELINES = [
   },
   {
     title: 'File naming (important)',
-    subtitle: 'CPCB portal simple file names accept karta hai — jaise person_pan.pdf, gst.pdf. Spaces, brackets (1) aur double extension (.pdf.pdf) allowed nahi. Galat naam par "Invalid filename" error aata hai.',
+    subtitle: 'The CPCB portal accepts simple file names such as person_pan.pdf and gst.pdf. Spaces, brackets (1), and double extensions (.pdf.pdf) are not allowed. An invalid name returns an "Invalid filename" error.',
   },
 ];
 

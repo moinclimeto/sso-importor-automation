@@ -4,16 +4,18 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { randomBytes } from 'crypto';
+import { captureException } from '../monitoring/capture.js';
+import { getAppLogDir } from '../appPaths.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const LOG_DIR = path.join(__dirname, '../logs');
-const LOG_FILE = path.join(LOG_DIR, 'extract.log');
+function getLogDir() {
+  return getAppLogDir();
+}
 
 function ensureLogDir() {
   try {
-    if (!fs.existsSync(LOG_DIR)) fs.mkdirSync(LOG_DIR, { recursive: true });
+    const dir = getLogDir();
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true });
   } catch {
     /* ignore */
   }
@@ -29,7 +31,7 @@ function writeLine(entry) {
   ensureLogDir();
   const line = JSON.stringify(entry);
   try {
-    fs.appendFileSync(LOG_FILE, `${line}\n`, 'utf8');
+    fs.appendFileSync(path.join(getLogDir(), 'extract.log'), `${line}\n`, 'utf8');
   } catch {
     /* ignore disk errors */
   }
@@ -44,7 +46,7 @@ function writeLine(entry) {
 
 export function createLogger(trackId, fileName = 'extract.log') {
   const id = trackId || createTrackId();
-  const logFile = path.join(LOG_DIR, fileName);
+  const logFile = path.join(getLogDir(), fileName);
 
   const log = (level, message, meta = {}) => {
     const entry = {
@@ -61,6 +63,18 @@ export function createLogger(trackId, fileName = 'extract.log') {
       /* ignore disk errors */
     }
     writeLine(entry);
+    if (level === 'error') {
+      try {
+        captureException(new Error(entry.message), {
+          type: 'logger-error',
+          process: 'main',
+          extra: entry.meta,
+          tags: { trackId: id, logger: fileName },
+        });
+      } catch {
+        /* never let monitoring break logging */
+      }
+    }
     return entry;
   };
 

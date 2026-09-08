@@ -9,13 +9,18 @@ import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../utils/registrationPartBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import {
   fetchComputedPartBSection5,
   mergePartBSection5b,
   mergePartBSection5d,
   refreshSec5RowFromSource,
 } from '../utils/registrationPartBSection5.js';
+import {
+  validateSection5bAgainstPlasticConsumed,
+  formatSection5bPartAIssue,
+  prepareSec5bForPortal,
+} from '../../shared/partBSection5.js';
 import { PART_B_SECTION4_CATEGORY_LABELS } from '../../shared/partBSection4.js';
 import {
   PORTAL_PLASTIC_MATERIALS,
@@ -41,6 +46,7 @@ export default function RegistrationPartB({
   generalInfo,
   setGeneralInfo,
   gstin = '',
+  onPersist,
 }) {
   const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState({});
@@ -48,16 +54,37 @@ export default function RegistrationPartB({
   const hydrateRef = useRef('');
   const showHistoricalSections = requiresHistoricalEprData(generalInfo.yearOfCommencement);
 
+  const persistPartB = () => {
+    onPersist?.().catch((err) => console.error('Failed to save Part B:', err));
+  };
+
   const section4PartAIssues = useMemo(
     () => (showHistoricalSections
       ? validateSection4AgainstPlasticConsumed(
         generalInfo.partBSection4 || [],
         generalInfo.plasticConsumed || {},
-        getImporterReportingFinancialYears(),
+        getCpcbPortalPartA3cYears(),
       )
       : []),
     [generalInfo.partBSection4, generalInfo.plasticConsumed, showHistoricalSections],
   );
+
+  const section5bPartAIssues = useMemo(() => {
+    if (!showHistoricalSections) return [];
+    const years = getCpcbPortalPartA3cYears();
+    const tx = generalInfo.partBTransactions || {};
+    const prepared5b = prepareSec5bForPortal({
+      plasticConsumed: generalInfo.plasticConsumed || {},
+      sec5b: tx.sec5b || [],
+      years,
+      alignToPartA: true,
+    });
+    return validateSection5bAgainstPlasticConsumed(
+      prepared5b,
+      generalInfo.plasticConsumed || {},
+      years,
+    );
+  }, [generalInfo.partBTransactions, generalInfo.plasticConsumed, showHistoricalSections]);
 
   useEffect(() => {
     if (!showHistoricalSections) return undefined;
@@ -69,7 +96,7 @@ export default function RegistrationPartB({
       return undefined;
     }
 
-    const hydrateKey = `${operatingStatesKey}::${gstin || ''}`;
+    const hydrateKey = `${operatingStatesKey}::${gstin || ''}::${getCpcbPortalPartA3cYears().join('|')}`;
     if (hydrateRef.current === hydrateKey) return undefined;
 
     let cancelled = false;
@@ -235,6 +262,7 @@ export default function RegistrationPartB({
       };
     });
     setActiveModal(null);
+    persistPartB();
   };
 
   const renderInput = (label, field, type="text", placeholder="") => (
@@ -482,6 +510,7 @@ export default function RegistrationPartB({
                                 sec5b: prev.partBTransactions.sec5b.filter((_, idx) => idx !== i),
                               },
                             }));
+                            persistPartB();
                           }}
                           className="text-red-500 hover:text-red-700 p-1"
                           title="Delete"
@@ -570,6 +599,7 @@ export default function RegistrationPartB({
                                 sec5d: prev.partBTransactions.sec5d.filter((_, idx) => idx !== i),
                               },
                             }));
+                            persistPartB();
                           }}
                           className="text-red-500 hover:text-red-700 p-1"
                           title="Delete"
@@ -636,6 +666,7 @@ export default function RegistrationPartB({
                             const newRows = prev.partBTransactions[secKey].filter((_, idx) => idx !== i);
                             return { ...prev, partBTransactions: { ...prev.partBTransactions, [secKey]: newRows } };
                           });
+                          persistPartB();
                         }} className="text-red-500 hover:text-red-700 p-1" title="Delete">
                           <Trash2 size={16} />
                         </button>
@@ -678,15 +709,19 @@ export default function RegistrationPartB({
             ) : null}
             {section4PartAIssues.length > 0 ? (
               <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 space-y-1">
-                <p className="font-semibold">Part A 3c aur Section 4 match nahi kar rahe (CPCB ±40% rule)</p>
+                <p className="font-semibold">Part A 3c and Section 4 do not match (CPCB ±40% rule)</p>
                 {section4PartAIssues.map((issue) => (
                   <p key={`${issue.year}-${issue.catKey}`}>{formatSection4PartAIssue(issue)}</p>
                 ))}
                 <p className="text-amber-800">
-                  Part A → Plastic Consumed (3c) aur Part B → Section 4 totals ko align karein, phir Register/automation chalayein.
+                  Align Part A → Plastic Consumed (3c) with Part B → Section 4 totals, then run Register / automation.
                 </p>
               </div>
-            ) : null}
+            ) : (
+              <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 rounded-md px-3 py-2 mt-2">
+                Section 4 totals match Part A 3c (±40% rule) — no change needed here.
+              </div>
+            )}
           </div>
           
           <div className="overflow-x-auto border border-slate-300">
@@ -767,8 +802,21 @@ export default function RegistrationPartB({
         {showHistoricalSections ? (
         <div className="bg-white border rounded-xl shadow-sm p-5">
           <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
+          {section5bPartAIssues.length > 0 ? (
+            <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mb-4 space-y-1">
+              <p className="font-semibold">
+                Part A 3c and Section 5b (unregistered purchases) do not match — this blocks Register ({section5bPartAIssues.length} issue(s))
+              </p>
+              {section5bPartAIssues.map((issue) => (
+                <p key={`${issue.year}-${issue.catKey}`}>{formatSection5bPartAIssue(issue)}</p>
+              ))}
+              <p className="text-amber-800">
+                Section 5a is empty/manual, so Section 5b alone must cover Part A 3c per year and category. Add published unregistered purchase invoices for missing years/categories, or add manual 5b rows with invoice PDFs. Automation scales existing 5b quantities (e.g. 1→5, 2→7) but cannot create rows without purchase data.
+              </p>
+            </div>
+          ) : null}
           
-          {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity', 'sec5a')}
+          {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity (manual — automation pending)', 'sec5a')}
           {renderSec5bTable()}
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
           {renderSec5dTable()}

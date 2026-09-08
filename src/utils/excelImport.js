@@ -1,7 +1,13 @@
+import ExcelJS from 'exceljs';
 import * as XLSX from 'xlsx';
 export { PLASTIC_CATEGORIES, normalizePlasticCategory } from '../../shared/plasticCategories.js';
 import { PLASTIC_CATEGORIES, normalizePlasticCategory } from '../../shared/plasticCategories.js';
-import { resolveRecordTotalMt } from '../../shared/procurementConversionFactor.js';
+import {
+  ENTITY_TYPE_OPTIONS,
+  REGISTRATION_TYPE_OPTIONS,
+} from '../../shared/entityRegistrationTypes.js';
+import { PORTAL_PLASTIC_MATERIALS } from '../../shared/partBSection5.js';
+import { FINANCIAL_YEAR_OPTIONS, resolveRecordTotalMt } from '../../shared/procurementConversionFactor.js';
 
 /** Exact Excel column labels for Procurement (Purchases) */
 export const PURCHASE_EXCEL_HEADERS = [
@@ -57,10 +63,20 @@ const PURCHASE_HEADER_TO_KEY = {
 
 /** Exact Excel column labels for Post Consumer (Sales) */
 export const SALE_EXCEL_HEADERS = [
+  'Registration Type',
+  'Entity Type',
   'Category of Plastic',
+  'Plastic Material Type',
   'Product Type',
+  'Financial Year',
+  'Invoice Date',
   'Quantity Sold (MT)',
+  'Available Quantity (MT)',
+  '(%) of Recycled Plastic in Product',
+  'Conversion Factor',
   'Name of the Entity',
+  'GST Number',
+  'Mobile Number',
   'Address',
   'State',
   'District',
@@ -69,13 +85,23 @@ export const SALE_EXCEL_HEADERS = [
   'GST & Other Charges',
   'Invoice File Name',
   'Application Number',
-  'Invoice Date',
 ];
 
 export const SALE_TABLE_COLUMNS = [
+  { key: 'registration_type', label: 'Registration Type' },
+  { key: 'entity_type', label: 'Entity Type' },
   { key: 'category_of_plastic', label: 'Category of Plastic' },
+  { key: 'plastic_type', label: 'Plastic Material Type' },
+  { key: 'product_type', label: 'Product Type' },
+  { key: 'financial_year', label: 'Financial Year' },
+  { key: 'invoice_date', label: 'Invoice Date' },
   { key: 'quantity_sold_mt', label: 'Quantity Sold (MT)' },
+  { key: 'available_quantity_mt', label: 'Available Quantity (MT)' },
+  { key: 'recycled_plastic_percent', label: '(%) of Recycled Plastic in Product' },
+  { key: 'conversion_factor', label: 'Conversion Factor' },
   { key: 'entity_name', label: 'Name of the Entity' },
+  { key: 'customer_gstin', label: 'GST Number' },
+  { key: 'mobile_number', label: 'Mobile Number' },
   { key: 'address', label: 'Address' },
   { key: 'state', label: 'State' },
   { key: 'district', label: 'District' },
@@ -84,7 +110,6 @@ export const SALE_TABLE_COLUMNS = [
   { key: 'gst_other_charges', label: 'GST & Other Charges' },
   { key: 'invoice_file_name', label: 'Invoice File Name' },
   { key: 'application_number', label: 'Application Number' },
-  { key: 'invoice_date', label: 'Invoice Date' },
 ];
 
 const SALE_HEADER_TO_KEY = {
@@ -104,6 +129,12 @@ const SALE_HEADER_TO_KEY = {
   quantity_sold_mt: 'quantity_sold_mt',
   quantity_sold: 'quantity_sold_mt',
   registration_type: 'registration_type',
+  entity_type: 'entity_type',
+  financial_year: 'financial_year',
+  mobile_number: 'mobile_number',
+  gst_number: 'customer_gstin',
+  customer_gstin: 'customer_gstin',
+  plastic_material_type: 'plastic_type',
   name_of_the_entity: 'entity_name',
   entity_name: 'entity_name',
   address: 'address',
@@ -119,8 +150,8 @@ const SALE_HEADER_TO_KEY = {
 };
 
 const PURCHASE_SAMPLE = {
-  'Registration Type': 'Producer',
-  'Entity Type': 'Brand',
+  'Registration Type': 'Registered',
+  'Entity Type': 'Brand Owner',
   'GST Number': '06AABCG1111H1Z8',
   'Name Of The Entity': 'Green Plastics India',
   'Country': 'India',
@@ -136,10 +167,20 @@ const PURCHASE_SAMPLE = {
 };
 
 const SALE_SAMPLE = {
+  'Registration Type': 'Registered',
+  'Entity Type': 'Brand Owner',
   'Category of Plastic': 'Cat-I',
+  'Plastic Material Type': 'HDPE',
   'Product Type': 'Granules',
+  'Financial Year': '2024-25',
+  'Invoice Date': '2025-07-30',
   'Quantity Sold (MT)': 5,
+  'Available Quantity (MT)': 10,
+  '(%) of Recycled Plastic in Product': 25,
+  'Conversion Factor': 1,
   'Name of the Entity': 'Eco Packaging Co',
+  'GST Number': '27AABCE1234F1Z5',
+  'Mobile Number': '9876543210',
   'Address': '12 Industrial Area',
   'State': 'Maharashtra',
   'District': 'Pune',
@@ -148,7 +189,6 @@ const SALE_SAMPLE = {
   'GST & Other Charges': 9000,
   'Invoice File Name': 'invoice_SC_2025_001.pdf',
   'Application Number': 'APP-2025-001',
-  'Invoice Date': '2025-07-30',
 };
 
 function normalizeHeader(h) {
@@ -247,13 +287,17 @@ function mapSaleRow(mapped, rowNum, errors) {
     s_no: str(flat.s_no || get('S-No.')) || String(rowNum - 1),
     category_of_plastic: normalizePlasticCategory(flat.category_of_plastic || get('Category of Plastic')),
     process_code: str(flat.process_code || get('Process Code')),
-    plastic_type: str(flat.plastic_type || get('Plastic Type')),
+    plastic_type: str(flat.plastic_type || get('Plastic Material Type', 'Plastic Type')),
     product_type: str(flat.product_type || get('Product Type')),
     recycled_plastic_percent: num(flat.recycled_plastic_percent || get('(%) of Recycled Plastic in Product')),
     conversion_factor: num(flat.conversion_factor || get('Conversion Factor')),
     available_quantity_mt: num(flat.available_quantity_mt || get('Available Quantity (MT)')),
     quantity_sold_mt,
-    registration_type: str(flat.registration_type || get('Registration type')),
+    registration_type: str(flat.registration_type || get('Registration Type', 'Registration type')),
+    entity_type: str(flat.entity_type || get('Entity Type')),
+    financial_year: str(flat.financial_year || get('Financial Year')),
+    mobile_number: str(flat.mobile_number || get('Mobile Number')),
+    customer_gstin: str(flat.customer_gstin || get('GST Number')).toUpperCase(),
     entity_name,
     address: str(flat.address || get('Address')),
     state: str(flat.state || get('State')),
@@ -338,36 +382,209 @@ function mapPurchaseRow(mapped, rowNum, errors) {
   };
 }
 
-export function downloadExcelTemplate(type) {
-  const isPurchase = type !== 'sale';
-  const wb = XLSX.utils.book_new();
+function saveExcelBuffer(buffer, filename) {
+  const blob = new Blob([buffer], {
+    type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.href = url;
+  link.download = filename;
+  link.click();
+  URL.revokeObjectURL(url);
+}
 
-  const lookupWs = XLSX.utils.aoa_to_sheet([
-    ['Category of Plastic (use exactly)'],
-    ...PLASTIC_CATEGORIES.map((c) => [c]),
-  ]);
-  lookupWs['!cols'] = [{ wch: 32 }];
+function excelColLetter(index) {
+  let n = index;
+  let letter = '';
+  while (n >= 0) {
+    letter = String.fromCharCode(65 + (n % 26)) + letter;
+    n = Math.floor(n / 26) - 1;
+  }
+  return letter;
+}
+
+function addSharedLookupsSheet(wb) {
+  const lookups = wb.addWorksheet('Lookups');
+  lookups.getCell('A1').value = 'Registration Type';
+  REGISTRATION_TYPE_OPTIONS.forEach((value, idx) => {
+    lookups.getCell(`A${idx + 2}`).value = value;
+  });
+  lookups.getCell('B1').value = 'Entity Type';
+  ENTITY_TYPE_OPTIONS.forEach((value, idx) => {
+    lookups.getCell(`B${idx + 2}`).value = value;
+  });
+  lookups.getCell('C1').value = 'Plastic Material Type';
+  PORTAL_PLASTIC_MATERIALS.forEach((value, idx) => {
+    lookups.getCell(`C${idx + 2}`).value = value;
+  });
+  lookups.getCell('D1').value = 'Category Of Plastic';
+  PLASTIC_CATEGORIES.forEach((value, idx) => {
+    lookups.getCell(`D${idx + 2}`).value = value;
+  });
+  lookups.getCell('E1').value = 'Financial Year';
+  FINANCIAL_YEAR_OPTIONS.forEach((value, idx) => {
+    lookups.getCell(`E${idx + 2}`).value = value;
+  });
+  lookups.state = 'veryHidden';
+  return lookups;
+}
+
+function addListValidation(ws, headers, header, lastRow, formulae, errorTitle, error) {
+  const idx = headers.indexOf(header);
+  if (idx < 0) return;
+  const col = excelColLetter(idx);
+  ws.dataValidations.add(`${col}2:${col}${lastRow}`, {
+    type: 'list',
+    allowBlank: true,
+    formulae: [formulae],
+    showErrorMessage: true,
+    errorTitle,
+    error,
+  });
+}
+
+async function buildProcurementWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  addSharedLookupsSheet(wb);
+
+  const ws = wb.addWorksheet('Procurement');
+  ws.addRow(PURCHASE_EXCEL_HEADERS);
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  ws.addRow(PURCHASE_EXCEL_HEADERS.map((header) => PURCHASE_SAMPLE[header] ?? ''));
+
+  PURCHASE_EXCEL_HEADERS.forEach((header, idx) => {
+    ws.getColumn(idx + 1).width = Math.min(40, Math.max(16, header.length + 2));
+  });
+
+  const lastRow = 500;
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Registration Type',
+    lastRow,
+    `Lookups!$A$2:$A$${REGISTRATION_TYPE_OPTIONS.length + 1}`,
+    'Invalid Registration Type',
+    'Choose Registered or Unregistered.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Entity Type',
+    lastRow,
+    `Lookups!$B$2:$B$${ENTITY_TYPE_OPTIONS.length + 1}`,
+    'Invalid Entity Type',
+    'Choose Producer, PWP, Brand Owner, Importer, Manufacturer, or Other.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Plastic Material Type',
+    lastRow,
+    `Lookups!$C$2:$C$${PORTAL_PLASTIC_MATERIALS.length + 1}`,
+    'Invalid Plastic Material Type',
+    'Choose HDPE, PET, PP, PS, LDPE, LLDPE, MLP, PE, PVC, Others, PMMA, EPS, PLA, PBAT, or PBS.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Category Of Plastic',
+    lastRow,
+    `Lookups!$D$2:$D$${PLASTIC_CATEGORIES.length + 1}`,
+    'Invalid Category Of Plastic',
+    'Choose Cat-I, Cat-II, Cat-III, or Cat-IV.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Financial Year',
+    lastRow,
+    `Lookups!$E$2:$E$${FINANCIAL_YEAR_OPTIONS.length + 1}`,
+    'Invalid Financial Year',
+    'Choose a valid financial year (e.g. 2024-25).',
+  );
+
+  return wb;
+}
+
+async function buildPostConsumerWorkbook() {
+  const wb = new ExcelJS.Workbook();
+  addSharedLookupsSheet(wb);
+
+  const ws = wb.addWorksheet('PostConsumer');
+  ws.addRow(SALE_EXCEL_HEADERS);
+  ws.getRow(1).font = { bold: true };
+  ws.views = [{ state: 'frozen', ySplit: 1 }];
+  ws.addRow(SALE_EXCEL_HEADERS.map((header) => SALE_SAMPLE[header] ?? ''));
+
+  SALE_EXCEL_HEADERS.forEach((header, idx) => {
+    ws.getColumn(idx + 1).width = Math.min(44, Math.max(16, header.length + 2));
+  });
+
+  const lastRow = 500;
+  addListValidation(
+    ws,
+    SALE_EXCEL_HEADERS,
+    'Registration Type',
+    lastRow,
+    `Lookups!$A$2:$A$${REGISTRATION_TYPE_OPTIONS.length + 1}`,
+    'Invalid Registration Type',
+    'Choose Registered or Unregistered.',
+  );
+  addListValidation(
+    ws,
+    SALE_EXCEL_HEADERS,
+    'Entity Type',
+    lastRow,
+    `Lookups!$B$2:$B$${ENTITY_TYPE_OPTIONS.length + 1}`,
+    'Invalid Entity Type',
+    'Choose Producer, PWP, Brand Owner, Importer, Manufacturer, or Other.',
+  );
+  addListValidation(
+    ws,
+    SALE_EXCEL_HEADERS,
+    'Plastic Material Type',
+    lastRow,
+    `Lookups!$C$2:$C$${PORTAL_PLASTIC_MATERIALS.length + 1}`,
+    'Invalid Plastic Material Type',
+    'Choose HDPE, PET, PP, PS, LDPE, LLDPE, MLP, PE, PVC, Others, PMMA, EPS, PLA, PBAT, or PBS.',
+  );
+  addListValidation(
+    ws,
+    SALE_EXCEL_HEADERS,
+    'Category of Plastic',
+    lastRow,
+    `Lookups!$D$2:$D$${PLASTIC_CATEGORIES.length + 1}`,
+    'Invalid Category of Plastic',
+    'Choose Cat-I, Cat-II, Cat-III, or Cat-IV.',
+  );
+  addListValidation(
+    ws,
+    SALE_EXCEL_HEADERS,
+    'Financial Year',
+    lastRow,
+    `Lookups!$E$2:$E$${FINANCIAL_YEAR_OPTIONS.length + 1}`,
+    'Invalid Financial Year',
+    'Choose a valid financial year (e.g. 2024-25).',
+  );
+
+  return wb;
+}
+
+export async function downloadExcelTemplate(type) {
+  const isPurchase = type !== 'sale';
 
   if (isPurchase) {
-    const ws = XLSX.utils.json_to_sheet([PURCHASE_SAMPLE], {
-      header: PURCHASE_EXCEL_HEADERS,
-    });
-    ws['!cols'] = PURCHASE_EXCEL_HEADERS.map((h) => ({
-      wch: Math.min(40, Math.max(16, h.length + 2)),
-    }));
-    XLSX.utils.book_append_sheet(wb, ws, 'Procurement');
-    XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookups');
-    XLSX.writeFile(wb, 'procurement_template.xlsx');
+    const wb = await buildProcurementWorkbook();
+    const buffer = await wb.xlsx.writeBuffer();
+    saveExcelBuffer(buffer, 'procurement_template.xlsx');
     return;
   }
 
-  const ws = XLSX.utils.json_to_sheet([SALE_SAMPLE], { header: SALE_EXCEL_HEADERS });
-  ws['!cols'] = SALE_EXCEL_HEADERS.map((h) => ({
-    wch: Math.min(36, Math.max(16, h.length + 2)),
-  }));
-  XLSX.utils.book_append_sheet(wb, ws, 'PostConsumer');
-  XLSX.utils.book_append_sheet(wb, lookupWs, 'Lookups');
-  XLSX.writeFile(wb, 'post_consumer_template.xlsx');
+  const wb = await buildPostConsumerWorkbook();
+  const buffer = await wb.xlsx.writeBuffer();
+  saveExcelBuffer(buffer, 'post_consumer_template.xlsx');
 }
 
 export function parseExcelFile(file, type) {

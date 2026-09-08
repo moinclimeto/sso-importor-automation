@@ -12,6 +12,7 @@ import {
   reconcileSec5dForAutomation,
 } from '../../shared/partBSection5.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 
 async function resolveCompanyIdForAutomation({ companyId = null, gstin = '' } = {}) {
   if (companyId != null && companyId !== '') return companyId;
@@ -100,6 +101,7 @@ export async function resolvePartBSection4ForAutomation({
       sales,
       companyId,
       docStatus: 'published',
+      reportingYears: getCpcbPortalPartA3cYears(),
     });
     if (partBSection4HasData(computed)) {
       if (onLog) onLog(`Computed Part B Section 4 from ${purchases.length} purchases / ${sales.length} sales.`);
@@ -130,8 +132,8 @@ export async function resolvePartBTransactionsForAutomation({
     if (onLog) onLog('Part B Section 5 skipped — operations commenced in current financial year.');
     return { ...base, sec5a: [], sec5b: [], sec5c: [], sec5d: [] };
   }
-  const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
-  const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
+    const existing5b = Array.isArray(base.sec5b) ? base.sec5b : [];
+    const existing5d = Array.isArray(base.sec5d) ? base.sec5d : [];
   const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
 
   try {

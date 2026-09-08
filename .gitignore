@@ -22,6 +22,9 @@ logs/
 npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
+crash-reports/
+*.dmp
+sentry-dsn.txt
 
 # Database & local data
 *.db
@@ -37,6 +40,19 @@ sso_importer.db-wal
 sso_importer.db-shm
 electron/sso_importer.db-shm
 electron/sso_importer.db-wal
+
+# Bundled installer runtimes (downloaded at build time)
+electron/ghostscript/
+vendor/playwright-browsers/
+vendor/vcredist/*.exe
+vendor/app-env/
+
+# Local scraped / downloaded runtime data (keep folder via .gitkeep)
+data/downloads/**
+!data/downloads/**/
+!data/downloads/**/.gitkeep
+data/scraped_data_latest.json
+data/*debug*
 
 # Electron / Playwright
 playwright_session/

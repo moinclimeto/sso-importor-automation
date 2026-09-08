@@ -23,31 +23,12 @@ import {
   ZBarSymbolType,
 } from '@undecaf/zbar-wasm';
 
+import { loadEnvFile } from '../loadEnv.js';
+
 const execFileAsync = promisify(execFile);
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PYTHON_QR_SCRIPT = path.join(__dirname, '../scripts/qr_scanner/qr.py');
 const DOCKER_IMAGE = process.env.QR_DOCKER_IMAGE || 'pwp-qr-scanner:latest';
-
-function loadEnvFile() {
-  for (const file of [path.join(process.cwd(), '.env'), path.join(__dirname, '../.env')]) {
-    if (!fs.existsSync(file)) continue;
-    for (const line of fs.readFileSync(file, 'utf8').split(/\r?\n/)) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      if (!process.env[key]) process.env[key] = value;
-    }
-  }
-}
 
 function mimeFromPath(filePath) {
   const ext = path.extname(filePath).toLowerCase();

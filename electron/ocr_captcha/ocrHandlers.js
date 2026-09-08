@@ -1,7 +1,6 @@
 import { ipcMain, dialog } from 'electron';
 import fs from 'fs';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import { scanQrFromDocument } from './qrScan.js';
 import { getFileSha256 } from '../utils/hashUtils.js';
@@ -17,6 +16,7 @@ import {
 } from './ocrExtract.js';
 import { extractPdfTextForGstFallback } from '../invoicePartyProbe.js';
 import { createLogger, createTrackId } from '../utils/logger.js';
+import { loadEnvFile, getGeminiApiKeys } from '../loadEnv.js';
 import { runExtractQueue } from './extractQueue.js';
 import {
   beginEntityVerifyBatch,
@@ -34,10 +34,7 @@ import { resolveUploadPaths } from '../utils/zipExpand.js';
 import {
   normalizeCompanyDocumentExtraction,
   needsCinOcrRetry,
-} from '../../src/utils/companyDocNormalize.js';
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+} from '../../shared/companyDocNormalize.js';
 
 async function fetchDefaultConversionFactor(db) {
   if (!db) return null;
@@ -111,31 +108,6 @@ async function runGeminiJsonExtraction({
   return { parsed: null, usedModel: null, lastError };
 }
 
-function loadEnvFile() {
-  const candidates = [
-    path.join(process.cwd(), '.env'),
-    path.join(__dirname, '../.env'),
-  ];
-  for (const file of candidates) {
-    if (!fs.existsSync(file)) continue;
-    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
-    for (const line of lines) {
-      const trimmed = line.trim();
-      if (!trimmed || trimmed.startsWith('#')) continue;
-      const eq = trimmed.indexOf('=');
-      if (eq === -1) continue;
-      const key = trimmed.slice(0, eq).trim();
-      let value = trimmed.slice(eq + 1).trim();
-      if (
-        (value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))
-      ) {
-        value = value.slice(1, -1);
-      }
-      if (!process.env[key]) process.env[key] = value;
-    }
-  }
-}
 function mimeFromPath(filePath) {
   const ext = path.extname(filePath).toLowerCase();
   if (ext === '.pdf') return 'application/pdf';
@@ -160,18 +132,13 @@ async function extractOneInvoice({
 }) {
   loadEnvFile();
   const log = parentLog || createLogger(trackId || createTrackId('ocr'));
-  const apiKeys = [];
-  for (const [k, v] of Object.entries(process.env)) {
-    if (k.startsWith('GEMINI_API_KEY') && v) {
-      apiKeys.push(v.trim());
-    }
-  }
+  const apiKeys = getGeminiApiKeys();
   if (!apiKeys.length) {
     log.error('GEMINI_API_KEY missing');
     return {
       success: false,
       message:
-        'GEMINI_API_KEY not found. Add it to project root .env file and restart the app.',
+        'GEMINI_API_KEY not found. For the installed app add it to %APPDATA%\\sso-importor-automation\\.env (or rebuild the installer). For electron:dev use the project root .env, then restart.',
       trackId: log.trackId,
     };
   }

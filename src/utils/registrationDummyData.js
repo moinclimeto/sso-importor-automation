@@ -3,6 +3,8 @@
  * All dummy fallback data has been removed. Users must supply actual data or use OCR.
  */
 
+import { derivePanFromGstin } from './registrationDataMapper.js';
+
 /** Fallback login credentials if none provided. */
 export const REGISTRATION_LOGIN_DUMMY = {
   email: '',
@@ -54,8 +56,16 @@ export function isRegistrationReadyWithFallback(docs = [], docData = {}) {
   if (hasCompleteRegistrationData(docData)) {
     return { ready: true, isDummy: false, missing: [] };
   }
-  
+
   const types = new Set((docs || []).map((d) => d.doc_type));
-  const missing = ['gst', 'person_pan', 'company_pan'].filter((t) => !types.has(t));
-  return { ready: false, isDummy: false, missing };
+  const gstDoc = (docs || []).find((d) => d.doc_type === 'gst');
+  const gstin = gstDoc?.document_number || docData?.gstin || '';
+  const hasDerivedPan = types.has('company_pan') || Boolean(derivePanFromGstin(gstin));
+
+  const missing = [];
+  if (!types.has('gst')) missing.push('gst');
+  if (!types.has('person_pan')) missing.push('person_pan');
+  if (!hasDerivedPan) missing.push('company_pan');
+
+  return { ready: missing.length === 0, isDummy: false, missing };
 }

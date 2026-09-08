@@ -1,11 +1,11 @@
 import { app, ipcMain, dialog } from 'electron';
 import { registerOcrHandlers } from '../ocr_captcha/ocrHandlers.js';
 import { registerGstVerifyHandlers } from '../gstVerifyHandlers.js';
-import { initDatabase, getDb, dbJsonPath, getDbFilePath } from '../db/database.js';
+import { getDb, getDbFilePath } from '../db/database.js';
 import { getRegistrationDetails, saveRegistrationDetails } from '../db/registrationDb.js';
 import { createLogger } from '../utils/logger.js';
 import { warmupQrScanner } from '../ocr_captcha/qrScan.js';
-import { chromium } from 'playwright';
+import { chromium } from '../automation/playwrightRuntime.js';
 import {
   lineItemsToPackagingSyncRows,
   normalizePackagingMasterRecord,
@@ -18,7 +18,7 @@ import {
   assertNoDuplicateSale,
   pruneOrphanFileHashes,
 } from '../invoiceDuplicateCheck.js';
-import { CPCB_PERSISTENT_LAUNCH_OPTS, prepareCpcbBrowserPage } from '../automation/cpcbBrowserLaunch.js';
+import { getCpcbPersistentLaunchOpts, prepareCpcbBrowserPage } from '../automation/cpcbBrowserLaunch.js';
 import { storeProcessedUpload } from '../utils/storeUploadFile.js';
 import {
   computeImporter3aDraft,
@@ -96,10 +96,11 @@ function sendScraperLog(event, msg) {
   event.sender.send('scraper:log', text);
 }
 
+let ipcHandlersRegistered = false;
+
 export function registerIpcHandlers() {
-  initDatabase(async (dbInstance) => {
-    await migrateFromJsonToSqlite(dbInstance, dbJsonPath);
-  }).catch(err => console.error("Failed to initialize database:", err));
+  if (ipcHandlersRegistered) return;
+  ipcHandlersRegistered = true;
   registerOcrHandlers();
   registerGstVerifyHandlers();
   warmupQrScanner().catch(() => {});
@@ -1465,7 +1466,7 @@ async function syncSupplierMasterFromRecord(
 
   ipcMain.handle('scraper:submitLoginCaptcha', async (event, payload) => {
     const captchaText = typeof payload === 'string' ? payload : payload?.captcha;
-    return await submitLoginCaptcha(captchaText, (msg) => sendScraperLog(event, msg));
+    return await submitLoginCaptcha(captchaText, (msg) => sendScraperLog(event, msg), payload);
   });
 
   ipcMain.handle('scraper:refreshLoginCaptcha', async (event) => {
@@ -1483,7 +1484,15 @@ async function syncSupplierMasterFromRecord(
   ipcMain.handle('scraper:runApplicationOnboardingAfterLogin', async (event, payload) => {
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
-    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), { autoScrape });
+    const automationMode = typeof payload === 'object' ? payload?.automationMode : undefined;
+    const fillPartB = typeof payload === 'object' && payload?.fillPartB !== undefined
+      ? Boolean(payload.fillPartB)
+      : true;
+    return await runApplicationOnboardingAfterLogin((msg) => sendScraperLog(event, msg), {
+      autoScrape,
+      automationMode,
+      fillPartB,
+    });
   });
 
   ipcMain.handle('scraper:answerPaymentBypass', async (_event, payload) => {
@@ -1704,16 +1713,20 @@ async function syncSupplierMasterFromRecord(
 
     cpcbLaunchPromise = (async () => {
       const userDataDir = getCpcbSessionDir();
-      const launchOpts = { ...CPCB_PERSISTENT_LAUNCH_OPTS };
+      const launchOpts = getCpcbPersistentLaunchOpts();
 
       let context;
       try {
-        context = await chromium.launchPersistentContext(userDataDir, {
-          ...launchOpts,
-          channel: 'chrome',
-        });
-      } catch {
         context = await chromium.launchPersistentContext(userDataDir, launchOpts);
+      } catch (firstErr) {
+        try {
+          context = await chromium.launchPersistentContext(
+            userDataDir,
+            getCpcbPersistentLaunchOpts({ channel: 'chrome' }),
+          );
+        } catch {
+          throw firstErr;
+        }
       }
 
       cpcbContext = context;
@@ -2231,10 +2244,10 @@ async function syncSupplierMasterFromRecord(
       console.log('Starting EPR scraper...');
 
       const userDataDir = path.join(__dirname, '..', 'playwright_session');
-      const context = await chromium.launchPersistentContext(userDataDir, {
-        ...CPCB_PERSISTENT_LAUNCH_OPTS,
-        channel: 'chrome',
-      });
+      const context = await chromium.launchPersistentContext(
+        userDataDir,
+        getCpcbPersistentLaunchOpts(),
+      );
       const page = context.pages().length > 0 ? context.pages()[0] : await context.newPage();
       await prepareCpcbBrowserPage(page);
 

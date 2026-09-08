@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react';
 import DataService from '../config/DataService.js';
 import { Api } from '../config/apiEndpoints.js';
+import { setRendererUser, captureRendererException } from '../monitoring/initRenderer.js';
 
 const AuthContext = createContext(null);
 
@@ -125,10 +126,21 @@ export function AuthProvider({ children }) {
     async function restoreSession() {
       try {
         if (window.pwp?.auth?.getSession) {
-          const session = await window.pwp.auth.getSession();
+          let session = null;
+          for (let attempt = 0; attempt < 20; attempt += 1) {
+            try {
+              session = await window.pwp.auth.getSession();
+              break;
+            } catch (err) {
+              const waiting = /No handler registered/i.test(String(err?.message || err));
+              if (!waiting || attempt === 19) throw err;
+              await new Promise((resolve) => setTimeout(resolve, 150));
+            }
+          }
           if (!cancelled && session?.success && session.token && session.user) {
             persistSession(session.token, session.user);
             setUser(session.user);
+            setRendererUser(session.user);
             return;
           }
         }
@@ -138,9 +150,12 @@ export function AuthProvider({ children }) {
         if (!cancelled && token && storedUser) {
           await syncTokenToMain(token, storedUser);
           setUser(storedUser);
+          setRendererUser(storedUser);
         }
       } catch (err) {
         console.error('Failed to restore auth session', err);
+        setRendererUser(null);
+        captureRendererException(err, { type: 'auth-restore' });
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -156,6 +171,7 @@ export function AuthProvider({ children }) {
     persistSession(token, userData);
     syncTokenToMain(token, userData);
     setUser(userData);
+    setRendererUser(userData);
   };
 
   const loginWithCredentials = async ({ email, password, force = false } = {}) => {
@@ -175,6 +191,7 @@ export function AuthProvider({ children }) {
     }
     clearPersistedSession();
     setUser(null);
+    setRendererUser(null);
   };
 
   return (

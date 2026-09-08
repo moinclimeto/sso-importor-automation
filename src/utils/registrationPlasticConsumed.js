@@ -2,8 +2,9 @@ import { buildPlasticConsumed3cForReports } from '../../shared/plasticConsumed3c
 import {
   emptyPlasticConsumedYear,
   plasticConsumed3cHasData,
+  prunePlasticConsumedForPortal,
 } from '../../shared/plasticConsumed3c.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 
 export function resolveCompanyIdFromGstin(companies = [], gstin = '') {
   const normalized = String(gstin || '').trim().toUpperCase();
@@ -50,14 +51,14 @@ export async function fetchComputedPlasticConsumed3c({
     savedImporter3a,
   });
 
-  const reportingYears = getImporterReportingFinancialYears();
+  const reportingYears = getCpcbPortalPartA3cYears();
   const plasticConsumed = mergePlasticConsumedForReportingYears(
     computed.plasticConsumed,
     reportingYears,
   );
 
   return {
-    plasticConsumed,
+    plasticConsumed: prunePlasticConsumedForPortal(plasticConsumed),
     reportingYears,
     source: computed.source,
     sourceLabel: computed.sourceLabel,

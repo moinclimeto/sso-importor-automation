@@ -1,3 +1,14 @@
+export function isLoginOtpError(message = '') {
+  const msg = String(message || '').trim().toLowerCase();
+  return /invalid|expired|incorrect|wrong|otp|6.?digit|verification failed|try again/.test(msg);
+}
+
+export function isLoginOtpFailureResult(res = {}) {
+  if (res?.success) return false;
+  if (res?.step === 'WAITING_LOGIN_OTP' || res?.step === 'WAITING_LOGIN_CAPTCHA') return true;
+  return isLoginOtpError(res?.error);
+}
+
 export function isGstStatusBlockingError(error) {
   const msg = String(error || '').trim();
   return /cancelled|canceled|inactive|suspended/i.test(msg) && /gst/i.test(msg);

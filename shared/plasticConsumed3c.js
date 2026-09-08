@@ -1,5 +1,6 @@
 import { aggregateByFinancialYear } from './plasticMtAggregation.js';
 import { PLASTIC_CATEGORIES } from './plasticCategories.js';
+import { getCpcbPortalPartA3cYears } from './financialYearScope.js';
 
 /** Keys used in registration forms / CPCB automation (cat1 … cat4). */
 export const CATEGORY_3C_KEYS = {
@@ -89,4 +90,29 @@ export function plasticConsumed3cHasData(plasticConsumed = {}) {
   return Object.values(plasticConsumed).some((yearRow) =>
     Object.values(yearRow || {}).some((val) => Number(val) > 0),
   );
+}
+
+/** Map saved 3c rows onto the FY rows visible on the CPCB portal grid. */
+export function alignPlasticConsumedToYears(plasticConsumed = {}, targetYears = []) {
+  const aligned = {};
+  for (const fy of targetYears) {
+    aligned[fy] = plasticConsumed?.[fy]
+      ? { ...emptyPlasticConsumedYear(), ...plasticConsumed[fy] }
+      : emptyPlasticConsumedYear();
+  }
+  return aligned;
+}
+
+export function prunePlasticConsumedForPortal(plasticConsumed = {}, asOfDate = new Date()) {
+  return alignPlasticConsumedToYears(plasticConsumed, getCpcbPortalPartA3cYears(asOfDate));
+}
+
+export function mergePlasticConsumedYearSets(...yearLists) {
+  const merged = new Set();
+  for (const list of yearLists) {
+    for (const fy of list || []) {
+      if (fy) merged.add(String(fy).trim());
+    }
+  }
+  return Array.from(merged).sort((a, b) => b.localeCompare(a));
 }

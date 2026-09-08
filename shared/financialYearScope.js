@@ -12,6 +12,15 @@ export function getImporterReportingFinancialYears(asOfDate = new Date()) {
   return [formatFinancialYear(previousStart), formatFinancialYear(currentStart)];
 }
 
+/** CPCB Part A 3c grid shows the two FY rows ending before the current FY. */
+export function getCpcbPortalPartA3cYears(asOfDate = new Date()) {
+  const currentStart = financialYearStartYearFromDate(asOfDate);
+  return [
+    formatFinancialYear(currentStart - 2),
+    formatFinancialYear(currentStart - 1),
+  ];
+}
+
 export function isFinancialYearInScope(fy, scopeYears = []) {
   if (!fy || !isValidFinancialYear(fy)) return false;
   return scopeYears.includes(String(fy).trim());

@@ -15,17 +15,23 @@ import {
 } from './portalErrorGuard.js';
 import {
   fillPlasticConsumedGrid,
-  resolvePlasticConsumedYears,
+  resolvePlasticConsumedYearsForPortal,
 } from './portalPlasticConsumed.js';
 import { fillPartBSection4Grid } from './portalPartBSection4.js';
 import { fillPartBSection5bRows, fillPartBSection5dRows, forceCloseAllEntryModals } from './portalPartBSection5.js';
+import { prepareSec5bForPortal } from '../../shared/partBSection5.js';
 import { resolvePartBSection4ForAutomation, resolvePartBTransactionsForAutomation } from './registrationPartBData.js';
 import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../../shared/partBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { requiresHistoricalEprData, getCurrentFinancialYearStartYear } from '../../shared/commencementYearScope.js';
+import {
+  validatePlasticConsumed3cForPortal,
+  formatPlasticConsumed3cIssue,
+} from '../../shared/plasticConsumed3cValidation.js';
+import { alignPlasticConsumedToYears, prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
 
 const UPLOAD_LABEL_BASE_NAMES = {
@@ -102,9 +108,9 @@ export function normalizeApplicationData(raw = {}) {
     hasProductionFacility: src.hasProductionFacility || '',
     capitalInvested: src.capitalInvested || '',
     yearOfCommencement: src.yearOfCommencement || '2026',
-    plasticConsumed: src.plasticConsumed && typeof src.plasticConsumed === 'object'
-      ? src.plasticConsumed
-      : ZERO_PLASTIC,
+    plasticConsumed: prunePlasticConsumedForPortal(
+      src.plasticConsumed && typeof src.plasticConsumed === 'object' ? src.plasticConsumed : ZERO_PLASTIC,
+    ),
     complianceStatus: src.complianceStatus || '',
     thicknessOfPlastic: src.thicknessOfPlastic || '',
     isSameAsRegisteredAddress: src.isSameAsRegisteredAddress ?? true,
@@ -177,15 +183,18 @@ async function loadCompanyDocs() {
 }
 
 async function isPartBVisible(page) {
-  return page.getByText(/Part B:|Pertaining to Liquid Effluent/i).first().isVisible({ timeout: 2500 }).catch(() => false);
+  return page.getByText(
+    /Part B:|Pertaining to Liquid Effluent|State-wise, Category-wise Quantity of PW generated/i,
+  ).first().isVisible({ timeout: 2500 }).catch(() => false);
 }
 
 async function isPartCVisible(page) {
   return page.getByText(/Part C:|EPR Action Plan/i).first().isVisible({ timeout: 2500 }).catch(() => false);
 }
 
-async function clickSaveAndNext(page, onLog, stepName) {
-  if (stepName === 'Part A') {
+export async function clickSaveAndNext(page, onLog, stepName, options = {}) {
+  const { skipPartAStateCheck = false } = options;
+  if (stepName === 'Part A' && !skipPartAStateCheck) {
     const hasState = await page.locator('.chip').filter({ hasText: /Madhya Pradesh/i }).first().isVisible({ timeout: 1500 }).catch(() => false);
     if (!hasState) {
       if (onLog) onLog('Not clicking Save & Next — Part A 2a state chip is missing.');
@@ -339,13 +348,14 @@ function partASection2StateField(page) {
   }).first();
 }
 
-async function fillVisibleInput(page, selectors, value, onLog, name) {
+async function fillVisibleInput(page, selectors, value, onLog, name, { required = false } = {}) {
   if (value === undefined || value === null || value === '') return false;
   const wanted = String(value).trim();
   for (const sel of selectors) {
     const loc = page.locator(`${sel}:visible`).first();
     if (!(await loc.isVisible({ timeout: 1500 }).catch(() => false))) continue;
     if (onLog) onLog(`Filling ${name}: ${wanted}`);
+    let lastActual = '';
     for (let attempt = 1; attempt <= 3; attempt += 1) {
       await loc.scrollIntoViewIfNeeded().catch(() => {});
       await loc.click({ force: true }).catch(() => {});
@@ -356,14 +366,39 @@ async function fillVisibleInput(page, selectors, value, onLog, name) {
       await loc.dispatchEvent('input').catch(() => {});
       await loc.dispatchEvent('change').catch(() => {});
       await loc.blur().catch(() => {});
-      const actual = String(await loc.inputValue().catch(() => '')).trim().toUpperCase();
-      if (actual === wanted.toUpperCase()) return true;
-      if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${actual}"). Retrying.`);
+      lastActual = String(await loc.inputValue().catch(() => '')).trim().toUpperCase();
+      if (lastActual === wanted.toUpperCase()) return true;
+      if (onLog) onLog(`${name} did not stick (try ${attempt}/3, got "${lastActual}"). Retrying.`);
       await page.waitForTimeout(250);
+    }
+    if (required) {
+      throw new Error(
+        lastActual && lastActual !== wanted.toUpperCase()
+          ? `${name} on portal is "${lastActual}" but the app has "${wanted.toUpperCase()}". The portal may be locked to another GST — verify company data in the app.`
+          : `${name} could not be filled on the CPCB portal.`,
+      );
     }
     return false;
   }
+  if (required) {
+    throw new Error(`${name} input was not found on the CPCB portal.`);
+  }
   return false;
+}
+
+async function fillUnitGstNumber(page, unitGstNumber, onLog) {
+  return fillVisibleInput(
+    page,
+    [
+      'xpath=//*[contains(normalize-space(.),"Unit GST Number")]/following::input[1]',
+      'input[formcontrolname="unit_gst"]',
+      'input[formcontrolname="unitGst"]',
+      'input[placeholder*="Unit GST"]',
+    ],
+    unitGstNumber,
+    onLog,
+    'Unit GST Number',
+  );
 }
 
 async function chooseOption(page, { labelRegex, placeholders = [], option, onLog, name }) {
@@ -907,17 +942,7 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
     'IEC'
   );
 
-  await fillVisibleInput(
-    page,
-    [
-      'input[formcontrolname="unit_gst"]',
-      'input[formcontrolname="unitGst"]',
-      'input[placeholder*="Unit GST"]',
-    ],
-    unitGstNumber,
-    onLog,
-    'Unit GST Number'
-  );
+  await fillUnitGstNumber(page, unitGstNumber, onLog);
 
   if (onLog) onLog('Filling Part A section 2 states (2a) only...');
   await selectOperatingStates(page, data.operatingStates, onLog);
@@ -965,17 +990,21 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   await uploadNearLabel(page, 'Representative picture of Plastic Packaging', pictureFile, onLog);
 
   if (needsHistorical) {
-    const pcYears = resolvePlasticConsumedYears(data.plasticConsumed).length
-      ? resolvePlasticConsumedYears(data.plasticConsumed)
-      : getImporterReportingFinancialYears();
+    const pcYears = await resolvePlasticConsumedYearsForPortal(page, data.plasticConsumed, onLog);
+    const alignedPc = alignPlasticConsumedToYears(data.plasticConsumed, pcYears);
+    const pcIssues = validatePlasticConsumed3cForPortal({
+      plasticConsumed: alignedPc,
+      yearOfCommencement: data.yearOfCommencement,
+      reportingYears: pcYears,
+    });
+    if (pcIssues.length) {
+      const msg = formatPlasticConsumed3cIssue(pcIssues[0]);
+      if (onLog) onLog(`Part A 3c validation failed: ${msg}`);
+      throw new Error(msg);
+    }
     const filled3c = await fillPlasticConsumedGrid(page, data.plasticConsumed, pcYears, onLog);
     if (!filled3c) {
-      await fillAgGridZeros(
-        page,
-        /Total Quantity of Plastic Consumed for Plastic Packaging of Commodities/i,
-        onLog,
-        'Part A 3c fallback zeros'
-      );
+      throw new Error('Could not fill Part A Section 3c plastic consumed grid on CPCB portal.');
     }
   }
 
@@ -1010,7 +1039,7 @@ export async function fillPartBSection4(page, section4Data, onLog, plasticConsum
   const validationIssues = validateSection4AgainstPlasticConsumed(
     groups,
     plasticConsumed,
-    getImporterReportingFinancialYears(),
+    getCpcbPortalPartA3cYears(),
   );
   if (validationIssues.length && onLog) {
     onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4PartAIssue(validationIssues[0])}`);
@@ -1034,8 +1063,18 @@ export async function fillPartBSection4(page, section4Data, onLog, plasticConsum
   );
 }
 
-export async function fillPartBSection5(page, transactions = {}, onLog) {
-  const sec5b = transactions?.sec5b || [];
+export async function fillPartBSection5(page, transactions = {}, onLog, plasticConsumed = {}) {
+  const years = getCpcbPortalPartA3cYears();
+  const sec5b = prepareSec5bForPortal({
+    plasticConsumed,
+    sec5b: transactions?.sec5b || [],
+    years,
+  });
+  const alignedCount = sec5b.filter((row) => row._alignedToPartA3c).length;
+  if (alignedCount && onLog) {
+    onLog(`Section 5b: scaled ${alignedCount} row(s) to align with Part A 3c (±40% portal rule).`);
+  }
+
   const sec5d = transactions?.sec5d || [];
   let filled = false;
 
@@ -1388,6 +1427,80 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
   await capturePayuAndOpenChrome(page, payBtn, onLog);
 }
 
+export async function loadApplicationFormDataFromDb(onLog) {
+  let mergedGeneralInfo = {};
+  let mergedAutoData = {};
+  try {
+    const db = getDb();
+    const regDetails = await db.get(
+      'SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1',
+    );
+    if (regDetails?.form_data_json) {
+      const parsed = JSON.parse(regDetails.form_data_json);
+      mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
+      mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
+      if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
+        mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
+      }
+      if (!mergedAutoData.representativePicturePath && regDetails.representative_picture_of_plastic_packaging) {
+        mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
+      }
+    }
+  } catch (err) {
+    if (onLog) onLog(`Failed to load saved form data: ${err.message}`);
+  }
+  return normalizeApplicationData({
+    ...mergedGeneralInfo,
+    ...mergedAutoData,
+    plasticConsumed: mergedGeneralInfo.plasticConsumed,
+    partBSection4: mergedGeneralInfo.partBSection4,
+    partBTransactions: mergedGeneralInfo.partBTransactions,
+  });
+}
+
+export async function advanceDraftPartAToPartB(page, onLog) {
+  const moved = await clickSaveAndNext(page, onLog, 'Part A', { skipPartAStateCheck: true });
+  if (!moved) {
+    throw new Error('Save & Next from Part A did not reach Part B — check portal validation on the draft.');
+  }
+  return true;
+}
+
+export async function fillPartBAndPartCOnly(page, formData, onLog) {
+  const data = normalizeApplicationData(formData);
+  const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
+  data.partBSection4 = await resolvePartBSection4ForAutomation({
+    partBSection4: needsHistorical ? data.partBSection4 : [],
+    operatingStates: data.operatingStates,
+    yearOfCommencement: data.yearOfCommencement,
+    onLog,
+  });
+  data.partBTransactions = await resolvePartBTransactionsForAutomation({
+    partBTransactions: needsHistorical ? data.partBTransactions : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
+    gstin: data.unitGst,
+    yearOfCommencement: data.yearOfCommencement,
+    onLog,
+  });
+
+  if (onLog) onLog('Filling Part B (Section 4 / 5) on resumed draft…');
+  await fillUntilPortalAccepts(page, {
+    stepName: 'Part B',
+    onLog,
+    fillFn: async () => {
+      if (needsHistorical) {
+        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
+      } else if (onLog) {
+        onLog('Part B: current FY commencement — skipping Section 4 and Section 5.');
+      }
+    },
+    saveFn: () => clickSaveAndNext(page, onLog, 'Part B'),
+  });
+
+  if (onLog) onLog('Filling Part C on resumed draft…');
+  await fillPartC(page, data, onLog);
+}
+
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
   const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
@@ -1418,7 +1531,7 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     fillFn: async () => {
       if (needsHistorical) {
         await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
-        await fillPartBSection5(page, data.partBTransactions, onLog);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
       } else if (onLog) {
         onLog('Part B: current FY commencement — skipping Section 4 and all Section 5 entries.');
       }

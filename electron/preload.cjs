@@ -1,3 +1,9 @@
+try {
+  require('@sentry/electron/preload');
+} catch {
+  /* Sentry optional until DSN is configured */
+}
+
 const { contextBridge, ipcRenderer, webUtils } = require('electron');
 
 contextBridge.exposeInMainWorld('pwp', {
@@ -213,5 +219,14 @@ contextBridge.exposeInMainWorld('pwp', {
     deleteMany: (ids) => ipcRenderer.invoke('packagingMaster:deleteMany', ids),
     bulkUpsert: (payload) => ipcRenderer.invoke('packagingMaster:bulkUpsert', payload),
     repair: (payload) => ipcRenderer.invoke('packagingMaster:repair', payload),
+  },
+  monitoring: {
+    getConfig: () => ipcRenderer.invoke('monitoring:getConfig'),
+    getDiagnostics: () => ipcRenderer.invoke('monitoring:getDiagnostics'),
+    reportError: (payload) => ipcRenderer.invoke('monitoring:reportError', payload),
+    setUser: (user) => ipcRenderer.invoke('monitoring:setUser', user),
+    flush: () => ipcRenderer.invoke('monitoring:flush'),
+    copyDiagnostics: () => ipcRenderer.invoke('monitoring:copyDiagnostics'),
+    sendTest: () => ipcRenderer.invoke('monitoring:sendTest'),
   },
 });

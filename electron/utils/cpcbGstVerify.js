@@ -68,7 +68,7 @@ export function evaluateGstDetailsResponse(body, gstin) {
 export function isDuplicateAuthPersonMessage(text) {
   const msg = String(text || '').trim();
   if (!msg) return false;
-  return /already exists|409|conflict/i.test(msg)
+  return /already exists|is already exists|409|conflict/i.test(msg)
     && /pan|email|mobile|authorised person|authorized person/i.test(msg);
 }
 
@@ -85,7 +85,8 @@ export function evaluateCompaniesApiResponse(body, httpStatus) {
   if (status === 409 || /conflict/i.test(String(body?.error || ''))) {
     return {
       isRegistrationAllowed: false,
-      message: formatDuplicateAuthPersonError(message),
+      message: message || 'Authorised Person PAN, EMAIL and MOBILE is already exists',
+      errorCode: 'DUPLICATE_AUTH_PERSON',
     };
   }
 

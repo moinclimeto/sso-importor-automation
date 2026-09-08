@@ -11,7 +11,6 @@ import {
 
 import {
   buildRegistrationDataFromDocuments,
-  validateCpcbPortalFileName,
   validateCpcbPortalFilePath,
 } from '../utils/registrationDataMapper.js';
 import {
@@ -171,10 +170,17 @@ function ProgressPanel({ progress }) {
 }
 
 function DocListRow({ item, onRemove, removing }) {
-  const storedName = item.filePath?.split(/[/\\]/).pop() || item.fileName || '';
-  const nameIssue = storedName
-    ? validateCpcbPortalFilePath(item.filePath || storedName, item.docType || 'document')
-    : validateCpcbPortalFileName(item.fileName || '', item.docType || 'document');
+  const storedPath = item.filePath || '';
+  const storedName = storedPath.split(/[/\\]/).pop() || item.fileName || '';
+  const nameIssue = storedPath
+    ? validateCpcbPortalFilePath(storedPath, item.docType || 'document')
+    : { valid: true };
+  const renamedForPortal = Boolean(
+    item.status === 'done'
+    && storedName
+    && (item.originalFileName || item.fileName)
+    && storedName.toLowerCase() !== String(item.originalFileName || item.fileName).toLowerCase(),
+  );
   const tone =
     item.status === 'done'
       ? 'text-green-600'
@@ -225,9 +231,14 @@ function DocListRow({ item, onRemove, removing }) {
           )}
           {item.status === 'failed' && (item.error || 'Extraction failed')}
           {item.status === 'processing' && 'Extracting…'}
-          {item.status === 'done' && !nameIssue.valid && (
+          {item.status === 'done' && renamedForPortal && (
+            <span className="block text-emerald-700 mt-1">
+              Saved as {storedName} (auto-renamed &amp; compressed for CPCB)
+            </span>
+          )}
+          {item.status === 'done' && !renamedForPortal && !nameIssue.valid && (
             <span className="block text-amber-700 mt-1">
-              CPCB naam issue: &quot;{nameIssue.fileName}&quot; → &quot;{nameIssue.suggestedName}&quot; rakhein
+              CPCB file name issue: &quot;{nameIssue.fileName}&quot; — expected &quot;{nameIssue.suggestedName}&quot;
             </span>
           )}
         </p>
@@ -383,17 +394,6 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       return;
     }
 
-    for (const file of targets) {
-      const check = validateCpcbPortalFileName(file.name, 'document');
-      if (!check.valid) {
-        showToast?.(
-          `"${file.name}" CPCB portal par reject ho sakta hai. App save karte waqt "${check.suggestedName}" naam use karegi — ya pehle khud rename kar dein.`,
-          'warning',
-          { duration: 12000 }
-        );
-      }
-    }
-
     if (!window.pwp?.ocr?.extractBatch) {
       showToast?.('OCR extraction needs the Electron app.', 'error');
       return;
@@ -528,11 +528,14 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         try {
           const saved = await saveDocument(data, sourcePath);
           savedCount += 1;
+          const storedPath = saved.file_path || sourcePath;
+          const storedFileName = storedPath.split(/[/\\]/).pop() || fileName;
           upsertDocInList({
             id: `db-${saved.id}`,
             dbId: saved.id,
-            fileName,
-            filePath: sourcePath,
+            fileName: storedFileName,
+            originalFileName: fileName,
+            filePath: storedPath,
             docType,
             documentNumber: data.document_number,
             entityName: data.entity_name,
@@ -573,6 +576,19 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
 
       const allDocs = await window.pwp.documents.getAll();
       const relevant = (allDocs || []).filter((d) => REGISTRATION_DOC_TYPES.has(d.doc_type));
+      setDocList(
+        relevant.map((doc) => ({
+          id: `db-${doc.id}`,
+          dbId: doc.id,
+          fileName: doc.file_path?.split(/[/\\]/).pop() || 'Uploaded document',
+          filePath: doc.file_path || '',
+          docType: doc.doc_type,
+          documentNumber: doc.document_number,
+          entityName: doc.entity_name,
+          status: 'done',
+          error: '',
+        })),
+      );
       const processedTotal = savedCount + failedCount;
       const remaining = Math.max(0, batchTotal - processedTotal);
 
@@ -738,7 +754,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
           </div>
           <p className="text-sm text-slate-500 mt-0.5">
             Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically.
-            CPCB portal simple file names accept karta hai (jaise <strong>person_pan.pdf</strong>) — spaces/brackets avoid karein.
+            The CPCB portal accepts simple file names (for example <strong>person_pan.pdf</strong>). Avoid spaces and brackets.
           </p>
         </div>
         <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">

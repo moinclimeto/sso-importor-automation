@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { flushSync } from 'react-dom';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
@@ -8,7 +9,7 @@ import {
   AUTO_FILLED_FIELDS,
   collectRegistrationUploadFileIssues,
   formatCpcbFileNameIssue,
-  validateCpcbPortalFileName,
+  registrationDocFileName,
 } from '../utils/registrationDataMapper.js';
 import {
   resolveRegistrationData,
@@ -34,23 +35,29 @@ import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, Terminal } from 'lucide-react';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
-import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
+import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
+import RegistrationAutomationModal, {
+  appendAutomationLog,
+  applyAutomationLogUpdate,
+} from '../components/RegistrationAutomationModal.jsx';
+import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
-import {
-  plasticConsumed3cHasData,
-} from '../../shared/plasticConsumed3c.js';
+import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
 } from '../utils/registrationPlasticConsumed.js';
 import {
-  validateSection4AgainstPlasticConsumed,
-  formatSection4PartAIssue,
-} from '../utils/registrationPartBSection4.js';
-import { getImporterReportingFinancialYears } from '../../shared/financialYearScope.js';
+  getRegisterApplicationBlockers,
+  summarizeRegisterBlockers,
+} from '../utils/registrationApplicationReadiness.js';
+import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
+import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
+import { prunePartBSection4ForPortal } from '../utils/registrationPartBSection4.js';
 
 const inputClass =
   'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
@@ -158,6 +165,10 @@ export default function NewApplicationPage() {
 
   const [showAutomationLogsModal, setShowAutomationLogsModal] = useState(false);
   const [automationLogs, setAutomationLogs] = useState([]);
+  const [showAutomationModal, setShowAutomationModal] = useState(false);
+  const [automationPhase, setAutomationPhase] = useState('running');
+  const [currentAutomationStep, setCurrentAutomationStep] = useState('');
+  const [otpInputError, setOtpInputError] = useState('');
   const [registrationBlocker, setRegistrationBlocker] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
@@ -168,6 +179,62 @@ export default function NewApplicationPage() {
   const lockedSelectClass = registrationComplete
     ? `${selectClass} bg-slate-50 text-slate-700 cursor-not-allowed`
     : selectClass;
+
+  const formatTimer = useCallback(
+    (time) => `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`,
+    [],
+  );
+
+  const openAutomationModal = useCallback((step = 'Starting new application…') => {
+    flushSync(() => {
+      setAutomationLogs([]);
+      setCurrentAutomationStep(step);
+      setOtpInputError('');
+      setShowAutomationModal(true);
+      setAutomationPhase('running');
+    });
+  }, []);
+
+  const closeAutomationModal = useCallback(() => {
+    setShowAutomationModal(false);
+    setAutomationPhase('running');
+    setCurrentAutomationStep('');
+    setLoading(false);
+    setLoadingMsg('');
+    setOtpInputError('');
+    setLoginOtpSubmitting(false);
+    setLoginCaptchaSubmitting(false);
+    setShowLoginCaptchaModal(false);
+    setShowLoginOtpModal(false);
+  }, []);
+
+  const completeAutomationModal = useCallback((message) => {
+    if (message) appendAutomationLog(setAutomationLogs, message, 'success');
+    setAutomationPhase('complete');
+    setCurrentAutomationStep('Application complete');
+    window.setTimeout(() => closeAutomationModal(), 2500);
+  }, [closeAutomationModal]);
+
+  const failAutomationModal = useCallback((message) => {
+    if (message) appendAutomationLog(setAutomationLogs, message, 'error');
+    setAutomationPhase('error');
+    setCurrentAutomationStep(message || 'Automation failed');
+    setOtpInputError('');
+  }, []);
+
+  const reportOtpRetryError = useCallback((phase, message) => {
+    const text = sanitizeAutomationUserError(message || 'Incorrect OTP — please try again');
+    appendAutomationLog(setAutomationLogs, text, 'error');
+    setAutomationPhase(phase);
+    setCurrentAutomationStep(text);
+    setOtpInputError(text);
+    if (phase === 'login_otp') {
+      setLoginOtp('');
+      setLoginOtpError(text);
+    }
+  }, []);
+
+  const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
 
   const applySavedRegistration = useCallback(async (saved) => {
     if (!saved?.cepr_id) return;
@@ -194,6 +261,13 @@ export default function NewApplicationPage() {
         ...general,
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
+        plasticConsumed: prunePlasticConsumedForPortal(
+          general.plasticConsumed || prev.plasticConsumed || {},
+        ),
+        partBSection4: prunePartBSection4ForPortal(
+          general.partBSection4 || prev.partBSection4 || [],
+          general.operatingStates || prev.operatingStates || [],
+        ),
       }));
     }
 
@@ -254,19 +328,23 @@ export default function NewApplicationPage() {
 
   useEffect(() => {
     let interval = null;
-    if (showLoginOtpModal && loginOtpTimer > 0) {
+    if (loginOtpActive && loginOtpTimer > 0) {
       interval = setInterval(() => setLoginOtpTimer((prev) => prev - 1), 1000);
-    } else if (showLoginOtpModal && loginOtpTimer === 0) {
+    } else if (loginOtpActive && loginOtpTimer === 0) {
       setLoginOtpResendActive(true);
       if (interval) clearInterval(interval);
     }
     return () => { if (interval) clearInterval(interval); };
-  }, [showLoginOtpModal, loginOtpTimer]);
+  }, [loginOtpActive, loginOtpTimer]);
 
   useEffect(() => {
-    if (window.pwp?.scraper?.onLog) {
-      return window.pwp.scraper.onLog(() => {});
-    }
+    if (!window.pwp?.scraper?.onLog) return undefined;
+    return window.pwp.scraper.onLog((payload) => {
+      const text = typeof payload === 'string' ? payload : (payload?.text || payload?.message || '');
+      if (!text) return;
+      const { stepHint } = applyAutomationLogUpdate(setAutomationLogs, text);
+      if (stepHint) setCurrentAutomationStep(stepHint);
+    });
   }, []);
 
   const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
@@ -350,7 +428,7 @@ export default function NewApplicationPage() {
   }, [applyRegistrationData, applySavedRegistration, showToast]);
 
   useEffect(() => {
-    if (registrationComplete || loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
+    if (loadingSavedRegistration || !window.pwp?.registration?.save) return undefined;
 
     const timer = setTimeout(() => {
       if (!hasPersistableFormContent({ autoData, generalInfo, email, mobile })) return;
@@ -389,10 +467,14 @@ export default function NewApplicationPage() {
     setGeneralInfo((prev) => ({ ...prev, [name]: value }));
   };
 
-  const reportingFys = useMemo(() => getImporterReportingFinancialYears(), []);
   const showHistoricalEprSections = useMemo(
     () => requiresHistoricalEprData(generalInfo.yearOfCommencement),
     [generalInfo.yearOfCommencement],
+  );
+
+  const reportingFys = useMemo(
+    () => (showHistoricalEprSections ? getCpcbPortalPartA3cYears() : []),
+    [showHistoricalEprSections],
   );
 
   const persistRegistrationForm = useCallback(async (nextGeneral, nextAuto) => {
@@ -424,17 +506,11 @@ export default function NewApplicationPage() {
         : field === 'representativePicturePath'
           ? 'plastic_packaging_picture'
           : 'document';
-      const nameCheck = validateCpcbPortalFileName(file?.name || '', docBase);
-      if (!nameCheck.valid) {
-        showToast(
-          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
-          'warning',
-          { duration: 12000 }
-        );
-      }
+      const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
+      const portalFileName = registrationDocFileName(docBase, ext);
       const stored = await storeCompressedUpload(file, {
         destSubdir: 'processed_registration_docs',
-        fileName: nameCheck.suggestedName,
+        fileName: portalFileName,
       });
       if (!stored.success || !stored.filePath) {
         showToast(stored.message || 'Could not save PDF.', 'error');
@@ -452,12 +528,26 @@ export default function NewApplicationPage() {
   useEffect(() => {
     let cancelled = false;
     (async () => {
+      const normalized = await normalizeRegistrationPaths({ autoData, generalInfo });
+      if (cancelled) return;
+      if (normalized.changed) {
+        setAutoData(normalized.autoData);
+        setGeneralInfo(normalized.generalInfo);
+        return;
+      }
+
       let docs = [];
       if (window.pwp?.documents?.getAll) {
         docs = await window.pwp.documents.getAll();
       }
       if (cancelled) return;
-      setFileNameIssues(collectRegistrationUploadFileIssues({ docs, autoData, generalInfo }));
+      setFileNameIssues(
+        collectRegistrationUploadFileIssues({
+          docs,
+          autoData: normalized.autoData,
+          generalInfo: normalized.generalInfo,
+        }),
+      );
     })();
     return () => {
       cancelled = true;
@@ -465,8 +555,24 @@ export default function NewApplicationPage() {
   }, [autoData, generalInfo]);
 
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
-    setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
-  }, []);
+    const pruned = prunePlasticConsumedForPortal(nextPlasticConsumed);
+    setGeneralInfo((prev) => {
+      const next = { ...prev, plasticConsumed: pruned };
+      if (window.pwp?.registration?.save) {
+        window.pwp.registration.save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo: next,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          }),
+        ).catch(console.error);
+      }
+      return next;
+    });
+  }, [savedRegistration, email, mobile, autoData, savedCeprId]);
 
   useEffect(() => {
     if (loadingSavedRegistration) return undefined;
@@ -482,7 +588,10 @@ export default function NewApplicationPage() {
 
         setGeneralInfo((prev) => {
           if (!shouldHydratePlasticConsumed(prev.plasticConsumed)) return prev;
-          return { ...prev, plasticConsumed: result.plasticConsumed };
+          return {
+            ...prev,
+            plasticConsumed: prunePlasticConsumedForPortal(result.plasticConsumed),
+          };
         });
         setPlasticConsumedSource(result.sourceLabel || '');
       } catch (err) {
@@ -516,7 +625,7 @@ export default function NewApplicationPage() {
       showToast(formatCpcbFileNameIssue(uploadNameIssues[0]), 'error', { duration: 14000 });
       if (uploadNameIssues.length > 1) {
         showToast(
-          `${uploadNameIssues.length} files ke naam CPCB portal ke rules ke against hain. Pehle rename karke dubara upload karein.`,
+          `${uploadNameIssues.length} file names do not meet CPCB portal rules. Rename them and upload again.`,
           'warning',
           { duration: 12000 }
         );
@@ -864,25 +973,6 @@ export default function NewApplicationPage() {
   };
 
   const handleNewApplication = async () => {
-    if (!savedCeprId) {
-      showToast('CEPR ID not found — complete registration first.', 'error');
-      return;
-    }
-
-    const zeroCats = { cat1: '0', cat2: '0', cat3: '0', cat4: '0' };
-    const emptyPc = Object.fromEntries(reportingFys.map((fy) => [fy, { ...zeroCats }]));
-    const plasticConsumed = plasticConsumed3cHasData(generalInfo.plasticConsumed)
-      ? generalInfo.plasticConsumed
-      : emptyPc;
-
-    if (!autoData.detailsOfProductsPath) {
-      showToast('Upload Section 3a PDF — Details (Type & Quantity) of products produced/marketed.', 'error');
-      return;
-    }
-    if (!autoData.representativePicturePath) {
-      showToast('Upload Section 3b PDF — Representative picture of Plastic Packaging.', 'error');
-      return;
-    }
     const derivedState =
       generalInfo.stateUt ||
       stateFromGstin(autoData.unitGst || generalInfo.unitGst) ||
@@ -890,24 +980,24 @@ export default function NewApplicationPage() {
     const operatingStates = (generalInfo.operatingStates || []).length
       ? generalInfo.operatingStates
       : (derivedState ? [derivedState] : []);
+    const generalForValidation = {
+      ...generalInfo,
+      operatingStates,
+    };
 
-    if (!operatingStates.length) {
-      showToast('Select the State/UT — it could not be detected from the GST documents.', 'error');
-      return;
-    }
+    const registerBlockers = getRegisterApplicationBlockers({
+      savedCeprId,
+      generalInfo: generalForValidation,
+      autoData,
+      reportingYears: reportingFys,
+    });
 
-    const section4Issues = showHistoricalEprSections
-      ? validateSection4AgainstPlasticConsumed(
-        generalInfo.partBSection4 || [],
-        plasticConsumed,
-        reportingFys.length ? reportingFys : getImporterReportingFinancialYears(),
-      )
-      : [];
-    if (section4Issues.length) {
-      showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
-      if (section4Issues.length > 1) {
+    if (registerBlockers.length > 0) {
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
+      const section4Count = registerBlockers.filter((b) => b.section === 'partB').length;
+      if (section4Count > 1) {
         showToast(
-          `${section4Issues.length} Section 4 rows Part A 3c se ±40% ke andar nahi hain. Part B me values fix karein.`,
+          `${section4Count} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
           'warning',
           { duration: 12000 },
         );
@@ -915,26 +1005,22 @@ export default function NewApplicationPage() {
       return;
     }
 
+    const plasticConsumed = generalInfo.plasticConsumed || {};
+
     const applicationDefaults = {
-      ...generalInfo,
+      ...generalForValidation,
       yearOfCommencement: generalInfo.yearOfCommencement || String(new Date().getFullYear()),
-      complianceStatus: generalInfo.complianceStatus || generalInfo.complianceStatus || 'Yes',
-      thicknessOfPlastic: generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '50',
+      complianceStatus: generalInfo.complianceStatus || 'Yes',
+      thicknessOfPlastic: generalInfo.thicknessOfPlastic || '50',
       hasProductionFacility: generalInfo.hasProductionFacility || 'Not Applicable',
-      capitalInvested: generalInfo.capitalInvested || generalInfo.capitalInvested || '0',
-      operatingStates,
+      capitalInvested: generalInfo.capitalInvested || '0',
       plasticConsumed,
     };
 
     setGeneralInfo(applicationDefaults);
-    showToast(
-      showHistoricalEprSections
-        ? 'Starting New Application — 3a/3b PDFs and 3c values will be submitted to CPCB.'
-        : 'Starting New Application — 3a/3b PDFs will be submitted (3c skipped for current FY commencement).',
-      'success',
-    );
+    openAutomationModal('Preparing new application…');
+    clearPortalToasts();
 
-    const saveLogs = [];
     if (window.pwp?.registration?.save) {
       try {
         const savePayload = {
@@ -951,30 +1037,32 @@ export default function NewApplicationPage() {
         };
         if (savedCeprId) savePayload.cepr_id = savedCeprId;
         const saveRes = await window.pwp.registration.save(savePayload);
-        console.log('[registration:save]', saveRes);
         if (saveRes?.success) {
-          saveLogs.push({ type: 'success', message: `SQLite save OK — id=${saveRes.id}, CEPR=${savedCeprId}` });
+          appendAutomationLog(setAutomationLogs, `Application data saved — CEPR ${savedCeprId}`, 'success');
         } else {
-          saveLogs.push({ type: 'error', message: `SQLite save failed: ${saveRes?.error || 'unknown error'}` });
-          showToast('SQLite save failed: ' + (saveRes?.error || 'unknown error'), 'error');
+          appendAutomationLog(setAutomationLogs, `Save failed: ${saveRes?.error || 'unknown error'}`, 'error');
         }
       } catch (err) {
-        console.error('Failed to save data before automation', err);
-        saveLogs.push({ type: 'error', message: 'SQLite save error: ' + err.message });
+        appendAutomationLog(setAutomationLogs, 'Save error: ' + err.message, 'error');
       }
-    } else {
-      saveLogs.push({ type: 'error', message: 'registration.save API is not available in preload' });
     }
 
-    setAutomationLogs(saveLogs);
-    clearPortalToasts();
     setLoading(true);
-    await beginLoginFlow(savedCeprId);
-    setLoading(false);
+    setCurrentAutomationStep('Starting CPCB login…');
+    try {
+      await beginLoginFlow(savedCeprId);
+    } finally {
+      setLoading(false);
+    }
   };
 
   const beginLoginFlow = async (ceprId) => {
     setSavedCeprId(ceprId || '');
+    flushSync(() => {
+      setShowAutomationModal(true);
+      setAutomationPhase('running');
+      setCurrentAutomationStep('Starting CPCB login…');
+    });
     setLoadingMsg('Starting CPCB login...');
     const loginCreds = resolveRegistrationLoginCredentials({
       email,
@@ -992,19 +1080,21 @@ export default function NewApplicationPage() {
         setLoginCaptchaImage(loginRes.captchaImage || '');
         setLoginCaptchaText('');
         setLoginCaptchaError('');
-        setShowLoginCaptchaModal(true);
-        showToast('Enter login captcha to continue to application form.', 'success', { duration: 10000 });
+        setShowLoginCaptchaModal(false);
+        setAutomationPhase('captcha');
+        setCurrentAutomationStep('Enter captcha to request login OTP');
+        appendAutomationLog(setAutomationLogs, 'Enter login captcha to continue', 'success');
       } else if (loginRes.success && loginRes.step === 'APPLICATION_ONBOARDING_COMPLETE') {
-        setAutomationLogs(prev => [...prev, { type: 'success', message: 'Application onboarding completed successfully!' }]);
+        completeAutomationModal('Application onboarding completed successfully!');
         showToast('Application onboarding completed successfully!', 'success');
       } else {
-        const err = loginRes.error || 'Could not start login flow';
-        setAutomationLogs(prev => [...prev, { type: 'error', message: err }]);
-        showToast(err, 'error');
+        failAutomationModal(loginRes.error || 'Could not start login flow');
+        showToast(loginRes.error || 'Could not start login flow', 'error');
       }
     } catch (err) {
-      setAutomationLogs(prev => [...prev, { type: 'error', message: 'Login error: ' + err.message }]);
-      showToast('Login error: ' + err.message, 'error');
+      const errMsg = 'Login error: ' + err.message;
+      failAutomationModal(errMsg);
+      showToast(errMsg, 'error');
     } finally {
       setLoadingMsg('');
     }
@@ -1038,28 +1128,37 @@ export default function NewApplicationPage() {
     setLoginCaptchaError('');
     setLoadingMsg('Submitting login captcha on CPCB portal...');
     try {
-      const res = await window.pwp.scraper.submitLoginCaptcha({ captcha: text });
+      const loginCreds = resolveRegistrationLoginCredentials({
+        email,
+        mobile,
+        password: generalInfo.password,
+      });
+      const res = await window.pwp.scraper.submitLoginCaptcha({
+        captcha: text,
+        ceprId: savedCeprId,
+        password: loginCreds.password,
+      });
 
       if (res.success && res.step === 'WAITING_LOGIN_OTP') {
         setShowLoginCaptchaModal(false);
         setLoginCaptchaText('');
-        setLoginCaptchaImage('');
         setLoginOtp('');
-        setLoginOtpError('');
+        setOtpInputError('');
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
-        setShowLoginOtpModal(true);
-        showToast('Login OTP sent — enter OTP from email/SMS.', 'success');
+        setShowLoginOtpModal(false);
+        setAutomationPhase('login_otp');
+        setCurrentAutomationStep('Login OTP sent — enter the code below');
+        appendAutomationLog(setAutomationLogs, 'Login OTP sent — enter OTP from email/SMS', 'success');
         return;
       }
 
-      if (res.captchaImage) {
-        setLoginCaptchaImage(res.captchaImage);
-      }
+      if (res.captchaImage) setLoginCaptchaImage(res.captchaImage);
       setLoginCaptchaText('');
       const errMsg = res.error || 'Invalid captcha. Please try again.';
-      setLoginCaptchaError(errMsg);
-      setAutomationLogs(prev => [...prev, { type: 'error', message: errMsg }]);
+      appendAutomationLog(setAutomationLogs, errMsg, 'error');
+      setAutomationPhase('captcha');
+      setCurrentAutomationStep(errMsg);
     } catch (err) {
       setLoginCaptchaError(err.message);
       setAutomationLogs(prev => [...prev, { type: 'error', message: 'Captcha submit error: ' + err.message }]);
@@ -1075,6 +1174,7 @@ export default function NewApplicationPage() {
       if (res.success) {
         setLoginOtpTimer(600);
         setLoginOtpResendActive(false);
+        appendAutomationLog(setAutomationLogs, 'Login OTP resent', 'success');
         showToast('Login OTP resent', 'success');
       } else {
         showToast(res.error || 'Resend failed', 'error');
@@ -1092,33 +1192,21 @@ export default function NewApplicationPage() {
     ) {
       const scrapeOk = res.scrape?.success !== false;
       if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && scrapeOk) {
-        showToast(
-          'Registration pipeline complete! Application started and portal data synced to the app.',
-          'success',
-          { duration: 15000 },
-        );
+        completeAutomationModal('Application started and portal data synced');
+        showToast('Registration pipeline complete! Application started and portal data synced to the app.', 'success', { duration: 15000 });
       } else if (res.step === 'APPLICATION_ONBOARDING_AND_SCRAPE_COMPLETE' && !scrapeOk) {
-        showToast(
-          `Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}. You can retry from Dashboard.`,
-          'error',
-          { duration: 15000 },
-        );
+        failAutomationModal(`Application started — sync failed: ${res.scrape?.error || 'Unknown error'}`);
+        showToast(`Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}.`, 'error', { duration: 15000 });
       } else {
-        showToast(
-          `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-          'success',
-          { duration: 15000 },
-        );
+        completeAutomationModal(`Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`);
+        showToast(`Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal.`, 'success', { duration: 15000 });
       }
       return true;
     }
 
     if (res.success && res.step === 'LOGIN_COMPLETE') {
-      setAutomationLogs((prev) => [
-        ...prev,
-        { type: 'error', message: 'Login succeeded but application onboarding failed: ' + res.error },
-      ]);
-      showToast('Login successful, but onboarding failed. See logs for details.', 'error', { duration: 15000 });
+      failAutomationModal('Login succeeded but application onboarding failed: ' + (res.error || 'unknown error'));
+      showToast('Login successful, but onboarding failed. See progress for details.', 'error', { duration: 15000 });
       return true;
     }
 
@@ -1128,11 +1216,12 @@ export default function NewApplicationPage() {
   const handleVerifyLoginOtp = async () => {
     const otp = loginOtp.trim().replace(/\D/g, '');
     if (otp.length !== 6) {
-      setLoginOtpError('Please enter 6-digit OTP');
+      reportOtpRetryError('login_otp', 'Please enter 6-digit OTP');
       return;
     }
     setLoginOtpSubmitting(true);
     setLoginOtpError('');
+    setOtpInputError('');
     setLoadingMsg('Verifying login OTP on CPCB portal...');
     try {
       const res = await window.pwp.scraper.submitLoginOtp({ otp });
@@ -1140,21 +1229,24 @@ export default function NewApplicationPage() {
       if (res.success && res.step === 'LOGIN_OTP_VERIFIED') {
         setShowLoginOtpModal(false);
         setLoginOtp('');
-        setLoginOtpSubmitting(false);
+        setAutomationPhase('running');
+        setCurrentAutomationStep('Filling application on CPCB portal…');
+        appendAutomationLog(setAutomationLogs, 'Login OTP verified — filling application form', 'success');
         setLoading(true);
-        setLoadingMsg('Filling application on CPCB portal...');
-        showToast('Login OTP verified. Filling application form...', 'success', { duration: 8000 });
         try {
           const onboard = await window.pwp.scraper.runApplicationOnboardingAfterLogin({ autoScrape: true });
-          handleLoginOnboardingResult(onboard);
-          if (!onboard.success) {
-            const errMsg = onboard.error || 'Application onboarding failed.';
-            setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+          if (!handleLoginOnboardingResult(onboard) && !onboard.success) {
+            failAutomationModal(onboard.error || 'Application onboarding failed.');
           }
         } finally {
           setLoading(false);
           setLoadingMsg('');
         }
+        return;
+      }
+
+      if (isLoginOtpFailureResult(res)) {
+        reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
         return;
       }
 
@@ -1164,12 +1256,9 @@ export default function NewApplicationPage() {
         return;
       }
 
-      const errMsg = res.error || 'Invalid OTP. Please try again.';
-      setLoginOtpError(errMsg);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: errMsg }]);
+      reportOtpRetryError('login_otp', res.error || 'Invalid OTP. Please try again.');
     } catch (err) {
-      setLoginOtpError(err.message);
-      setAutomationLogs((prev) => [...prev, { type: 'error', message: 'OTP verification error: ' + err.message }]);
+      reportOtpRetryError('login_otp', err.message);
     } finally {
       setLoginOtpSubmitting(false);
       setLoadingMsg('');
@@ -1217,9 +1306,6 @@ export default function NewApplicationPage() {
       setLoadingMsg('');
     }
   };
-
-  const formatTimer = (time) =>
-    `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`;
 
   return (
     <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6 relative pb-32">
@@ -1346,17 +1432,11 @@ export default function NewApplicationPage() {
                   onChange={async (e) => {
                     const file = e.target.files[0];
                     if (file) {
-                      const nameCheck = validateCpcbPortalFileName(file.name, 'supporting_category_doc');
-                      if (!nameCheck.valid) {
-                        showToast(
-                          `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
-                          'warning',
-                          { duration: 12000 }
-                        );
-                      }
+                      const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+                      const portalFileName = registrationDocFileName('supporting_category_doc', ext);
                       const stored = await storeCompressedUpload(file, {
                         destSubdir: 'processed_registration_docs',
-                        fileName: nameCheck.suggestedName,
+                        fileName: portalFileName,
                       });
                       if (!stored.success || !stored.filePath) {
                         showToast(stored.message || 'Could not save document.', 'error');
@@ -1457,17 +1537,11 @@ export default function NewApplicationPage() {
                       onChange={async (e) => {
                         const file = e.target.files[0];
                         if (file) {
-                          const nameCheck = validateCpcbPortalFileName(file.name, 'unit_gst');
-                          if (!nameCheck.valid) {
-                            showToast(
-                              `"${file.name}" jaisa naam CPCB portal reject karta hai. App "${nameCheck.suggestedName}" ke naam se save karegi.`,
-                              'warning',
-                              { duration: 12000 }
-                            );
-                          }
+                          const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+                          const portalFileName = registrationDocFileName('unit_gst', ext);
                           const stored = await storeCompressedUpload(file, {
                             destSubdir: 'processed_registration_docs',
-                            fileName: nameCheck.suggestedName,
+                            fileName: portalFileName,
                           });
                           if (!stored.success || !stored.filePath) {
                             showToast(stored.message || 'Could not save Unit GST document.', 'error');
@@ -1537,6 +1611,17 @@ export default function NewApplicationPage() {
               <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <RegistrationPartALoginCredentials
+                    ceprId={savedCeprId}
+                    password={generalInfo.password || ''}
+                    onPasswordChange={(value) =>
+                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                    }
+                    showPassword={showPassword}
+                    onToggleShowPassword={() => setShowPassword((v) => !v)}
+                    onBlur={() => persistRegistrationForm().catch(console.error)}
+                    inputClass={inputClass}
+                  />
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
                     <OperatingStatesMultiSelect
@@ -1709,7 +1794,12 @@ export default function NewApplicationPage() {
         </div>
         </div>
 
-        <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
+        <RegistrationPartB
+          generalInfo={generalInfo}
+          setGeneralInfo={setGeneralInfo}
+          gstin={autoData.gstin}
+          onPersist={() => persistRegistrationForm()}
+        />
 
         <RegistrationPartC
           generalInfo={generalInfo}
@@ -1852,7 +1942,12 @@ export default function NewApplicationPage() {
           <button
             type="button"
             onClick={handleNewApplication}
-            disabled={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+            disabled={
+              loading
+              || loginCaptchaSubmitting
+              || loginOtpSubmitting
+              || (showAutomationModal && automationPhase !== 'error')
+            }
             className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
           >
             {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
@@ -1865,14 +1960,50 @@ export default function NewApplicationPage() {
         </div>
       </form>
 
-      {loading && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && (
+      {loading && !showAutomationModal && !showEmailOtp && !showMobileOtp && !showCaptchaModal && !showLoginCaptchaModal && !showLoginOtpModal && (
         <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
           <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-800 font-semibold">Please wait</p>
-          <p className="text-sm text-slate-500 mt-1">Your request is being processed</p>
-          <p className="text-xs text-slate-400 mt-2">CPCB portal messages appear live in the chat at the bottom-right</p>
+          <p className="text-sm text-slate-500 mt-1">{loadingMsg || 'Your request is being processed'}</p>
         </div>
       )}
+
+      <RegistrationAutomationModal
+        open={showAutomationModal}
+        title="CPCB New Application"
+        subtitle="Live progress from the automation browser"
+        completeMessage="Application submitted successfully. Closing…"
+        captchaStepHint="Enter captcha to request login OTP"
+        submitCaptchaLabel="Get OTP"
+        phase={automationPhase}
+        currentStep={currentAutomationStep}
+        logs={automationLogs}
+        loading={loading || loginCaptchaSubmitting || loginOtpSubmitting}
+        loadingMsg={loadingMsg}
+        onClose={closeAutomationModal}
+        captchaImage={loginCaptchaImage}
+        captchaText={loginCaptchaText}
+        onCaptchaTextChange={(value) => {
+          setLoginCaptchaText(String(value || '').slice(0, 6));
+          if (loginCaptchaError) setLoginCaptchaError('');
+        }}
+        onSubmitCaptcha={handleSubmitLoginCaptcha}
+        onRefreshCaptcha={handleRefreshLoginCaptcha}
+        captchaSubmitting={loginCaptchaSubmitting}
+        captchaRefreshing={loginCaptchaRefreshing}
+        loginOtp={loginOtp}
+        onLoginOtpChange={(value) => {
+          setLoginOtp(value);
+          if (otpInputError) setOtpInputError('');
+        }}
+        onVerifyLoginOtp={handleVerifyLoginOtp}
+        onResendLoginOtp={handleResendLoginOtp}
+        otpTimer={loginOtpTimer}
+        isResendActive={loginOtpResendActive}
+        formatTimer={formatTimer}
+        otpSubmitting={loginOtpSubmitting}
+        otpError={otpInputError}
+      />
 
       {showEmailOtp && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
@@ -2088,7 +2219,7 @@ export default function NewApplicationPage() {
         </div>
       )}
 
-      {showLoginCaptchaModal && (
+      {showLoginCaptchaModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-md overflow-hidden">
             <div className="px-6 py-4 border-b flex items-center justify-between">
@@ -2176,7 +2307,7 @@ export default function NewApplicationPage() {
         </div>
       )}
 
-      {showLoginOtpModal && (
+      {showLoginOtpModal && !showAutomationModal && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white rounded-xl shadow-xl w-full max-w-sm overflow-hidden">
             <div className="px-6 py-4 border-b border-slate-100 flex justify-between items-center bg-slate-50">
