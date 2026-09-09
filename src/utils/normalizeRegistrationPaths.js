@@ -40,6 +40,7 @@ const AUTO_DATA_FIELDS = {
   typeOfCompanyDoc: ['supporting_category_doc', 'processed_registration_docs'],
   detailsOfProductsPath: ['operations_details', 'processed_registration_docs'],
   representativePicturePath: ['plastic_packaging_picture', 'processed_registration_docs'],
+  dicRegistrationDoc: ['dic_registration', 'processed_registration_docs'],
 };
 
 const GENERAL_INFO_FIELDS = {

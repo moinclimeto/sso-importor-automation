@@ -173,6 +173,8 @@ export function buildGeneralInfoFromDocData(docData = {}) {
 export const GENERAL_INFO_EMPTY = {
   typeOfBusiness: '',
   typeOfCompany: '',
+  applicantType: 'PIBO',
+  subApplicantType: 'Importer',
   registeredAddressLine1: '',
   registeredAddressLine2: '',
   isSameAsRegisteredAddress: true,
@@ -186,6 +188,7 @@ export const GENERAL_INFO_EMPTY = {
   password: '',
   confirmPassword: '',
   hasProductionFacility: 'Not Applicable',
+  dicRegistered: 'No',
   capitalInvested: '',
   yearOfCommencement: '',
   plasticConsumed: _defaultPlasticConsumed,
@@ -193,6 +196,7 @@ export const GENERAL_INFO_EMPTY = {
   thicknessOfPlastic: '',
   
   // Part B
+  partBConsents: [],
   partBSection4: [],
   partBTransactions: {
     sec5a: [],

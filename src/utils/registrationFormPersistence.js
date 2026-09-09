@@ -83,7 +83,7 @@ export function buildRegistrationSavePayload({
 }) {
   const payload = {
     applicant_type: savedRegistration?.applicant_type || 'PIBO',
-    sub_applicant_type: savedRegistration?.sub_applicant_type || 'Importer',
+    sub_applicant_type: generalInfo?.subApplicantType || savedRegistration?.sub_applicant_type || 'Importer',
     email: String(email || '').trim() || undefined,
     mobile: String(mobile || '').trim() || undefined,
     password: generalInfo?.password?.trim() || undefined,

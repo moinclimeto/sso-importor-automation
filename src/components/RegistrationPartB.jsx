@@ -21,7 +21,11 @@ import {
   formatSection5bPartAIssue,
   prepareSec5bForPortal,
 } from '../../shared/partBSection5.js';
-import { PART_B_SECTION4_CATEGORY_LABELS } from '../../shared/partBSection4.js';
+import {
+  PART_B_SECTION4_CATEGORY_LABELS,
+  alignPartBSection4ToPlasticConsumed,
+  formatSection4IssuesAsPortalMessage,
+} from '../../shared/partBSection4.js';
 import {
   PORTAL_PLASTIC_MATERIALS,
   PORTAL_SEC5_ENTITY_TYPES,
@@ -53,6 +57,7 @@ export default function RegistrationPartB({
   const operatingStatesKey = JSON.stringify(generalInfo.operatingStates || []);
   const hydrateRef = useRef('');
   const showHistoricalSections = requiresHistoricalEprData(generalInfo.yearOfCommencement);
+  const isBrandOwnerApplicant = /brand\s*owner/i.test(generalInfo.subApplicantType || '');
 
   const persistPartB = () => {
     onPersist?.().catch((err) => console.error('Failed to save Part B:', err));
@@ -160,6 +165,42 @@ export default function RegistrationPartB({
     return () => { cancelled = true; };
   }, [gstin, setGeneralInfo, showHistoricalSections]);
 
+  useEffect(() => {
+    const operatingStates = generalInfo.operatingStates || [];
+    setGeneralInfo((prev) => {
+      const existing = prev.partBConsents || [];
+      if (!operatingStates.length) {
+        if (existing.length) return { ...prev, partBConsents: [] };
+        return prev;
+      }
+      const updated = operatingStates.map((st) => {
+        const found = existing.find((c) => c.state === st);
+        return (
+          found || {
+            state: st,
+            waterApplicationNumber: '',
+            waterConsentValidity: '',
+            waterConsentDocument: '',
+            airApplicationNumber: '',
+            airConsentValidity: '',
+            airConsentDocument: '',
+          }
+        );
+      });
+      const same = JSON.stringify(existing) === JSON.stringify(updated);
+      if (same) return prev;
+      return { ...prev, partBConsents: updated };
+    });
+  }, [operatingStatesKey, setGeneralInfo]);
+
+  const updateConsentCell = (stateIndex, field, value) => {
+    setGeneralInfo((prev) => {
+      const list = [...(prev.partBConsents || [])];
+      list[stateIndex] = { ...(list[stateIndex] || {}), [field]: value };
+      return { ...prev, partBConsents: list };
+    });
+  };
+
   const updateSection4Cell = (groupIndex, catIndex, field, value) => {
     setGeneralInfo((prev) => {
       const groups = [...(prev.partBSection4 || [])];
@@ -168,6 +209,20 @@ export default function RegistrationPartB({
       groups[groupIndex] = group;
       return { ...prev, partBSection4: groups };
     });
+  };
+
+  const handleAutoAlignSection4 = () => {
+    const aligned = alignPartBSection4ToPlasticConsumed({
+      partBSection4: generalInfo.partBSection4 || [],
+      plasticConsumed: generalInfo.plasticConsumed || {},
+      years: getCpcbPortalPartA3cYears(),
+      operatingStates: generalInfo.operatingStates || [],
+    });
+    setGeneralInfo((prev) => ({
+      ...prev,
+      partBSection4: aligned,
+    }));
+    persistPartB();
   };
 
   const openModal = async (secKey, title, existingData = null, editIndex = null) => {
@@ -191,7 +246,15 @@ export default function RegistrationPartB({
       }
     }
     if (row) {
-      if (secKey === 'sec5b') row = normalizeSec5bRowForPortal(row);
+      if (secKey === 'sec5b') {
+        row = normalizeSec5bRowForPortal(row);
+        if (row.state) {
+          const stateMatch = INDIAN_STATES.find(
+            (s) => s.toLowerCase() === String(row.state).trim().toLowerCase(),
+          );
+          if (stateMatch) row = { ...row, state: stateMatch };
+        }
+      }
       if (secKey === 'sec5d') row = normalizeSec5dRowForPortal(row);
     }
     setModalData(
@@ -211,10 +274,10 @@ export default function RegistrationPartB({
             ...(secKey === 'sec5b'
               ? {
                   regType: 'UnRegistered',
-                  country: 'India',
                   recycledPercent: '0',
                   entityType: 'Importer',
                   materialType: 'Others',
+                  ...(isBrandOwnerApplicant ? {} : { country: 'India' }),
                 }
               : secKey === 'sec5d'
                 ? {
@@ -238,6 +301,24 @@ export default function RegistrationPartB({
       if (!modalData.quantity) {
         alert('Total Plastic Quantity is required');
         return;
+      }
+      if (modalData._secKey === 'sec5b' && isBrandOwnerApplicant) {
+        if (!modalData.state?.trim()) {
+          alert('State is required');
+          return;
+        }
+        if (!modalData.gst?.trim()) {
+          alert('GST is required');
+          return;
+        }
+        if (modalData.gstPaid == null || modalData.gstPaid === '') {
+          alert('GST Paid is required');
+          return;
+        }
+        if (!modalData.invoiceNo?.trim()) {
+          alert('GST E-Invoice No is required');
+          return;
+        }
       }
     } else if (!modalData.quantity) {
       alert('Quantity is required');
@@ -361,7 +442,9 @@ export default function RegistrationPartB({
       {renderSelect('Registration Type', 'regType', ['UnRegistered'])}
       {renderSelect('Entity Type', 'entityType', PORTAL_SEC5_ENTITY_TYPES)}
       {renderInput('Name Of The Entity', 'entityName')}
-      {renderSelect('Country', 'country', ['India', 'Other'])}
+      {isBrandOwnerApplicant
+        ? renderSelect('State', 'state', INDIAN_STATES)
+        : renderSelect('Country', 'country', ['India', 'Other'])}
       {renderInput('Address', 'address')}
       {renderInput('Mobile Number', 'mobile')}
       {renderSelect('Plastic Material Type', 'materialType', PORTAL_PLASTIC_MATERIALS)}
@@ -370,8 +453,19 @@ export default function RegistrationPartB({
       {renderInput('Date', 'date', 'date')}
       {renderInput('Total Plastic Quantity (Ton)', 'quantity', 'number')}
       {renderInput('Recycled Plastic % (0 for virgin)', 'recycledPercent', 'number')}
+      {isBrandOwnerApplicant ? (
+        <>
+          {renderInput('GST', 'gst', 'text', 'e.g. 22AAAAA0000A1Z5')}
+          {renderInput('GST Paid/ Total GST Paid', 'gstPaid', 'number')}
+          {renderInput('GST E-Invoice No', 'invoiceNo')}
+        </>
+      ) : null}
       <div className="col-span-2">
-        <label className={labelClass}>Upload Invoice/GST E-Invoice *</label>
+        <label className={labelClass}>
+          {isBrandOwnerApplicant
+            ? 'Upload Invoice/GST E-Invoice/ Bulk Invoice & Statement *'
+            : 'Upload Invoice/GST E-Invoice *'}
+        </label>
         <input type="file" accept=".pdf" className={inputClass} onChange={async (e) => {
           const file = e.target.files[0];
           if (!file) return;
@@ -687,6 +781,138 @@ export default function RegistrationPartB({
       <div>
         <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part B: Pertaining to Liquid Effluent and Gaseous Emissions</h3>
 
+        {/* Brand Owner Consents Table (Air and Water Act) */}
+        {/brand\s*owner/i.test(generalInfo.subApplicantType || '') || /^yes$/i.test(generalInfo.hasProductionFacility || '') ? (
+          <div className="bg-white border rounded-xl shadow-sm p-5 mb-6">
+            <div className="mb-4 border-b pb-3">
+              <h4 className="font-semibold text-slate-800 text-base flex items-center gap-2">
+                4. Consents Details (Air and Water Act) <span className="text-red-500">*</span>
+              </h4>
+              <p className="text-xs text-slate-500 mt-1">
+                State-wise Air and Water Act consent details. Rows automatically match Part A <strong>Operating States</strong>.
+              </p>
+              {!generalInfo.operatingStates?.length ? (
+                <p className="text-xs text-amber-700 bg-amber-50 border border-amber-100 rounded-md px-3 py-2 mt-2">
+                  Select operating states in Part A to populate state-wise consent rows here.
+                </p>
+              ) : null}
+            </div>
+
+            {generalInfo.operatingStates?.length > 0 && (
+              <div className="overflow-x-auto border border-slate-300 rounded-lg">
+                <table className="w-full text-sm text-left">
+                  <thead className="bg-[#0b6c7a] text-white text-xs">
+                    <tr>
+                      <th className="px-3 py-2 border-r font-medium text-center align-middle" rowSpan={2}>State</th>
+                      <th className="px-3 py-2 border-r border-b font-medium text-center" colSpan={3}>Water (Act)</th>
+                      <th className="px-3 py-2 border-b font-medium text-center" colSpan={3}>Air (Act)</th>
+                    </tr>
+                    <tr>
+                      <th className="px-3 py-2 border-r font-medium text-center">Application Number</th>
+                      <th className="px-3 py-2 border-r font-medium text-center">Validity of Consent (Water Act)</th>
+                      <th className="px-3 py-2 border-r font-medium text-center">Water Consent Document</th>
+                      <th className="px-3 py-2 border-r font-medium text-center">Application Number</th>
+                      <th className="px-3 py-2 border-r font-medium text-center">Validity of Consent (Air Act)</th>
+                      <th className="px-3 py-2 font-medium text-center">Air Consent Document</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {(generalInfo.partBConsents || []).map((consent, stateIndex) => (
+                      <tr key={consent.state || stateIndex} className="border-b bg-white hover:bg-slate-50">
+                        <td className="px-3 py-2 border-r font-semibold text-slate-800 text-center bg-slate-50">
+                          {consent.state}
+                        </td>
+                        <td className="px-3 py-2 border-r">
+                          <input
+                            type="text"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 text-xs"
+                            placeholder="Enter consent number"
+                            value={consent.waterApplicationNumber || ''}
+                            onChange={(e) => updateConsentCell(stateIndex, 'waterApplicationNumber', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-3 py-2 border-r">
+                          <input
+                            type="date"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 text-xs bg-white"
+                            value={consent.waterConsentValidity || ''}
+                            onChange={(e) => updateConsentCell(stateIndex, 'waterConsentValidity', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-3 py-2 border-r">
+                          <div className="flex items-center gap-2">
+                            <label className="px-3 py-1.5 bg-teal-50 text-[#0b6c7a] border border-teal-200 rounded hover:bg-teal-100 text-xs font-medium cursor-pointer flex items-center gap-1 shrink-0">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                              {consent.waterConsentDocument ? 'Replace' : 'Upload'}
+                              <input
+                                type="file"
+                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files[0];
+                                  if (!file) return;
+                                  const stored = await storeCompressedUpload(file, { destSubdir: 'processed_consents' });
+                                  if (stored.success && stored.filePath) {
+                                    updateConsentCell(stateIndex, 'waterConsentDocument', stored.filePath);
+                                  }
+                                }}
+                              />
+                            </label>
+                            {consent.waterConsentDocument && (
+                              <UploadedFilePreview filePath={consent.waterConsentDocument} />
+                            )}
+                          </div>
+                        </td>
+                        <td className="px-3 py-2 border-r">
+                          <input
+                            type="text"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 text-xs"
+                            placeholder="Enter consent number"
+                            value={consent.airApplicationNumber || ''}
+                            onChange={(e) => updateConsentCell(stateIndex, 'airApplicationNumber', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-3 py-2 border-r">
+                          <input
+                            type="date"
+                            className="w-full px-2.5 py-1.5 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 text-xs bg-white"
+                            value={consent.airConsentValidity || ''}
+                            onChange={(e) => updateConsentCell(stateIndex, 'airConsentValidity', e.target.value)}
+                          />
+                        </td>
+                        <td className="px-3 py-2">
+                          <div className="flex items-center gap-2">
+                            <label className="px-3 py-1.5 bg-teal-50 text-[#0b6c7a] border border-teal-200 rounded hover:bg-teal-100 text-xs font-medium cursor-pointer flex items-center gap-1 shrink-0">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></svg>
+                              {consent.airConsentDocument ? 'Replace' : 'Upload'}
+                              <input
+                                type="file"
+                                accept=".pdf,.doc,.docx,.jpg,.jpeg,.png"
+                                className="hidden"
+                                onChange={async (e) => {
+                                  const file = e.target.files[0];
+                                  if (!file) return;
+                                  const stored = await storeCompressedUpload(file, { destSubdir: 'processed_consents' });
+                                  if (stored.success && stored.filePath) {
+                                    updateConsentCell(stateIndex, 'airConsentDocument', stored.filePath);
+                                  }
+                                }}
+                              />
+                            </label>
+                            {consent.airConsentDocument && (
+                              <UploadedFilePreview filePath={consent.airConsentDocument} />
+                            )}
+                          </div>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        ) : null}
+
         {!showHistoricalSections ? (
           <div className="text-sm text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3 mb-6">
             {CURRENT_FY_COMMENCEMENT_HINT}
@@ -708,18 +934,37 @@ export default function RegistrationPartB({
               </p>
             ) : null}
             {section4PartAIssues.length > 0 ? (
-              <div className="text-xs text-amber-900 bg-amber-50 border border-amber-200 rounded-md px-3 py-2 mt-2 space-y-1">
-                <p className="font-semibold">Part A 3c and Section 4 do not match (CPCB ±40% rule)</p>
-                {section4PartAIssues.map((issue) => (
-                  <p key={`${issue.year}-${issue.catKey}`}>{formatSection4PartAIssue(issue)}</p>
-                ))}
-                <p className="text-amber-800">
-                  Align Part A → Plastic Consumed (3c) with Part B → Section 4 totals, then run Register / automation.
-                </p>
+              <div className="text-xs text-red-950 bg-red-50 border border-red-200 rounded-lg p-3.5 mt-2 space-y-2.5">
+                <div className="flex items-start gap-2">
+                  <span className="text-base leading-none">⚠️</span>
+                  <div className="space-y-1.5 flex-1">
+                    <p className="font-semibold text-red-700 leading-snug">
+                      {formatSection4IssuesAsPortalMessage(section4PartAIssues)}
+                    </p>
+                    <div className="space-y-0.5 text-slate-700 text-[11px] bg-white/70 p-2 rounded border border-red-100">
+                      {section4PartAIssues.map((issue) => (
+                        <p key={`${issue.year}-${issue.catKey}`}>{formatSection4PartAIssue(issue)}</p>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+                <div className="pt-1 flex items-center gap-3">
+                  <button
+                    type="button"
+                    onClick={handleAutoAlignSection4}
+                    className="px-3 py-1.5 bg-[#0b6c7a] hover:bg-[#08525d] text-white text-xs font-semibold rounded-md shadow-sm transition-all flex items-center gap-1.5"
+                  >
+                    <span>⚡ Auto-Align Section 4 to Part A (±40%)</span>
+                  </button>
+                  <span className="text-[11px] text-slate-500">
+                    Click to automatically adjust pre/post consumer waste to match Part A 3c within ±40%.
+                  </span>
+                </div>
               </div>
             ) : (
-              <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 rounded-md px-3 py-2 mt-2">
-                Section 4 totals match Part A 3c (±40% rule) — no change needed here.
+              <div className="text-xs text-teal-900 bg-teal-50 border border-teal-200 rounded-md px-3 py-2 mt-2 flex items-center gap-1.5">
+                <span>✅</span>
+                <span>Section 4 totals match Part A 3c (within ±40% rule) — application is ready for portal submit.</span>
               </div>
             )}
           </div>
@@ -818,8 +1063,12 @@ export default function RegistrationPartB({
           
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity (manual — automation pending)', 'sec5a')}
           {renderSec5bTable()}
-          {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
-          {renderSec5dTable()}
+          {!/brand\s*owner/i.test(generalInfo.subApplicantType || '') && (
+            <>
+              {renderTransactionTable('Details of Plastic Raw Material/Packaging Sold to Registered PIBOs', 'sec5c')}
+              {renderSec5dTable()}
+            </>
+          )}
         </div>
         ) : null}
       </div>

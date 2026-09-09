@@ -106,7 +106,7 @@ function buildRegistrationDbPayload(ceprId, screenshotPath) {
   });
   return {
     applicant_type: 'PIBO',
-    sub_applicant_type: 'Importer',
+    sub_applicant_type: data.subApplicantType || 'Importer',
     cepr_id: ceprId,
     success_screenshot_path: screenshotPath,
     email: loginCreds.email,

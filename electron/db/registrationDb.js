@@ -63,30 +63,47 @@ function buildFormDataJson(data = {}, existingFormDataJson = null) {
     });
   }
 
-  if (existingFormDataJson && (data.email !== undefined || data.mobile !== undefined || data.password !== undefined)) {
+  if (existingFormDataJson) {
     try {
       const parsed = JSON.parse(existingFormDataJson);
       const generalInfo = { ...(parsed.generalInfo || {}) };
+      let changed = false;
       if (data.password) {
         generalInfo.password = data.password;
         generalInfo.confirmPassword = data.confirm_password || data.password;
+        changed = true;
       }
-      return JSON.stringify({
-        email: data.email ?? parsed.email ?? '',
-        mobile: data.mobile ?? parsed.mobile ?? '',
-        generalInfo,
-        autoData: parsed.autoData || {},
-      });
+      const newApplicant = data.applicant_type || data.applicantType;
+      if (newApplicant) {
+        generalInfo.applicantType = newApplicant;
+        changed = true;
+      }
+      const newSub = data.sub_applicant_type || data.subApplicantType;
+      if (newSub) {
+        generalInfo.subApplicantType = newSub;
+        changed = true;
+      }
+      if (changed || data.email !== undefined || data.mobile !== undefined) {
+        return JSON.stringify({
+          email: data.email ?? parsed.email ?? '',
+          mobile: data.mobile ?? parsed.mobile ?? '',
+          generalInfo,
+          autoData: parsed.autoData || {},
+        });
+      }
     } catch {
       /* fall through */
     }
   }
 
-  if (!existingFormDataJson && (data.email || data.mobile || data.password)) {
+  if (!existingFormDataJson && (data.email || data.mobile || data.password || data.sub_applicant_type || data.subApplicantType)) {
     return JSON.stringify({
       email: data.email || '',
       mobile: data.mobile || '',
-      generalInfo: {},
+      generalInfo: {
+        applicantType: data.applicant_type || data.applicantType || 'PIBO',
+        subApplicantType: data.sub_applicant_type || data.subApplicantType || 'Importer',
+      },
       autoData: {},
     });
   }

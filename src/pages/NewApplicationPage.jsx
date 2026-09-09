@@ -37,6 +37,7 @@ import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
+import PartAProductionFacilityFields from '../components/PartAProductionFacilityFields.jsx';
 import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
 import RegistrationAutomationModal, {
   appendAutomationLog,
@@ -53,7 +54,12 @@ import {
 import {
   getRegisterApplicationBlockers,
   summarizeRegisterBlockers,
+  formatPartBPlasticValidationToasts,
 } from '../utils/registrationApplicationReadiness.js';
+import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4IssuesAsPortalMessage,
+} from '../../shared/partBSection4.js';
 import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
@@ -80,6 +86,7 @@ const EMPTY_AUTO = {
   ctoValidity: '',
   dateOfCommencement: '',
   unitGstDoc: '',
+  dicRegistrationDoc: '',
 };
 
 function AutoFilledPreview({ data, isDummy }) {
@@ -985,6 +992,20 @@ export default function NewApplicationPage() {
       operatingStates,
     };
 
+    if (requiresHistoricalEprData(generalInfo.yearOfCommencement)) {
+      const s4Issues = validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        generalInfo.plasticConsumed || {},
+        reportingFys,
+      );
+      if (s4Issues.length > 0) {
+        const portalMsg = formatSection4IssuesAsPortalMessage(s4Issues);
+        showToast(portalMsg, 'error', { duration: 16000 });
+        setWizardStep('partB');
+        return;
+      }
+    }
+
     const registerBlockers = getRegisterApplicationBlockers({
       savedCeprId,
       generalInfo: generalForValidation,
@@ -993,15 +1014,10 @@ export default function NewApplicationPage() {
     });
 
     if (registerBlockers.length > 0) {
-      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
-      const section4Count = registerBlockers.filter((b) => b.section === 'partB').length;
-      if (section4Count > 1) {
-        showToast(
-          `${section4Count} Section 4 rows are outside the ±40% range of Part A 3c. Update the values in Part B.`,
-          'warning',
-          { duration: 12000 },
-        );
+      for (const msg of formatPartBPlasticValidationToasts(registerBlockers)) {
+        showToast(msg.text, msg.type, { duration: 16000 });
       }
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
       return;
     }
 
@@ -1651,32 +1667,22 @@ export default function NewApplicationPage() {
                       }}
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
-                    <select
-                      name="hasProductionFacility"
-                      value={generalInfo.hasProductionFacility || 'Not Applicable'}
-                      onChange={async (e) => {
-                        handleGeneralChange(e);
-                        // Auto-save logic
-                        if (window.pwp?.registration?.save) {
-                          const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
-                    >
-                      <option value="Not Applicable">Not Applicable</option>
-                    </select>
-                  </div>
+                  <PartAProductionFacilityFields
+                    generalInfo={generalInfo}
+                    autoData={autoData}
+                    inputClass={inputClass}
+                    onHasProductionFacilityChange={(e) => {
+                      const next = { ...generalInfo, hasProductionFacility: e.target.value };
+                      setGeneralInfo(next);
+                      persistRegistrationForm(next, autoData);
+                    }}
+                    onDicRegisteredChange={(e) => {
+                      const next = { ...generalInfo, dicRegistered: e.target.value };
+                      setGeneralInfo(next);
+                      persistRegistrationForm(next, autoData);
+                    }}
+                    onDicDocSelect={(file) => handlePartAPdfUpload('dicRegistrationDoc', file)}
+                  />
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
                     <input

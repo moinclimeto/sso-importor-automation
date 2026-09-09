@@ -1,9 +1,10 @@
 import { useState, useEffect, useMemo } from 'react';
-import { ArrowLeft, Wallet, TrendingUp, Package, History, ArrowDownRight, IndianRupee, Calendar, FileText, AlertCircle, RefreshCw, Scale, CreditCard, Edit2, Check, X, ShieldCheck } from 'lucide-react';
+import { Wallet, TrendingUp, Package, ArrowDownRight, FileText, AlertCircle, RefreshCw, Scale } from 'lucide-react';
 import { getApi } from '../utils/pwpApi.js';
 import { useToast, Toast } from '../components/Toast.jsx';
 import EprNewApplicationData from '../pages/EprNewApplicationData.jsx';
 import { aggregateByFinancialYear } from '../../shared/plasticMtAggregation.js';
+import DashboardSettingsCards from './DashboardSettingsCards.jsx';
 
 export default function ScrapedDashboard({ company, onBack }) {
   const [profile, setProfile] = useState(null);
@@ -15,17 +16,9 @@ export default function ScrapedDashboard({ company, onBack }) {
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState('dashboard');
   const [dashboardCards, setDashboardCards] = useState(null);
-  const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
-  const [isEditingBank, setIsEditingBank] = useState(false);
-  const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
   const { toast, showToast, hideToast } = useToast();
 
   useEffect(() => {
-    window.pwp?.settings?.get?.('global_bank_details')?.then((data) => {
-      if (data) {
-        setBankDetails(data);
-      }
-    });
     async function fetchStaticData() {
       try {
         const api = getApi();
@@ -78,50 +71,16 @@ export default function ScrapedDashboard({ company, onBack }) {
     [sales, publishedMtFilters],
   );
 
-  if (loading) {
-    return (
-      <div className="flex justify-center items-center h-64">
-        <div className="w-10 h-10 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
-      </div>
-    );
-  }
-
-  const handleSaveBankDetails = async () => {
-    try {
-      if (!window.pwp?.settings) {
-        showToast('Settings API not available — is the app running in Electron?', 'error');
-        return;
-      }
-      await window.pwp.settings.set('global_bank_details', editBankDetails);
-      let updatedCount = 0;
-      if (window.pwp?.sales?.applyBankDetailsToAll) {
-        const applyResult = await window.pwp.sales.applyBankDetailsToAll(editBankDetails);
-        if (applyResult?.success) {
-          updatedCount = applyResult.updated || 0;
-        }
-      }
-      setBankDetails(editBankDetails);
-      setIsEditingBank(false);
-
-      if (updatedCount > 0) {
-        showToast(`Bank details saved & auto-applied to ${updatedCount} sale record${updatedCount > 1 ? 's' : ''}`, 'success');
-      } else {
-        showToast('Bank details saved successfully', 'success');
-      }
-    } catch (err) {
-      showToast('Failed to save bank details: ' + err.message, 'error');
-    }
-  };
-
   return (
     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500 w-full pb-10">
-      
-      {/* Top Banner for Bank Details (Hidden as per requirement)
-      <div className="relative overflow-hidden bg-gradient-to-r from-slate-900 to-indigo-950 rounded-3xl p-6 shadow-xl shadow-indigo-900/10">
-        ... (Bank Details Form) ...
-      </div>
-      */}
+      <DashboardSettingsCards />
 
+      {loading ? (
+        <div className="flex justify-center items-center h-64">
+          <div className="w-10 h-10 border-4 border-indigo-500/30 border-t-indigo-500 rounded-full animate-spin" />
+        </div>
+      ) : (
+        <>
       {/* Tabs */}
       <div className="flex border-b border-slate-200 mb-6 mt-4">
         <button
@@ -374,6 +333,8 @@ export default function ScrapedDashboard({ company, onBack }) {
         <div className="mt-4">
           <EprNewApplicationData />
         </div>
+      )}
+        </>
       )}
 
       <Toast toast={toast} onClose={hideToast} />

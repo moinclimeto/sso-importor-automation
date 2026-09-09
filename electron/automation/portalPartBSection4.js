@@ -133,7 +133,7 @@ async function fillSection4ByGroupFilters(page, table, groups, onLog) {
 
 export async function fillPartBSection4Grid(page, section4Groups = [], onLog) {
   const groups = Array.isArray(section4Groups) ? section4Groups : [];
-  const heading = page.getByText(/State-wise, Category-wise Quantity of PW generated|Pre Consumer Waste/i).first();
+  const heading = page.getByText(/State-wise.*Plastic Waste Generated|State-wise, Category-wise Quantity of PW generated|Pre Consumer Waste/i).first();
 
   if (!(await heading.isVisible({ timeout: 8000 }).catch(() => false))) {
     if (onLog) onLog('Part B Section 4 heading not found.');

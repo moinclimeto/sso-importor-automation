@@ -19,33 +19,41 @@ function plasticConsumedGrid(page) {
   return page.locator('app-ag-grid-table').filter({ hasText: /Rigid Plastic/i }).first();
 }
 
-async function fillPlasticConsumedCell(page, input, value) {
+async function fillPlasticConsumedCell(page, cellLoc, inputLoc, value) {
   const strVal = String(value ?? '0');
-  await input.scrollIntoViewIfNeeded().catch(() => {});
-  await input.click({ timeout: 2500 });
-  await input.fill('');
+  await inputLoc.scrollIntoViewIfNeeded().catch(() => {});
+  await inputLoc.click({ timeout: 1500 }).catch(() => {});
+  await inputLoc.fill('').catch(() => {});
   await page.keyboard.press('Control+A').catch(() => {});
   await page.keyboard.press('Backspace').catch(() => {});
-  await input.pressSequentially(strVal, { delay: 25 });
-  await input.dispatchEvent('input');
-  await input.dispatchEvent('change');
-  await input.blur();
-  await page.waitForTimeout(180);
+  await inputLoc.pressSequentially(strVal, { delay: 25 }).catch(() => inputLoc.fill(strVal).catch(() => {}));
+  await inputLoc.dispatchEvent('input').catch(() => {});
+  await inputLoc.dispatchEvent('change').catch(() => {});
+  await page.keyboard.press('Enter').catch(() => {});
+  await page.keyboard.press('Tab').catch(() => {});
+  await page.waitForTimeout(150);
 
-  const readBack = (await input.inputValue().catch(() => '')).trim();
-  if (readBack !== strVal) {
-    const handle = await input.elementHandle();
-    if (handle) {
-      await page.evaluate((el, v) => {
-        el.focus();
-        el.value = v;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        el.dispatchEvent(new Event('change', { bubbles: true }));
-        el.blur();
-      }, handle, strVal);
-      await page.waitForTimeout(180);
-    }
+  const textRead = (await cellLoc.innerText().catch(() => '')).trim();
+  if (textRead.includes(strVal)) {
+    return true;
   }
+
+  // Fallback: If cell text does not reflect value yet and input is still in DOM, force JS value dispatch
+  const isInputAttached = await inputLoc.isVisible({ timeout: 200 }).catch(() => false);
+  if (isInputAttached) {
+    await page.evaluate(({ inputEl, v }) => {
+      if (inputEl) {
+        inputEl.focus();
+        inputEl.value = v;
+        inputEl.dispatchEvent(new Event('input', { bubbles: true }));
+        inputEl.dispatchEvent(new Event('change', { bubbles: true }));
+        inputEl.blur();
+      }
+    }, { inputEl: await inputLoc.elementHandle().catch(() => null), v: strVal }).catch(() => {});
+    await page.keyboard.press('Enter').catch(() => {});
+    await page.waitForTimeout(100);
+  }
+  return true;
 }
 
 /** Read FY labels currently rendered in the portal 3c grid. */
@@ -120,14 +128,44 @@ export async function fillPlasticConsumedGrid(page, plasticConsumed = {}, years 
 
       for (const col of COLUMN_MAP) {
         const val = aligned?.[year]?.[col.key] ?? '0';
-        const inputLoc = row.locator(`div[col-id="${col.colId}"] input.cell-input`).first();
+        const cellLoc = row.locator(`div[col-id="${col.colId}"]`).first();
 
-        if (await inputLoc.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await fillPlasticConsumedCell(page, inputLoc, val);
-          filledCells += 1;
-          if (onLog) onLog(`3c ${year} ${col.colId} = ${val}`);
+        if (await cellLoc.isVisible({ timeout: 2000 }).catch(() => false)) {
+          let inputLoc = cellLoc.locator('input').first();
+          let inputFound = await inputLoc.isVisible({ timeout: 300 }).catch(() => false);
+
+          if (!inputFound) {
+            // AG-Grid cells require click or double-click to enter inline editing mode
+            await cellLoc.click({ force: true }).catch(() => {});
+            await page.waitForTimeout(100);
+            await cellLoc.dblclick({ force: true }).catch(() => {});
+            await page.waitForTimeout(200);
+
+            inputLoc = cellLoc.locator('input').first();
+            inputFound = await inputLoc.isVisible({ timeout: 600 }).catch(() => false);
+          }
+
+          if (!inputFound) {
+            // Fallback: active input at row level or ag-grid container level
+            inputLoc = row.locator('input.cell-input, input.ag-input-field-input, input').first();
+            inputFound = await inputLoc.isVisible({ timeout: 600 }).catch(() => false);
+          }
+
+          if (!inputFound) {
+            // Fallback: active input anywhere in page editor overlay
+            inputLoc = page.locator('div.ag-cell-inline-editing input, div.ag-popup-editor input').first();
+            inputFound = await inputLoc.isVisible({ timeout: 600 }).catch(() => false);
+          }
+
+          if (inputFound) {
+            await fillPlasticConsumedCell(page, cellLoc, inputLoc, val);
+            filledCells += 1;
+            if (onLog) onLog(`3c ${year} ${col.colId} = ${val}`);
+          } else if (onLog) {
+            onLog(`Warning: Input for ${year} column ${col.colId} not found.`);
+          }
         } else if (onLog) {
-          onLog(`Warning: Input for ${year} column ${col.colId} not found.`);
+          onLog(`Warning: Cell for ${year} column ${col.colId} not found.`);
         }
       }
     }

@@ -1,8 +1,10 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer
 } from 'recharts';
-import { Play, ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee, CreditCard, Edit2, Check, X } from 'lucide-react';
+import { Play, ShoppingCart, TrendingUp, Building2, TrendingDown, IndianRupee, CreditCard, Edit2, Check, X, UserCheck, Loader2 } from 'lucide-react';
+
+const SUB_APPLICANT_OPTIONS = ['Importer', 'Brand Owner'];
 
 const fmt = (n) =>
   new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n || 0);
@@ -29,6 +31,10 @@ export default function Dashboard() {
   const [isEditingBank, setIsEditingBank] = useState(false);
   const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
   const [bankSaveMessage, setBankSaveMessage] = useState('');
+  const [applicantType, setApplicantType] = useState('PIBO');
+  const [subApplicantType, setSubApplicantType] = useState('Importer');
+  const [savingReg, setSavingReg] = useState(false);
+  const [regSaveMessage, setRegSaveMessage] = useState('');
 
   useEffect(() => {
     if (window.pwp) {
@@ -41,6 +47,16 @@ export default function Dashboard() {
           setBankDetails(data);
         }
       });
+      if (window.pwp.registration?.get) {
+        window.pwp.registration.get().then((res) => {
+          if (res?.success && res?.data) {
+            setApplicantType(res.data.applicant_type || 'PIBO');
+            if (res.data.sub_applicant_type) {
+              setSubApplicantType(res.data.sub_applicant_type);
+            }
+          }
+        });
+      }
     } else {
       setStats({
         purchaseTotal: 0, saleTotal: 0, purchaseCount: 0,
@@ -50,6 +66,36 @@ export default function Dashboard() {
       setLoading(false);
     }
   }, []);
+
+  const saveRegistrationTypes = async ({ applicant, subApplicant }) => {
+    const nextApplicant = applicant || 'PIBO';
+    const nextSub = subApplicant || subApplicantType;
+    if (nextApplicant === applicantType && nextSub === subApplicantType) return;
+    setSavingReg(true);
+    setRegSaveMessage('');
+    try {
+      if (!window.pwp?.registration?.save) {
+        setRegSaveMessage('Registration API not available.');
+        return;
+      }
+      const res = await window.pwp.registration.save({
+        applicant_type: nextApplicant,
+        sub_applicant_type: nextSub,
+      });
+      if (res?.success) {
+        setApplicantType(nextApplicant);
+        setSubApplicantType(nextSub);
+        setRegSaveMessage(`Saved — ${nextApplicant} / ${nextSub}`);
+        setTimeout(() => setRegSaveMessage(''), 4000);
+      } else {
+        setRegSaveMessage('Failed to update: ' + (res?.error || 'Unknown error'));
+      }
+    } catch (err) {
+      setRegSaveMessage('Error: ' + err.message);
+    } finally {
+      setSavingReg(false);
+    }
+  };
 
   const chartData = (() => {
     if (!stats) return [];
@@ -196,6 +242,57 @@ export default function Dashboard() {
               <Edit2 size={16} />
             </button>
           )}
+        </div>
+      </div>
+
+      {/* Applicant / Sub-Applicant — writes to registration_details */}
+      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-4">
+            <div className="p-3 rounded-lg bg-emerald-500">
+              <UserCheck size={22} className="text-white" />
+            </div>
+            <div>
+              <p className="text-sm text-slate-500 font-medium">Registration Applicant Type</p>
+              <p className="text-xs text-slate-400 mt-0.5">
+                Saved in registration details and used on the CPCB portal
+              </p>
+              {regSaveMessage && (
+                <p className={`text-xs mt-1 ${regSaveMessage.startsWith('Saved') ? 'text-emerald-600' : 'text-red-600'}`}>
+                  {regSaveMessage}
+                </p>
+              )}
+              <div className="mt-3 flex flex-wrap items-center gap-6">
+                <div>
+                  <p className="text-xs font-medium text-slate-500 mb-1.5">Applicant</p>
+                  <label className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-800">
+                    <input type="radio" name="applicantType" checked readOnly className="accent-emerald-600" />
+                    PIBO
+                  </label>
+                </div>
+                <div>
+                  <p className="text-xs font-medium text-slate-500 mb-1.5">Sub-Applicant</p>
+                  <div className="flex items-center gap-4">
+                    {SUB_APPLICANT_OPTIONS.map((type) => (
+                      <label key={type} className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input
+                          type="radio"
+                          name="subApplicantType"
+                          value={type}
+                          checked={subApplicantType === type}
+                          disabled={savingReg}
+                          onChange={() => saveRegistrationTypes({ applicant: 'PIBO', subApplicant: type })}
+                          className="accent-emerald-600"
+                        />
+                        {type}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {savingReg && <Loader2 size={18} className="animate-spin text-emerald-600 mt-1" />}
         </div>
       </div>
 

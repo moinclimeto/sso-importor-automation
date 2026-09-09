@@ -8,6 +8,7 @@ import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import PlasticThicknessMinInfoIcon from '../components/PlasticThicknessMinInfoIcon.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
+import PartAProductionFacilityFields from '../components/PartAProductionFacilityFields.jsx';
 import {
   AUTO_FILLED_FIELDS,
   parseGstLabeledAddress,
@@ -58,6 +59,14 @@ import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import { prunePartBSection4ForPortal } from '../utils/registrationPartBSection4.js';
 import {
+  validateSection4AgainstPlasticConsumed,
+  formatSection4IssuesAsPortalMessage,
+} from '../../shared/partBSection4.js';
+import {
+  validateSection5bAgainstPlasticConsumed,
+  prepareSec5bForPortal,
+} from '../../shared/partBSection5.js';
+import {
   getRegisterApplicationBlockers,
   navigateToRegisterBlockerSection,
   summarizeRegisterBlockers,
@@ -91,6 +100,7 @@ const EMPTY_AUTO = {
   dateOfCommencement: '',
   iecDocumentPath: '',
   unitGstDoc: '',
+  dicRegistrationDoc: '',
 };
 
 function AutoFilledPreview({ data, isDummy }) {
@@ -315,8 +325,17 @@ export default function CpcbRegistrationPage() {
           ...(prev.partBTransactions || {}),
           ...(form.generalInfo.partBTransactions || {}),
         },
+        applicantType: form.generalInfo.applicantType || saved.applicant_type || prev.applicantType || 'PIBO',
+        subApplicantType:
+          form.generalInfo.subApplicantType || saved.sub_applicant_type || prev.subApplicantType || 'Importer',
       }));
-    } 
+    } else {
+      setGeneralInfo((prev) => ({
+        ...prev,
+        applicantType: saved.applicant_type || prev.applicantType || 'PIBO',
+        subApplicantType: saved.sub_applicant_type || prev.subApplicantType || 'Importer',
+      }));
+    }
 
     setEmail(loginCreds.email);
     setMobile(loginCreds.mobile);
@@ -477,6 +496,11 @@ export default function CpcbRegistrationPage() {
         if (saved) {
           setEmail(String(saved.email || savedForm?.email || '').trim());
           setMobile(String(saved.mobile || savedForm?.mobile || '').trim());
+          setGeneralInfo((prev) => ({
+            ...prev,
+            applicantType: saved.applicant_type || prev.applicantType || 'PIBO',
+            subApplicantType: saved.sub_applicant_type || prev.subApplicantType || 'Importer',
+          }));
         }
       } finally {
         setLoadingSavedRegistration(false);
@@ -631,17 +655,36 @@ export default function CpcbRegistrationPage() {
     );
   };
 
+  const persistGeneralPatch = (patch) => {
+    const next = { ...generalInfo, ...patch };
+    setGeneralInfo(next);
+    if (!window.pwp?.registration?.save) return;
+    window.pwp.registration.save({
+      ...(savedRegistration || {}),
+      email,
+      mobile,
+      form_data_json: JSON.stringify({
+        ...(savedRegistration?.formData || {}),
+        email,
+        mobile,
+        autoData,
+        generalInfo: next,
+      }),
+    }).catch(console.error);
+  };
+
   const persistPartCFile = async (file, field) => {
     const PART_C_DOC_BASE = {
       detailsOfProductsPath: 'operations_details',
       representativePicturePath: 'plastic_packaging_picture',
       typeOfCompanyDoc: 'supporting_category_doc',
+      dicRegistrationDoc: 'dic_registration',
     };
     const docBase = PART_C_DOC_BASE[field] || 'document';
     const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
     const portalFileName = registrationDocFileName(docBase, ext);
     const stored = await storeCompressedUpload(file, {
-      destSubdir: field === 'typeOfCompanyDoc' || field === 'detailsOfProductsPath' || field === 'representativePicturePath'
+      destSubdir: field === 'typeOfCompanyDoc' || field === 'detailsOfProductsPath' || field === 'representativePicturePath' || field === 'dicRegistrationDoc'
         ? 'processed_registration_docs'
         : 'processed_part_c',
       fileName: portalFileName,
@@ -995,7 +1038,7 @@ export default function CpcbRegistrationPage() {
         if (res.step !== 'REGISTRATION_COMPLETE') {
           await window.pwp.registration.save({
             applicant_type: 'PIBO',
-            sub_applicant_type: 'Importer',
+            sub_applicant_type: generalInfo.subApplicantType || 'Importer',
             cepr_id: res.ceprId || undefined,
             success_screenshot_path: res.screenshotPath || undefined,
             email: email || undefined,
@@ -1103,7 +1146,7 @@ export default function CpcbRegistrationPage() {
     });
     await window.pwp.registration.save({
       applicant_type: 'PIBO',
-      sub_applicant_type: 'Importer',
+      sub_applicant_type: generalInfo.subApplicantType || 'Importer',
       cepr_id: ceprId,
       success_screenshot_path: screenshotPath,
       email: loginCreds.email,
@@ -1135,6 +1178,44 @@ export default function CpcbRegistrationPage() {
 
   const handleNewApplication = async () => {
     automationModeRef.current = 'full';
+    if (requiresHistoricalEprData(generalInfo.yearOfCommencement)) {
+      const plasticConsumed = generalInfo.plasticConsumed || {};
+
+      // ── Section 4 ±40% check ──
+      const s4Issues = validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        plasticConsumed,
+        reportingFys,
+      );
+      if (s4Issues.length > 0) {
+        const portalMsg = formatSection4IssuesAsPortalMessage(s4Issues);
+        showToast(portalMsg, 'error', { duration: 16000 });
+        setWizardStep('partB');
+        return;
+      }
+
+      // ── Section 5b ±40% check (same portal rule) ──
+      const prepared5b = prepareSec5bForPortal({
+        plasticConsumed,
+        sec5b: generalInfo.partBTransactions?.sec5b || [],
+        years: reportingFys,
+        alignToPartA: false,
+      });
+      const s5bIssues = validateSection5bAgainstPlasticConsumed(
+        prepared5b,
+        plasticConsumed,
+        reportingFys,
+      );
+      if (s5bIssues.length > 0) {
+        const portalMsg = formatSection4IssuesAsPortalMessage(
+          s5bIssues.map((i) => ({ ...i, year: i.year, catKey: i.catKey })),
+        );
+        showToast(portalMsg, 'error', { duration: 16000 });
+        setWizardStep('partB');
+        return;
+      }
+    }
+
     const registerBlockers = getRegisterApplicationBlockers({
       savedCeprId,
       generalInfo,
@@ -1144,10 +1225,10 @@ export default function CpcbRegistrationPage() {
 
     if (registerBlockers.length > 0) {
       navigateToRegisterBlockerSection(registerBlockers, { setWizardStep });
-      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
       for (const msg of formatPartBPlasticValidationToasts(registerBlockers)) {
-        showToast(msg.text, msg.type, { duration: 12000 });
+        showToast(msg.text, msg.type, { duration: 16000 });
       }
+      showToast(summarizeRegisterBlockers(registerBlockers), 'error', { duration: 14000 });
       return;
     }
 
@@ -1196,6 +1277,20 @@ export default function CpcbRegistrationPage() {
       showToast('Enter CPCB portal Password in Part A → Login credentials.', 'error');
       setWizardStep('partA');
       return;
+    }
+
+    if (requiresHistoricalEprData(generalInfo.yearOfCommencement)) {
+      const s4Issues = validateSection4AgainstPlasticConsumed(
+        generalInfo.partBSection4 || [],
+        generalInfo.plasticConsumed || {},
+        reportingFys,
+      );
+      if (s4Issues.length > 0) {
+        const portalMsg = formatSection4IssuesAsPortalMessage(s4Issues);
+        showToast(portalMsg, 'error', { duration: 16000 });
+        setWizardStep('partB');
+        return;
+      }
     }
 
     if (window.pwp?.registration?.save) {
@@ -1553,7 +1648,33 @@ export default function CpcbRegistrationPage() {
       <Toast toast={toast} onClose={hideToast} />
       <CpcbPortalToastFeed items={portalToasts} />
 
-      <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
+      <h2 className="text-lg font-semibold text-slate-800 mb-1">
+        PIBO Registration —{' '}
+        <span className="text-green-700">{generalInfo.subApplicantType || 'Importer'}</span>
+      </h2>
+
+      {/* Sub-applicant type selector — visible only before registration is complete */}
+      {!registrationComplete && (
+        <div className="mb-4 flex items-center gap-3">
+          <span className="text-sm font-medium text-slate-600">Applicant Type:</span>
+          {['Importer', 'Brand Owner'].map((type) => (
+            <label key={type} className="flex items-center gap-1.5 text-sm cursor-pointer">
+              <input
+                type="radio"
+                name="subApplicantType"
+                value={type}
+                checked={(generalInfo.subApplicantType || 'Importer') === type}
+                onChange={() =>
+                  setGeneralInfo((prev) => ({ ...prev, subApplicantType: type }))
+                }
+                className="accent-green-600"
+              />
+              {type}
+            </label>
+          ))}
+        </div>
+      )}
+
       <p className="text-sm text-slate-500 mb-6">
         {registrationComplete
           ? 'CPCB account is ready. Complete Part A, Part B and Part C, then click Register to fill the CPCB portal.'
@@ -1677,10 +1798,13 @@ export default function CpcbRegistrationPage() {
                 <label className="block text-sm font-medium text-slate-700 mb-1">CIN (If Applicable)</label>
                 <input name="cin" value={autoData.cin || ''} onChange={(e) => setAutoData(prev => ({...prev, cin: e.target.value}))} className={`${lockedInputClass} uppercase`} />
               </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">IEC (If Applicable)</label>
-                <input name="iec" value={autoData.iec || ''} onChange={(e) => setAutoData(prev => ({...prev, iec: e.target.value}))} className={`${lockedInputClass} uppercase`} />
-              </div>
+              {/* IEC is only relevant for Importer — hidden for Brand Owner */}
+              {(generalInfo.subApplicantType || 'Importer') === 'Importer' && (
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">IEC (If Applicable)</label>
+                  <input name="iec" value={autoData.iec || ''} onChange={(e) => setAutoData(prev => ({...prev, iec: e.target.value}))} className={`${lockedInputClass} uppercase`} />
+                </div>
+              )}
             </div>
           </div>
 
@@ -1906,32 +2030,14 @@ export default function CpcbRegistrationPage() {
                       }}
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
-                    <select
-                      name="hasProductionFacility"
-                      value={generalInfo.hasProductionFacility || 'Not Applicable'}
-                      onChange={async (e) => {
-                        handleGeneralChange(e);
-                        // Auto-save logic
-                        if (window.pwp?.registration?.save) {
-                          const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
-                    >
-                      <option value="Not Applicable">Not Applicable</option>
-                    </select>
-                  </div>
+                  <PartAProductionFacilityFields
+                    generalInfo={generalInfo}
+                    autoData={autoData}
+                    inputClass={inputClass}
+                    onHasProductionFacilityChange={(e) => persistGeneralPatch({ hasProductionFacility: e.target.value })}
+                    onDicRegisteredChange={(e) => persistGeneralPatch({ dicRegistered: e.target.value })}
+                    onDicDocSelect={(file) => persistPartCFile(file, 'dicRegistrationDoc')}
+                  />
                   <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
                     <input

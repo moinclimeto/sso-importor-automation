@@ -256,6 +256,94 @@ export function formatSection4PartAIssue(issue = {}) {
     || `Section 4 ${issue.category || ''} (${issue.year || ''}) does not match Part A 3c.`;
 }
 
+export function formatSection4IssuesAsPortalMessage(issues = []) {
+  if (!issues.length) return '';
+  const items = issues.map((iss) => {
+    const idx = CATEGORY_3C_KEYS.indexOf(iss.catKey);
+    const catNum = idx >= 0 ? idx + 1 : (iss.category || '1');
+    return `[${iss.year}, Category ${catNum}]`;
+  });
+  return `Section 5: The quantity of pre/post consumer waste for ${items.join(', ')} is not within ±40% range of plastic consumed data provided in part A`;
+}
+
+export function alignPartBSection4ToPlasticConsumed({
+  partBSection4 = [],
+  plasticConsumed = {},
+  years = [],
+  operatingStates = [],
+  tolerance = SECTION4_PARTA_TOLERANCE,
+} = {}) {
+  const reportingYears = years?.length ? years : getCpcbPortalPartA3cYears();
+  const states = operatingStates?.length
+    ? operatingStates
+    : [...new Set((partBSection4 || []).map((g) => g.state).filter(Boolean))];
+
+  let groups = syncPartBSection4Structure({
+    operatingStates: states,
+    reportingYears,
+    existing: partBSection4,
+    computed: [],
+  });
+
+  if (!groups.length && (partBSection4 || []).length) {
+    groups = (partBSection4 || []).map((g) => ({
+      ...g,
+      categories: (g.categories || emptyPartBSection4Categories()).map((c) => ({ ...c })),
+    }));
+  }
+
+  groups = groups.map((g) => ({
+    ...g,
+    categories: (g.categories || emptyPartBSection4Categories()).map((c) => ({ ...c })),
+  }));
+
+  for (const year of reportingYears) {
+    const yearGroups = groups.filter((g) => String(g.year || '') === String(year));
+    if (!yearGroups.length) continue;
+
+    for (let catIndex = 0; catIndex < PART_B_SECTION4_CATEGORY_LABELS.length; catIndex += 1) {
+      const catKey = CATEGORY_3C_KEYS[catIndex];
+      const partAVal = Number(plasticConsumed?.[year]?.[catKey]) || 0;
+      if (partAVal <= 0) continue;
+
+      const currentSum = sumSection4CategoryYear(yearGroups, year, catIndex);
+      const minAllowed = Number((partAVal * (1 - tolerance)).toFixed(4));
+      const maxAllowed = Number((partAVal * (1 + tolerance)).toFixed(4));
+
+      if (currentSum >= minAllowed && currentSum <= maxAllowed) {
+        continue;
+      }
+
+      if (currentSum > 0) {
+        const factor = partAVal / currentSum;
+        for (const g of yearGroups) {
+          const cat = g.categories[catIndex];
+          if (!cat) continue;
+          if (Number(cat.postConsumer) > 0) {
+            cat.postConsumer = String(Number((Number(cat.postConsumer) * factor).toFixed(4)));
+          }
+          if (Number(cat.preConsumer) > 0) {
+            cat.preConsumer = String(Number((Number(cat.preConsumer) * factor).toFixed(4)));
+          }
+          if (Number(cat.exportQuantity) > 0) {
+            cat.exportQuantity = String(Number((Number(cat.exportQuantity) * factor).toFixed(4)));
+          }
+        }
+      } else {
+        const perGroup = Number((partAVal / yearGroups.length).toFixed(4));
+        for (const g of yearGroups) {
+          const cat = g.categories[catIndex];
+          if (!cat) continue;
+          cat.postConsumer = String(perGroup);
+        }
+      }
+    }
+  }
+
+  return groups;
+}
+
+
 function filterByCompany(records = [], companyId = null) {
   if (companyId == null || companyId === '') return records;
   const cid = Number(companyId);

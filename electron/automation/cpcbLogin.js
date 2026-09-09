@@ -822,8 +822,9 @@ async function startApplicationOnboarding(page, onLog) {
   const subTypeCount = await subTypeRadios.count();
   
   if (subTypeCount > 1) {
-    // Usually it's: 0=Producer, 1=Importer, 2=Brand Owner
-    await subTypeRadios.nth(1).click({ force: true, timeout: 5000 });
+    // Portal sub-type order: 0=Producer, 1=Importer, 2=Brand Owner
+    const subTypeIndex = subApplicantType === 'Brand Owner' ? 2 : 1;
+    await subTypeRadios.nth(subTypeIndex).click({ force: true, timeout: 5000 });
   } else {
     // Fallback to text selection if formcontrolname is missing
     await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
@@ -866,7 +867,7 @@ async function startApplicationOnboarding(page, onLog) {
       const docs = await db.all('SELECT doc_type, file_path, document_number FROM company_documents ORDER BY created_at DESC');
       
       const iecDoc = docs.find(d => d.doc_type === 'iec');
-      if (iecDoc && iecDoc.document_number) {
+      if (iecDoc && iecDoc.document_number && subApplicantType !== 'Brand Owner') {
         if (onLog) onLog(`Filling IEC Number: ${iecDoc.document_number}...`);
         
         // Wait longer because the Angular form might take time to render after popup close
@@ -884,6 +885,8 @@ async function startApplicationOnboarding(page, onLog) {
         } catch (e) {
           if (onLog) onLog('IEC Input field not found on this form - continuing...');
         }
+      } else if (subApplicantType === 'Brand Owner') {
+        if (onLog) onLog('Brand Owner — skipping IEC Number fill.');
       }
 
       // Auto-upload the rest of the documents (Company PAN, Person PAN, GST, CIN, Udyam) on the New Application dashboard
@@ -964,10 +967,10 @@ async function startApplicationOnboarding(page, onLog) {
           mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
           mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
           
-          if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
+           if (regDetails.details_of_products_produced_marketed) {
              mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
           }
-          if (!mergedAutoData.representativePicturePath && regDetails.representative_picture_of_plastic_packaging) {
+           if (regDetails.representative_picture_of_plastic_packaging) {
              mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
           }
         }
@@ -1023,7 +1026,7 @@ async function startApplicationOnboarding(page, onLog) {
 
         // If not found by text (e.g. already has a state selected), try finding it near the label
         if (!(await dropdownContainer.isVisible({ timeout: 2000 }).catch(() => false))) {
-           const stateLabel = page.locator('label, div').filter({ hasText: 'Select States/UTs in which the Importer is Operating' }).last();
+           const stateLabel = page.locator('label, div').filter({ hasText: /Select States\/UTs in which the (Importer|Brand Owner|Producer) is Operating/i }).last();
            // Go up to a common wrapper (like a row or form-group) and find the dropdown inside
            dropdownContainer = stateLabel.locator('xpath=ancestor::div[contains(@class, "row") or contains(@class, "form-group") or contains(@class, "col")][1]//div[contains(@class, "selected-items")]').first();
            arrowBtn = dropdownContainer.locator('xpath=..//svg[contains(@class, "dropdown-icon")]').first();
@@ -1097,7 +1100,7 @@ async function startApplicationOnboarding(page, onLog) {
 
       if (hasProductionFacility) {
         if (onLog) onLog(`Setting Production Facility to ${hasProductionFacility}...`);
-        const prodFacSelect = page.locator('label[title*="Does the Importer have a Production Facility"]').locator('..').locator('..').locator('select');
+        const prodFacSelect = page.locator('label[title*="have a Production Facility"]').locator('..').locator('..').locator('select');
         if (await prodFacSelect.isVisible({ timeout: 2000 }).catch(() => false)) {
            // For importers, CPCB portal only offers 'Not Applicable' instead of Yes/No. 
            // If 'Yes', we can't select it, but we can try to select 'no' or 'yes' safely.

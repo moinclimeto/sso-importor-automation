@@ -164,6 +164,62 @@ async function fillByControlId(scope, id, value) {
   return true;
 }
 
+async function fillFirstMatchingControl(scope, ids, value) {
+  if (value == null || value === '') return false;
+  for (const id of ids) {
+    if (await fillByControlId(scope, id, value)) return true;
+    const byName = scope.locator(`input[formcontrolname="${id}"], textarea[formcontrolname="${id}"]`).first();
+    if (await fillTextControl(scope, [byName], value)) return true;
+  }
+  return false;
+}
+
+async function fillSec5bLocation(page, scope, data = {}, onLog) {
+  const stateSelector = '#state, select[formcontrolname="state"]';
+  const hasState = await scope.locator(stateSelector).first().isVisible({ timeout: 1200 }).catch(() => false);
+  if (hasState) {
+    const stateOk = await fillPortalSelect(scope, stateSelector, data.state, onLog, 'State')
+      || await fillNativeSelect(scope, stateSelector, data.state, onLog, 'State');
+    if (!stateOk && onLog) onLog(`State not selected (${data.state || 'empty'}).`);
+    return { hasState: true, stateOk };
+  }
+
+  const countryOk = await pickSearchableCountry(page, scope, data.country || 'India', onLog);
+  if (!countryOk && onLog) onLog(`Country not selected — continuing with default (${data.country || 'India'}).`);
+  return { hasState: false, countryOk };
+}
+
+async function fillByLabel(scope, pattern, value) {
+  if (value == null || value === '') return false;
+  const field = scope.getByLabel(pattern).first();
+  return fillTextControl(scope, [field], value);
+}
+
+async function fillSec5bGstFields(scope, data = {}, onLog) {
+  const gstVisible = await scope.locator(
+    '#gst, input[formcontrolname="gst"], input[placeholder*="22AAAAA" i]',
+  ).first().isVisible({ timeout: 800 }).catch(() => false);
+
+  const gstOk = await fillFirstMatchingControl(scope, ['gst', 'gstin', 'gstNumber', 'gstNo'], data.gst)
+    || await fillByLabel(scope, /^GST$/i, data.gst);
+  const gstPaidOk = await fillFirstMatchingControl(
+    scope,
+    ['gstPaid', 'totalGstPaid', 'totalGSTPaid', 'gstPaidAmount'],
+    data.gstPaid,
+  ) || await fillByLabel(scope, /GST Paid/i, data.gstPaid);
+  const invoiceOk = await fillFirstMatchingControl(
+    scope,
+    ['gstEInvoiceNo', 'gstEInvoiceNumber', 'gstEinvoiceNo', 'eInvoiceNo', 'eprEInvoiceNumber', 'invoiceNumber'],
+    data.invoiceNo,
+  ) || await fillByLabel(scope, /GST E-Invoice No/i, data.invoiceNo);
+
+  if (gstOk && onLog) onLog(`Filled GST: ${data.gst}`);
+  if (gstPaidOk && onLog) onLog(`Filled GST Paid: ${data.gstPaid}`);
+  if (invoiceOk && onLog) onLog(`Filled GST E-Invoice No: ${data.invoiceNo}`);
+
+  return { gstVisible, gstOk, gstPaidOk, invoiceOk };
+}
+
 async function isEntryModalOpen(page) {
   return page.evaluate(() => {
     const dialogs = [...document.querySelectorAll('[role="dialog"][aria-modal="true"]')];
@@ -895,8 +951,7 @@ export async function fillSec5bEntryModal(page, row = {}, onLog) {
     await page.waitForTimeout(350);
   }
   await fillByControlId(scope, 'entityName', data.entityName);
-  const countryOk = await pickSearchableCountry(page, scope, data.country || 'India', onLog);
-  if (!countryOk && onLog) onLog(`Country not selected — continuing with default (${data.country || 'India'}).`);
+  await fillSec5bLocation(page, scope, data, onLog);
   await fillByControlId(scope, 'address', data.address);
   await fillByControlId(scope, 'mobileNumber', data.mobile);
   const materialOk = await fillPortalSelect(
@@ -924,6 +979,7 @@ export async function fillSec5bEntryModal(page, row = {}, onLog) {
   await fillByControlId(scope, 'date', data.date);
   await fillByControlId(scope, 'totalPlasticQuantity', data.quantity);
   await fillByControlId(scope, 'recycledPlasticContent', data.recycledPercent ?? '0');
+  const gstFields = await fillSec5bGstFields(scope, data, onLog);
   const uploaded = data.invoiceDoc
     ? await uploadInvoiceInModal(scope, data.invoiceDoc, onLog)
     : true;
@@ -932,6 +988,9 @@ export async function fillSec5bEntryModal(page, row = {}, onLog) {
     if (onLog) onLog('Section 5b required Entity Type / Plastic Material Type not selected — skipping submit.');
     await closeEntryModal(page, onLog);
     return false;
+  }
+  if (gstFields.gstVisible && onLog && (!data.gst || data.gstPaid == null || data.gstPaid === '' || !data.invoiceNo)) {
+    onLog('Section 5b Brand Owner GST/State invoice fields are empty in app data — portal may reject submit.');
   }
   if (!uploaded) {
     if (onLog) onLog('Section 5b invoice PDF not attached on portal — skipping submit.');

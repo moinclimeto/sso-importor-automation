@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   alignSec5bRowsToPlasticConsumed,
+  buildSec5bRowFromPurchase,
   prepareSec5bForPortal,
   reconcileSec5bForAutomation,
   validateSection5bAgainstPlasticConsumed,
@@ -88,4 +89,23 @@ test('reconcileSec5bForAutomation keeps manual-only rows when computed is empty'
   const merged = reconcileSec5bForAutomation(existing, []);
   assert.equal(merged.length, 1);
   assert.equal(merged[0].entityName, 'Manual Vendor');
+});
+
+test('buildSec5bRowFromPurchase maps Brand Owner GST/state invoice fields', () => {
+  const row = buildSec5bRowFromPurchase({
+    id: 9,
+    supplier_name: 'BlueGram Distributors',
+    entity_type: 'Importer',
+    registration_type: 'UnRegistered',
+    supplier_gst_number: '06AAAAA0000A1Z5',
+    invoice_no: 'INV-0014',
+    invoice_date: '2025-05-10',
+    recycled_plastic_percent: 0,
+    line_items: [{ gstPaid: 1800, plasticCategory: 'Cat-II', plasticMaterial: 'LLDPE' }],
+    address_line_1: '1639, Sector-62, Faridabad',
+  });
+  assert.equal(row.state, 'Haryana');
+  assert.equal(row.gst, '06AAAAA0000A1Z5');
+  assert.equal(row.gstPaid, '1800');
+  assert.equal(row.invoiceNo, 'INV-0014');
 });

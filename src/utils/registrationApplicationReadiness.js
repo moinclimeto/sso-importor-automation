@@ -5,6 +5,7 @@ import {
 import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
+  formatSection4IssuesAsPortalMessage,
 } from '../../shared/partBSection4.js';
 import {
   validateSection5bAgainstPlasticConsumed,
@@ -164,6 +165,7 @@ export function getRegisterApplicationBlockers({
         id: `section4-${issue.year}-${issue.catKey}`,
         label: formatSection4PartAIssue(issue),
         section: 'partB',
+        _issue: issue,
       });
     }
 
@@ -220,9 +222,13 @@ export function formatPartBPlasticValidationToasts(blockers = []) {
   const messages = [];
 
   if (section4.length) {
+    const s4Issues = section4.map((b) => b._issue).filter(Boolean);
+    const portalMsg = s4Issues.length
+      ? formatSection4IssuesAsPortalMessage(s4Issues)
+      : `${section4.length} Section 4 total(s) are outside ±40% range of Part A 3c.`;
     messages.push({
-      type: 'warning',
-      text: `${section4.length} Section 4 total(s) are outside ±40% of Part A 3c. Update Part B → Section 4 (PW generated table).`,
+      type: 'error',
+      text: portalMsg,
     });
   }
   if (section5b.length) {
@@ -233,3 +239,4 @@ export function formatPartBPlasticValidationToasts(blockers = []) {
   }
   return messages;
 }
+

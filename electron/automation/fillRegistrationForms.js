@@ -18,12 +18,15 @@ import {
   resolvePlasticConsumedYearsForPortal,
 } from './portalPlasticConsumed.js';
 import { fillPartBSection4Grid } from './portalPartBSection4.js';
+import { fillConsentsDetailsGrid } from './portalConsents.js';
 import { fillPartBSection5bRows, fillPartBSection5dRows, forceCloseAllEntryModals } from './portalPartBSection5.js';
 import { prepareSec5bForPortal } from '../../shared/partBSection5.js';
 import { resolvePartBSection4ForAutomation, resolvePartBTransactionsForAutomation } from './registrationPartBData.js';
 import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
+  formatSection4IssuesAsPortalMessage,
+  alignPartBSection4ToPlasticConsumed,
 } from '../../shared/partBSection4.js';
 import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 import { requiresHistoricalEprData, getCurrentFinancialYearStartYear } from '../../shared/commencementYearScope.js';
@@ -119,6 +122,10 @@ export function normalizeApplicationData(raw = {}) {
     iec: src.iec || src.iecNumber || '',
     typeOfCompanyDoc: existingFile(src.typeOfCompanyDoc),
     unitGstDoc: existingFile(src.unitGstDoc),
+    dicRegistrationDoc: pickUserFile(
+      src.dicRegistrationDoc,
+      nestedAuto.dicRegistrationDoc
+    ),
     detailsOfProductsPath: pickUserFile(
       src.detailsOfProductsPath,
       src.detailsOfProductsPath,
@@ -151,9 +158,11 @@ export function normalizeApplicationData(raw = {}) {
       nested.partCAuditedStatement
     ),
     partBSection4: Array.isArray(src.partBSection4) ? src.partBSection4 : [],
+    partBConsents: Array.isArray(src.partBConsents) ? src.partBConsents : [],
     partBTransactions: src.partBTransactions && typeof src.partBTransactions === 'object'
       ? src.partBTransactions
       : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
+    subApplicantType: src.subApplicantType || 'Importer',
   };
 }
 
@@ -342,10 +351,27 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
   return false;
 }
 
+const PIBO_ENTITY_LABEL = '(?:Importer|Brand Owner|Producer)';
+
+function isBrandOwnerApplicant(data = {}) {
+  return /brand\s*owner/i.test(String(data.subApplicantType || ''));
+}
+
 function partASection2StateField(page) {
   return page.locator('app-form-field-renderer').filter({
-    hasText: /2\s*a\)\s*Select States\/UTs in which the Importer is Operating/i,
+    hasText: new RegExp(
+      `2\\s*a\\)\\s*Select States\\/UTs in which the ${PIBO_ENTITY_LABEL} is Operating`,
+      'i',
+    ),
   }).first();
+}
+
+function productionFacilityPortalOption(data = {}) {
+  const raw = String(data.hasProductionFacility || '').trim();
+  if (isBrandOwnerApplicant(data)) {
+    return /^yes$/i.test(raw) ? 'Yes' : 'No';
+  }
+  return raw || 'Not Applicable';
 }
 
 async function fillVisibleInput(page, selectors, value, onLog, name, { required = false } = {}) {
@@ -664,7 +690,7 @@ async function selectOperatingStatesUnused(page, states, onLog) {
   } else if (await placeholder.isVisible({ timeout: 2000 }).catch(() => false)) {
     await placeholder.click({ force: true });
   } else {
-    const heading = page.getByText(/Select States\/UTs in which the Importer is Operating/i).first();
+    const heading = page.getByText(new RegExp(`Select States\\/UTs in which the ${PIBO_ENTITY_LABEL} is Operating`, 'i')).first();
     const box = heading.locator('xpath=following::*[contains(@class,"chips-container") or contains(@class,"dropdown") or self::input][1]');
     await box.click({ force: true }).catch(() => heading.click({ force: true }));
   }
@@ -934,43 +960,74 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
     await uploadNearLabel(page, '^\\s*PAN\\s*\\*?', personPanFile, onLog);
   }
 
-  await fillVisibleInput(
-    page,
-    ['input[placeholder="Enter IEC Number"]', 'input[formcontrolname="iec_code"]', 'input[placeholder*="IEC"]'],
-    iecNumber,
-    onLog,
-    'IEC'
-  );
+  if (!isBrandOwnerApplicant(data)) {
+    await fillVisibleInput(
+      page,
+      ['input[placeholder="Enter IEC Number"]', 'input[formcontrolname="iec_code"]', 'input[placeholder*="IEC"]'],
+      iecNumber,
+      onLog,
+      'IEC'
+    );
+  } else if (onLog) {
+    onLog('Brand Owner — skipping IEC Number fill.');
+  }
 
   await fillUnitGstNumber(page, unitGstNumber, onLog);
 
   if (onLog) onLog('Filling Part A section 2 states (2a) only...');
   await selectOperatingStates(page, data.operatingStates, onLog);
 
+  const prodFacilityOption = productionFacilityPortalOption(data);
   await chooseOption(page, {
-    labelRegex: /Does the Importer have a Production Facility/i,
+    labelRegex: new RegExp(`Does the ${PIBO_ENTITY_LABEL} have a Production Facility`, 'i'),
     placeholders: ['Select', 'Not Applicable'],
-    option: data.hasProductionFacility || 'Not Applicable',
+    option: prodFacilityOption,
     onLog,
     name: 'Production Facility (2b)',
   });
 
+  const dicLabel = page.getByText(/registered with the District Industries Centre/i).first();
+  if (await dicLabel.isVisible({ timeout: 1500 }).catch(() => false)) {
+    const dicOption = /^yes$/i.test(String(data.dicRegistered || '')) ? 'Yes' : 'No';
+    await chooseOption(page, {
+      labelRegex: /registered with the District Industries Centre/i,
+      placeholders: ['Select'],
+      option: dicOption,
+      onLog,
+      name: 'DIC registration (2c)',
+    });
+  }
+
+  if (/^yes$/i.test(String(data.hasProductionFacility || '')) && data.dicRegistrationDoc) {
+    await uploadNearLabel(
+      page,
+      'If Yes Upload Copy of Registration',
+      data.dicRegistrationDoc,
+      onLog
+    );
+  }
+
   await fillVisibleInput(
     page,
-    ['input[placeholder="Enter Total Capital Invested"]', 'input[placeholder*="Total Capital"]'],
+    [
+      'input[placeholder="Enter Total Capital Invested"]',
+      'input[placeholder*="Total Capital"]',
+      'input[placeholder*="Crores"]',
+      'input[placeholder*="Enter value"]',
+    ],
     data.capitalInvested,
     onLog,
-    'Capital Invested (2c)'
+    'Capital Invested'
   );
 
   await chooseOption(page, {
-    labelRegex: /2\s*d\).*Year of Commencement of Operations/i,
+    labelRegex: /Year of Commencement of Operations/i,
     placeholders: ['Enter year', 'Select year'],
     option: String(data.yearOfCommencement || getCurrentFinancialYearStartYear()),
     onLog,
-    name: `Year of Commencement (2d) = ${data.yearOfCommencement || getCurrentFinancialYearStartYear()}`,
+    name: `Year of Commencement = ${data.yearOfCommencement || getCurrentFinancialYearStartYear()}`,
   });
-  const yearSelect = page.getByText(/2\s*d\).*Year of Commencement/i).first()
+  const yearSelect = page.getByText(/Year of Commencement of Operations/i).first()
     .locator('xpath=following::select[1]');
   const commencementYear = String(data.yearOfCommencement || getCurrentFinancialYearStartYear());
   if (await yearSelect.isVisible({ timeout: 1500 }).catch(() => false)) {
@@ -1034,15 +1091,25 @@ export async function fillRemainingPartA(page, generalInfo, autoData, onLog) {
   }
 }
 
-export async function fillPartBSection4(page, section4Data, onLog, plasticConsumed = {}) {
-  const groups = Array.isArray(section4Data) ? section4Data : [];
+export async function fillPartBSection4(page, section4Data, onLog, plasticConsumed = {}, operatingStates = []) {
+  let groups = Array.isArray(section4Data) ? section4Data : [];
+  const years = getCpcbPortalPartA3cYears();
   const validationIssues = validateSection4AgainstPlasticConsumed(
     groups,
     plasticConsumed,
-    getCpcbPortalPartA3cYears(),
+    years,
   );
-  if (validationIssues.length && onLog) {
-    onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4PartAIssue(validationIssues[0])}`);
+  if (validationIssues.length) {
+    if (onLog) {
+      onLog(`Part B Section 4 / Part A 3c mismatch: ${formatSection4IssuesAsPortalMessage(validationIssues)}`);
+      onLog('Auto-aligning Part B Section 4 to Part A 3c within ±40% range so portal does not reject application...');
+    }
+    groups = alignPartBSection4ToPlasticConsumed({
+      partBSection4: groups,
+      plasticConsumed,
+      years,
+      operatingStates,
+    });
   }
 
   if (groups.length) {
@@ -1057,13 +1124,13 @@ export async function fillPartBSection4(page, section4Data, onLog, plasticConsum
   if (onLog) onLog('Filling Part B Section 4 with 0...');
   await fillAgGridZeros(
     page,
-    /State-wise, Category-wise Quantity of PW generated|Pre Consumer Waste/i,
+    /State-wise.*Plastic Waste Generated|State-wise, Category-wise Quantity of PW generated|Pre Consumer Waste/i,
     onLog,
     'Part B Section 4'
   );
 }
 
-export async function fillPartBSection5(page, transactions = {}, onLog, plasticConsumed = {}) {
+export async function fillPartBSection5(page, transactions = {}, onLog, plasticConsumed = {}, subApplicantType = '') {
   const years = getCpcbPortalPartA3cYears();
   const sec5b = prepareSec5bForPortal({
     plasticConsumed,
@@ -1075,7 +1142,11 @@ export async function fillPartBSection5(page, transactions = {}, onLog, plasticC
     onLog(`Section 5b: scaled ${alignedCount} row(s) to align with Part A 3c (±40% portal rule).`);
   }
 
-  const sec5d = transactions?.sec5d || [];
+  const isBrandOwner = /brand\s*owner/i.test(String(subApplicantType || ''));
+  // Brand Owner only has purchase sections (6a/6b on portal) — sale sections (5c/5d) do not apply
+  const sec5d = isBrandOwner ? [] : (transactions?.sec5d || []);
+  if (isBrandOwner && onLog) onLog('Brand Owner — skipping sec5d (sale to unregistered) fill.');
+
   let filled = false;
 
   if (sec5b.length) {
@@ -1439,10 +1510,10 @@ export async function loadApplicationFormDataFromDb(onLog) {
       const parsed = JSON.parse(regDetails.form_data_json);
       mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
       mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
-      if (!mergedAutoData.detailsOfProductsPath && regDetails.details_of_products_produced_marketed) {
+      if (regDetails.details_of_products_produced_marketed) {
         mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
       }
-      if (!mergedAutoData.representativePicturePath && regDetails.representative_picture_of_plastic_packaging) {
+      if (regDetails.representative_picture_of_plastic_packaging) {
         mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
       }
     }
@@ -1487,9 +1558,12 @@ export async function fillPartBAndPartCOnly(page, formData, onLog) {
     stepName: 'Part B',
     onLog,
     fillFn: async () => {
+      if (isBrandOwnerApplicant(data) || (data.partBConsents || []).length > 0) {
+        await fillConsentsDetailsGrid(page, data.partBConsents, onLog);
+      }
       if (needsHistorical) {
-        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
-        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
+        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed, data.operatingStates);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed, data.subApplicantType);
       } else if (onLog) {
         onLog('Part B: current FY commencement — skipping Section 4 and Section 5.');
       }
@@ -1529,9 +1603,12 @@ export async function fillNewApplicationFlow(page, formData, onLog) {
     stepName: 'Part B',
     onLog,
     fillFn: async () => {
+      if (isBrandOwnerApplicant(data) || (data.partBConsents || []).length > 0) {
+        await fillConsentsDetailsGrid(page, data.partBConsents, onLog);
+      }
       if (needsHistorical) {
-        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed);
-        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed);
+        await fillPartBSection4(page, data.partBSection4, onLog, data.plasticConsumed, data.operatingStates);
+        await fillPartBSection5(page, data.partBTransactions, onLog, data.plasticConsumed, data.subApplicantType);
       } else if (onLog) {
         onLog('Part B: current FY commencement — skipping Section 4 and all Section 5 entries.');
       }

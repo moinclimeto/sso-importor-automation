@@ -3,6 +3,7 @@ import { normalizePlasticCategory, PLASTIC_CATEGORIES } from './plasticCategorie
 import { normalizeStateLabel, resolveState } from './gstStateCodes.js';
 import { normalizePlasticMaterial } from './reviewEnrichment.js';
 import {
+  resolveInvoiceNumberFromRecord,
   resolveProcurementAddress,
   resolveSalesAddress,
   resolveSalesGstOtherCharges,
@@ -155,6 +156,68 @@ export function resolveSec5bCountry(row = {}) {
     return country.replace(/\b\w/g, (c) => c.toUpperCase());
   }
   return 'India';
+}
+
+export function resolvePurchaseGstin(row = {}) {
+  const extraction = row.extraction && typeof row.extraction === 'object' ? row.extraction : {};
+  return String(
+    row.gst
+    || row.supplier_gst_number
+    || row.vendor_gstin
+    || row.supplier_gst
+    || extraction.supplier_gst_number
+    || extraction.vendor_gstin
+    || extraction.gstin
+    || '',
+  ).trim().toUpperCase();
+}
+
+export function resolvePurchaseGstPaid(row = {}) {
+  const extraction = row.extraction && typeof row.extraction === 'object' ? row.extraction : {};
+  const firstLine = (row.line_items || row.lineItems || [])[0] || {};
+  const candidates = [
+    row.gstPaid,
+    row.gst_paid,
+    row.gst_amount,
+    row.total_gst,
+    extraction.gstPaid,
+    extraction.gst_amount,
+    extraction.gst,
+    firstLine.gstPaid,
+    firstLine.gst_amount,
+    firstLine.gst,
+    firstLine.gstAmount,
+  ];
+  for (const value of candidates) {
+    if (value == null || value === '') continue;
+    const n = Number(value);
+    if (Number.isFinite(n)) return String(n);
+  }
+
+  const itemSources = [row.line_items, row.lineItems, extraction.line_items, extraction.lineItems];
+  let sum = 0;
+  let has = false;
+  for (const items of itemSources) {
+    if (!Array.isArray(items) || !items.length) continue;
+    for (const item of items) {
+      const n = Number(item?.gstPaid ?? item?.gst_amount ?? item?.gst ?? item?.gstAmount);
+      if (!Number.isFinite(n)) continue;
+      sum += n;
+      has = true;
+    }
+    if (has) return String(sum);
+  }
+  return '';
+}
+
+export function resolveSec5bState(row = {}) {
+  const gst = resolvePurchaseGstin(row);
+  const state = row.state
+    || row.supplier_state
+    || row.extraction?.supplier_state
+    || row.extraction?.state
+    || '';
+  return resolveState(state, gst) || normalizeStateLabel(state) || String(state || '').trim();
 }
 
 export function toInputDate(value = '') {
@@ -471,12 +534,19 @@ export function buildSec5bRowFromPurchase(row = {}) {
   const financialYear = row.financial_year
     || resolveFinancialYear(row.procurement_date || row.invoice_date || row.date_of_entry)
     || '';
+  const gst = resolvePurchaseGstin(row);
+  const gstPaid = resolvePurchaseGstPaid(row);
+  const invoiceNo = resolveInvoiceNumberFromRecord(row)
+    || row.invoice_no
+    || row.invoice_number
+    || '';
 
   return {
     regType: 'UnRegistered',
     entityType: entityType || 'Importer',
     entityName: row.supplier_name || row.vendor_name || '',
     country: resolveSec5bCountry(row),
+    state: resolveSec5bState(row),
     address: row.address_line_1 || resolveProcurementAddress(row) || row.address || '',
     mobile: row.supplier_mobile_number || row.mobile_number || '',
     materialType,
@@ -488,9 +558,12 @@ export function buildSec5bRowFromPurchase(row = {}) {
     recycledPercent: row.recycled_plastic_percent != null && row.recycled_plastic_percent !== ''
       ? String(row.recycled_plastic_percent)
       : '0',
+    gst,
+    gstPaid: gstPaid !== '' && gstPaid != null ? String(gstPaid) : '',
+    invoiceNo,
     invoiceDoc: resolvePurchaseInvoicePath(row),
     sourceRecordId: row.id,
-    sourceInvoiceNo: row.invoice_no || row.invoice_number || '',
+    sourceInvoiceNo: invoiceNo,
   };
 }
 
@@ -530,6 +603,12 @@ export function normalizeSec5bRowForPortal(row = {}) {
   }
   if (!materialType) materialType = 'Others';
 
+  const gst = String(row.gst || row.supplier_gst_number || row.vendor_gstin || '').trim().toUpperCase();
+  const gstPaid = row.gstPaid != null && row.gstPaid !== ''
+    ? String(row.gstPaid)
+    : resolvePurchaseGstPaid(row);
+  const invoiceNo = String(row.invoiceNo || row.sourceInvoiceNo || '').trim();
+
   return {
     ...row,
     regType: 'UnRegistered',
@@ -537,6 +616,10 @@ export function normalizeSec5bRowForPortal(row = {}) {
     materialType,
     plastic_type: row.plastic_type || materialType,
     country: row.country || 'India',
+    state: row.state || resolveSec5bState(row),
+    gst,
+    gstPaid: gstPaid !== '' && gstPaid != null ? String(gstPaid) : '',
+    invoiceNo,
     date: toInputDate(row.date || row.invoice_date || row.procurement_date),
     recycledPercent: row.recycledPercent != null && row.recycledPercent !== ''
       ? String(row.recycledPercent)
