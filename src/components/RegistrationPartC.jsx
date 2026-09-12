@@ -92,9 +92,11 @@ export default function RegistrationPartC({
   const [docs, setDocs] = useState([]);
   const [companies, setCompanies] = useState([]);
 
+  const isBrandOwner = /brand\s*owner/i.test(generalInfo.subApplicantType || '');
+
   const applicableLetters = useMemo(
-    () => getApplicableLetters(generalInfo.typeOfCompany),
-    [generalInfo.typeOfCompany]
+    () => getApplicableLetters(generalInfo.typeOfCompany, generalInfo.subApplicantType),
+    [generalInfo.typeOfCompany, generalInfo.subApplicantType]
   );
 
   const letterValues = useMemo(
@@ -124,6 +126,9 @@ export default function RegistrationPartC({
     coveringLetter: generalInfo.partCCoveringLetter,
     selfDeclaration: generalInfo.partCAuditedStatement,
     largeEntity: autoData?.typeOfCompanyDoc,
+    brandOwnerCoveringLetter: generalInfo.partCCoveringLetter,
+    brandOwnerSelfDeclaration: generalInfo.partCAuditedStatement,
+    brandOwnerLargeEntity: autoData?.typeOfCompanyDoc,
   };
 
   const validatePdf = async (file, docBase = 'document') => {
@@ -221,7 +226,7 @@ export default function RegistrationPartC({
           icon={FileText}
           filePath={generalInfo.partCCoveringLetter}
           onUpload={(file) => handlePdfUpload('partCCoveringLetter', 'generalInfo', file)}
-          onPrepare={() => openStudio('coveringLetter')}
+          onPrepare={() => openStudio(isBrandOwner ? 'brandOwnerCoveringLetter' : 'coveringLetter')}
           prepareLabel="Fill covering letter"
         />
         <DocumentCard
@@ -231,7 +236,7 @@ export default function RegistrationPartC({
           icon={FileText}
           filePath={generalInfo.partCAuditedStatement}
           onUpload={(file) => handlePdfUpload('partCAuditedStatement', 'generalInfo', file)}
-          onPrepare={() => openStudio('selfDeclaration')}
+          onPrepare={() => openStudio(isBrandOwner ? 'brandOwnerSelfDeclaration' : 'selfDeclaration')}
           prepareLabel="Fill declaration"
         />
         <DocumentCard
@@ -250,7 +255,7 @@ export default function RegistrationPartC({
             icon={FileText}
             filePath={autoData?.typeOfCompanyDoc}
             onUpload={(file) => handlePdfUpload('typeOfCompanyDoc', 'autoData', file)}
-            onPrepare={() => openStudio('largeEntity')}
+            onPrepare={() => openStudio(isBrandOwner ? 'brandOwnerLargeEntity' : 'largeEntity')}
             prepareLabel="Fill large-entity letter"
           />
         )}

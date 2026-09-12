@@ -329,9 +329,9 @@ export default function CpcbRegistrationPage() {
           ...(prev.partBTransactions || {}),
           ...(form.generalInfo.partBTransactions || {}),
         },
-        applicantType: form.generalInfo.applicantType || saved.applicant_type || prev.applicantType || 'PIBO',
+        applicantType: saved.applicant_type || form.generalInfo.applicantType || prev.applicantType || 'PIBO',
         subApplicantType:
-          form.generalInfo.subApplicantType || saved.sub_applicant_type || prev.subApplicantType || 'Importer',
+          saved.sub_applicant_type || form.generalInfo.subApplicantType || prev.subApplicantType || 'Importer',
       }));
     } else {
       setGeneralInfo((prev) => ({

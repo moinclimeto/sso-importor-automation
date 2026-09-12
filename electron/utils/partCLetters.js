@@ -25,6 +25,24 @@ export const PART_C_LETTER_TEMPLATES = {
     title: 'Large-Entity Declaration',
     fileName: 'Large_Entity_Declaration.docx',
   },
+  brandOwnerCoveringLetter: {
+    id: 'brandOwnerCoveringLetter',
+    file: 'brand-owner-covering-letter.docx',
+    title: 'Covering Letter',
+    fileName: 'Brand_Owner_Covering_Letter.docx',
+  },
+  brandOwnerSelfDeclaration: {
+    id: 'brandOwnerSelfDeclaration',
+    file: 'brand-owner-self-declaration.docx',
+    title: 'Self-Declaration',
+    fileName: 'Brand_Owner_Self_Declaration.docx',
+  },
+  brandOwnerLargeEntity: {
+    id: 'brandOwnerLargeEntity',
+    file: 'brand-owner-large-entity.docx',
+    title: 'Large-Entity Declaration',
+    fileName: 'Brand_Owner_Large_Entity_Declaration.docx',
+  },
 };
 
 export function getPartCTemplatesDir() {
