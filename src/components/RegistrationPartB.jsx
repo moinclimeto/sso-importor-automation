@@ -29,6 +29,7 @@ import {
 import {
   PORTAL_PLASTIC_MATERIALS,
   PORTAL_SEC5_ENTITY_TYPES,
+  PORTAL_SEC5_BO_ENTITY_TYPES,
   normalizeSec5bRowForPortal,
   normalizeSec5dRowForPortal,
   toPortalInputDate,
@@ -247,7 +248,7 @@ export default function RegistrationPartB({
     }
     if (row) {
       if (secKey === 'sec5b') {
-        row = normalizeSec5bRowForPortal(row);
+        row = normalizeSec5bRowForPortal(row, isBrandOwnerApplicant);
         if (row.state) {
           const stateMatch = INDIAN_STATES.find(
             (s) => s.toLowerCase() === String(row.state).trim().toLowerCase(),
@@ -275,7 +276,7 @@ export default function RegistrationPartB({
               ? {
                   regType: 'UnRegistered',
                   recycledPercent: '0',
-                  entityType: 'Importer',
+                  entityType: isBrandOwnerApplicant ? 'Brand Owner' : 'Importer',
                   materialType: 'Others',
                   ...(isBrandOwnerApplicant ? {} : { country: 'India' }),
                 }
@@ -440,7 +441,11 @@ export default function RegistrationPartB({
   const renderModal5b = () => (
     <div className="grid grid-cols-2 gap-4">
       {renderSelect('Registration Type', 'regType', ['UnRegistered'])}
-      {renderSelect('Entity Type', 'entityType', PORTAL_SEC5_ENTITY_TYPES)}
+      {renderSelect(
+        'Entity Type',
+        'entityType',
+        isBrandOwnerApplicant ? PORTAL_SEC5_BO_ENTITY_TYPES : PORTAL_SEC5_ENTITY_TYPES,
+      )}
       {renderInput('Name Of The Entity', 'entityName')}
       {isBrandOwnerApplicant
         ? renderSelect('State', 'state', INDIAN_STATES)
@@ -531,7 +536,9 @@ export default function RegistrationPartB({
   );
 
   const renderSec5bTable = () => {
-    const rows = (generalInfo.partBTransactions?.sec5b || []).map(normalizeSec5bRowForPortal);
+    const rows = (generalInfo.partBTransactions?.sec5b || []).map((r) =>
+      normalizeSec5bRowForPortal(r, isBrandOwnerApplicant),
+    );
     return (
       <div className="mb-6 border rounded-lg overflow-hidden bg-white">
         <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">

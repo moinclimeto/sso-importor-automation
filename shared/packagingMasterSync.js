@@ -5,7 +5,8 @@ import { extractHsnFromText } from './hsnUtils.js';
 export { extractHsnFromText };
 
 const KNOWN_PLASTIC_MATERIALS = [
-  'PET', 'HDPE', 'PVC', 'LDPE', 'LLDPE', 'PP', 'PS', 'MLP', 'PLA', 'PBAT', 'Others', 'Other',
+  'HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'PE', 'PVC', 'Others',
+  'PMMA', 'EPS', 'PLA', 'PBAT', 'PBS', 'Other',
 ];
 
 const OCR_GARBAGE_MATERIAL_RE =

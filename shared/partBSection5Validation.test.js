@@ -109,3 +109,43 @@ test('buildSec5bRowFromPurchase maps Brand Owner GST/state invoice fields', () =
   assert.equal(row.gstPaid, '1800');
   assert.equal(row.invoiceNo, 'INV-0014');
 });
+
+test('PORTAL_SEC5_BO_ENTITY_TYPES and mapSec5bEntityType for Brand Owner', async () => {
+  const {
+    PORTAL_SEC5_BO_ENTITY_TYPES,
+    PORTAL_SEC5_ENTITY_TYPES,
+    mapSec5bEntityType,
+    normalizeSec5bRowForPortal,
+  } = await import('./partBSection5.js');
+
+  assert.deepEqual(PORTAL_SEC5_BO_ENTITY_TYPES, [
+    'Brand Owner',
+    'Importer',
+    'Recycler',
+    'Seller of raw material',
+    'Importer of raw material',
+    'Manufacturer of raw material',
+    'Producer (Small or Micro)',
+  ]);
+  assert.deepEqual(PORTAL_SEC5_ENTITY_TYPES, ['Importer', 'Brand Owner']);
+
+  // For Brand Owner
+  assert.equal(mapSec5bEntityType('Recycler', true), 'Recycler');
+  assert.equal(mapSec5bEntityType('Seller of raw material', true), 'Seller of raw material');
+  assert.equal(mapSec5bEntityType('Manufacturer', true), 'Manufacturer of raw material');
+  assert.equal(mapSec5bEntityType('Producer', true), 'Producer (Small or Micro)');
+  assert.equal(mapSec5bEntityType('Importer of raw material', true), 'Importer of raw material');
+
+  const normalizedBo = normalizeSec5bRowForPortal(
+    { entityName: 'ABC', entityType: 'Seller of raw material', quantity: '5' },
+    true,
+  );
+  assert.equal(normalizedBo.entityType, 'Seller of raw material');
+
+  // For Importer (remains Importer / Brand Owner only)
+  const normalizedImp = normalizeSec5bRowForPortal(
+    { entityName: 'ABC', entityType: 'Seller of raw material', quantity: '5' },
+    false,
+  );
+  assert.equal(normalizedImp.entityType, 'Importer');
+});

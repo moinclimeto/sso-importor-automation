@@ -52,8 +52,9 @@ import {
   REGISTRATION_TYPE_OPTIONS,
 } from '../components/ReviewDocumentHeaderFields';
 import RegisteredEntityVerify from '../components/RegisteredEntityVerify.jsx';
+import { PORTAL_PLASTIC_MATERIALS } from '../../shared/partBSection5.js';
 
-const PLASTIC_MATERIALS = ['HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'Others', 'PLA', 'PBAT', 'PVC', 'Multi-layer'];
+const PLASTIC_MATERIALS = PORTAL_PLASTIC_MATERIALS;
 
 function fmtMt(v) {
   if (v == null || v === '') return '—';

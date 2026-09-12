@@ -2,7 +2,11 @@ import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Plus, Pencil, Trash2, Users, Upload, Download, FileSpreadsheet, Loader2, ChevronDown, ChevronLeft, ChevronRight, CheckCircle2 } from 'lucide-react';
 import { usePageHeader } from '../context/PageHeaderContext.jsx';
 import { Toast, useToast } from '../components/Toast.jsx';
-import { PURCHASE_ENTITY_TYPES, REGISTRATION_TYPE_OPTIONS } from '../../shared/entityRegistrationTypes.js';
+import {
+  PURCHASE_ENTITY_TYPES,
+  PURCHASE_ENTITY_TYPES_BO,
+  REGISTRATION_TYPE_OPTIONS,
+} from '../../shared/entityRegistrationTypes.js';
 import {
   downloadSupplierMasterTemplate,
   exportSupplierMasterExcel,
@@ -128,12 +132,15 @@ export default function SupplierMasterPage({ embedded = false }) {
   const [actionsOpen, setActionsOpen] = useState(false);
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(10);
+  const [subApplicantType, setSubApplicantType] = useState('Importer');
   const [form, setForm] = useState(EMPTY_SUPPLIER_FORM);
   const [piboVerified, setPiboVerified] = useState(false);
   const fileInputRef = useRef(null);
   const actionsRef = useRef(null);
   const { setPageHeader, clearPageHeader } = usePageHeader();
   const { toast, showToast, hideToast } = useToast();
+
+  const isBrandOwner = /brand\s*owner/i.test(subApplicantType || '');
 
   useEffect(() => {
     if (embedded) return undefined;
@@ -149,12 +156,16 @@ export default function SupplierMasterPage({ embedded = false }) {
     if (!window.pwp?.supplierMaster) { setLoading(false); return; }
     setLoading(true);
     try {
-      const [data, comps] = await Promise.all([
+      const [data, comps, regRes] = await Promise.all([
         window.pwp.supplierMaster.getAll(),
         window.pwp.companies.getAll(),
+        window.pwp.registration?.get?.(),
       ]);
       setRecords(data || []);
       setCompanies(comps || []);
+      if (regRes?.data?.sub_applicant_type) {
+        setSubApplicantType(regRes.data.sub_applicant_type);
+      }
     } catch {
       showToast('Error loading supplier/customer records', 'error');
     }
@@ -643,7 +654,7 @@ export default function SupplierMasterPage({ embedded = false }) {
                         className="w-full rounded-lg border border-slate-200 bg-white px-3 py-2.5 text-sm shadow-sm focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500"
                       >
                         <option value="">Select Entity Type</option>
-                        {PURCHASE_ENTITY_TYPES.map((type) => (
+                        {(isBrandOwner ? PURCHASE_ENTITY_TYPES_BO : PURCHASE_ENTITY_TYPES).map((type) => (
                           <option key={type} value={type}>{type}</option>
                         ))}
                       </select>

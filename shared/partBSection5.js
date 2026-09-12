@@ -25,6 +25,16 @@ const CATEGORY_TO_PART_B_LABEL = {
 
 export const PORTAL_SEC5_ENTITY_TYPES = ['Importer', 'Brand Owner'];
 
+export const PORTAL_SEC5_BO_ENTITY_TYPES = [
+  'Brand Owner',
+  'Importer',
+  'Recycler',
+  'Seller of raw material',
+  'Importer of raw material',
+  'Manufacturer of raw material',
+  'Producer (Small or Micro)',
+];
+
 export const PORTAL_PLASTIC_MATERIALS = [
   'HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'PE', 'PVC', 'Others',
   'PMMA', 'EPS', 'PLA', 'PBAT', 'PBS',
@@ -51,6 +61,11 @@ export const PORTAL_PLASTIC_MATERIAL_VALUES = {
 export const PORTAL_SEC5_ENTITY_VALUES = {
   Importer: '2',
   'Brand Owner': '3',
+  Recycler: 'Recycler',
+  'Seller of raw material': 'Seller of raw material',
+  'Importer of raw material': 'Importer of raw material',
+  'Manufacturer of raw material': 'Manufacturer of raw material',
+  'Producer (Small or Micro)': 'Producer (Small or Micro)',
 };
 
 export const PORTAL_SEC5_REG_TYPE_VALUES = {
@@ -59,9 +74,19 @@ export const PORTAL_SEC5_REG_TYPE_VALUES = {
   Registered: 'Registered',
 };
 
-export function isSec5PortalEntityType(entityType = '') {
-  const mapped = mapSec5bEntityType(entityType);
-  return PORTAL_SEC5_ENTITY_TYPES.includes(mapped);
+export function isSec5PortalEntityType(entityType = '', isBrandOwner = null) {
+  const value = String(entityType || '').trim();
+  if (!value) return false;
+  if (isBrandOwner === true) {
+    return PORTAL_SEC5_BO_ENTITY_TYPES.some((t) => t.toLowerCase() === value.toLowerCase());
+  }
+  if (isBrandOwner === false) {
+    return PORTAL_SEC5_ENTITY_TYPES.some((t) => t.toLowerCase() === value.toLowerCase());
+  }
+  return (
+    PORTAL_SEC5_ENTITY_TYPES.some((t) => t.toLowerCase() === value.toLowerCase())
+    || PORTAL_SEC5_BO_ENTITY_TYPES.some((t) => t.toLowerCase() === value.toLowerCase())
+  );
 }
 
 export function isPortalPlasticMaterial(materialType = '') {
@@ -71,10 +96,10 @@ export function isPortalPlasticMaterial(materialType = '') {
   return PORTAL_PLASTIC_MATERIALS.some((m) => m.toLowerCase() === value.toLowerCase());
 }
 
-export function isSec5bRowPortalReady(row = {}) {
+export function isSec5bRowPortalReady(row = {}, isBrandOwner = null) {
   return Boolean(
     String(row.entityName || '').trim()
-    && isSec5PortalEntityType(row.entityType)
+    && isSec5PortalEntityType(row.entityType, isBrandOwner)
     && isPortalPlasticMaterial(row.materialType)
   );
 }
@@ -85,9 +110,24 @@ export function toPartBCategoryLabel(category = '') {
   return CATEGORY_TO_PART_B_LABEL[normalized] || normalized;
 }
 
-export function mapSec5bEntityType(entityType = '') {
+export function mapSec5bEntityType(entityType = '', isBrandOwner = false) {
   const value = String(entityType || '').trim();
-  if (/brand owner/i.test(value)) return 'Brand Owner';
+  if (!value) return '';
+
+  if (isBrandOwner) {
+    const exact = PORTAL_SEC5_BO_ENTITY_TYPES.find((t) => t.toLowerCase() === value.toLowerCase());
+    if (exact) return exact;
+    if (/producer/i.test(value)) return 'Producer (Small or Micro)';
+    if (/manufacturer/i.test(value)) return 'Manufacturer of raw material';
+    if (/seller/i.test(value)) return 'Seller of raw material';
+    if (/recycler|pwp/i.test(value)) return 'Recycler';
+    if (/importer\s*of\s*raw/i.test(value)) return 'Importer of raw material';
+    if (/importer/i.test(value)) return 'Importer';
+    if (/brand\s*owner/i.test(value)) return 'Brand Owner';
+    return '';
+  }
+
+  if (/brand\s*owner/i.test(value)) return 'Brand Owner';
   if (/importer/i.test(value)) return 'Importer';
   return '';
 }
@@ -525,13 +565,13 @@ export function buildSec5aFromPurchases(purchases = [], { companyId = null, docS
     .filter((row) => row.invoiceNo || row.quantity);
 }
 
-export function buildSec5bRowFromPurchase(row = {}) {
+export function buildSec5bRowFromPurchase(row = {}, isBrandOwner = false) {
   const quantityMt = resolveRecordTotalMt(row, 'purchase');
   const firstLine = (row.line_items || row.lineItems || [])[0] || {};
   const category = toPartBCategoryLabel(
     row.category_of_plastic || firstLine.plasticCategory || firstLine.category_of_plastic,
   );
-  const entityType = mapSec5bEntityType(row.entity_type);
+  const entityType = mapSec5bEntityType(row.entity_type, isBrandOwner);
   const materialType = resolvePlasticMaterialFromRecord(row) || 'Others';
   const financialYear = row.financial_year
     || resolveFinancialYear(row.procurement_date || row.invoice_date || row.date_of_entry)
@@ -545,7 +585,7 @@ export function buildSec5bRowFromPurchase(row = {}) {
 
   return {
     regType: 'UnRegistered',
-    entityType: entityType || 'Importer',
+    entityType: entityType || (isBrandOwner ? 'Brand Owner' : 'Importer'),
     entityName: row.supplier_name || row.vendor_name || '',
     country: resolveSec5bCountry(row),
     state: resolveSec5bState(row),
@@ -575,7 +615,7 @@ function filterByCompany(records = [], companyId = null) {
   return records.filter((row) => Number(row.company_id) === cid);
 }
 
-export function buildSec5bFromPurchases(purchases = [], { companyId = null, docStatus = 'published' } = {}) {
+export function buildSec5bFromPurchases(purchases = [], { companyId = null, docStatus = 'published', isBrandOwner = false } = {}) {
   let rows = filterByCompany(purchases, companyId);
   if (docStatus && docStatus !== 'all') {
     rows = rows.filter((row) => (row.doc_status || 'inbox') === docStatus);
@@ -584,18 +624,18 @@ export function buildSec5bFromPurchases(purchases = [], { companyId = null, docS
   rows = rows.filter((row) => {
     const raw = String(row.entity_type || '').trim();
     if (!raw) return true;
-    return isSec5PortalEntityType(raw);
+    return isSec5PortalEntityType(raw, isBrandOwner);
   });
 
   return rows
-    .map(buildSec5bRowFromPurchase)
+    .map((r) => buildSec5bRowFromPurchase(r, isBrandOwner))
     .filter((row) => row.entityName || row.quantity);
 }
 
-export function normalizeSec5bRowForPortal(row = {}) {
+export function normalizeSec5bRowForPortal(row = {}, isBrandOwner = false) {
   let entityType = String(row.entityType || row.entity_type || '').trim();
-  if (!isSec5PortalEntityType(entityType)) {
-    entityType = mapSec5bEntityType(entityType) || 'Importer';
+  if (!isSec5PortalEntityType(entityType, isBrandOwner)) {
+    entityType = mapSec5bEntityType(entityType, isBrandOwner) || (isBrandOwner ? 'Brand Owner' : 'Importer');
   }
 
   let materialType = String(row.materialType || row.plastic_type || row.plasticType || '').trim();

@@ -3,11 +3,22 @@ import { normalizePlasticMaterial } from '../../shared/reviewEnrichment';
 import { FINANCIAL_YEAR_OPTIONS } from '../../shared/procurementConversionFactor.js';
 import {
   ENTITY_TYPE_OPTIONS,
+  ENTITY_TYPE_OPTIONS_BO,
   PURCHASE_ENTITY_TYPES,
+  PURCHASE_ENTITY_TYPES_BO,
   REGISTRATION_TYPE_OPTIONS,
+  getPurchaseEntityTypes,
 } from '../../shared/entityRegistrationTypes.js';
 
-export { FINANCIAL_YEAR_OPTIONS, ENTITY_TYPE_OPTIONS, PURCHASE_ENTITY_TYPES, REGISTRATION_TYPE_OPTIONS };
+export {
+  FINANCIAL_YEAR_OPTIONS,
+  ENTITY_TYPE_OPTIONS,
+  ENTITY_TYPE_OPTIONS_BO,
+  PURCHASE_ENTITY_TYPES,
+  PURCHASE_ENTITY_TYPES_BO,
+  REGISTRATION_TYPE_OPTIONS,
+  getPurchaseEntityTypes,
+};
 
 export function buildMaterialOptions(current, materials = []) {
   const cur = normalizePlasticMaterial(current);

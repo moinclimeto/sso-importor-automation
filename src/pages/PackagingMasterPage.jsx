@@ -18,8 +18,9 @@ import {
   resolvePackagingHsn,
   resolvePackagingUom,
 } from '../../shared/packagingMasterSync.js';
+import { PORTAL_PLASTIC_MATERIALS } from '../../shared/partBSection5.js';
 
-const PLASTIC_MATERIALS = ['PET', 'HDPE', 'PVC', 'LDPE', 'PP', 'PS', 'MLP', 'Others'];
+const PLASTIC_MATERIALS = PORTAL_PLASTIC_MATERIALS;
 const PAGE_SIZE_OPTIONS = [10, 25, 50, 100];
 
 const LIST_TYPE_TABS = [

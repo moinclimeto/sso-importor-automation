@@ -36,6 +36,7 @@ import {
   EditableHeaderSelect,
   EditableHeaderTextarea,
   ENTITY_TYPE_OPTIONS,
+  PURCHASE_ENTITY_TYPES_BO,
   ReadonlyHeaderField,
   REGISTRATION_TYPE_OPTIONS,
 } from '../components/ReviewDocumentHeaderFields';
@@ -51,8 +52,9 @@ import {
 } from '../../shared/reviewEnrichment';
 import { PLASTIC_CATEGORIES } from '../utils/excelImport';
 import RegisteredEntityVerify from '../components/RegisteredEntityVerify.jsx';
+import { PORTAL_PLASTIC_MATERIALS } from '../../shared/partBSection5.js';
 
-const PLASTIC_MATERIALS = ['HDPE', 'PET', 'PP', 'PS', 'LDPE', 'LLDPE', 'MLP', 'Others', 'PLA', 'PBAT', 'PVC', 'Multi-layer'];
+const PLASTIC_MATERIALS = PORTAL_PLASTIC_MATERIALS;
 
 function fmtMt(v) {
   if (v == null || v === '') return '—';
@@ -86,12 +88,14 @@ export default function ProcurementReview() {
   const [cfSetupLineIdx, setCfSetupLineIdx] = useState(null);
   const [cfSetupLoading, setCfSetupLoading] = useState(false);
   const [bulkStatus, setBulkStatus] = useState('');
+  const [subApplicantType, setSubApplicantType] = useState('Importer');
   const [dirty, setDirty] = useState(false);
   const skipDirtyRef = useRef(true);
 
   const isPublished = tab === 'published';
   const draftStatus = isPublished ? 'published' : 'inbox';
   const readOnly = false;
+  const isBrandOwner = /brand\s*owner/i.test(subApplicantType || '');
 
   const validation = useMemo(
     () =>
@@ -184,10 +188,14 @@ export default function ProcurementReview() {
     if (!window.pwp?.purchases || !id) return;
     setLoading(true);
     try {
-      const [all, pkg] = await Promise.all([
+      const [all, pkg, regRes] = await Promise.all([
         window.pwp.purchases.getAll({ doc_status: tab }),
         window.pwp.packagingMaster?.getAll?.() || [],
+        window.pwp.registration?.get?.(),
       ]);
+      if (regRes?.data?.sub_applicant_type) {
+        setSubApplicantType(regRes.data.sub_applicant_type);
+      }
       const rows = (all || []).filter((r) => (r.doc_status || 'inbox') === tab);
       setNavRows(rows);
       const row = rows.find((r) => String(r.id) === String(id)) || (all || []).find((r) => String(r.id) === String(id));
@@ -636,7 +644,7 @@ export default function ProcurementReview() {
                 label="Entity Type"
                 value={header.entity_type}
                 onChange={(v) => patchHeader({ entity_type: v })}
-                options={ENTITY_TYPE_OPTIONS}
+                options={isBrandOwner ? PURCHASE_ENTITY_TYPES_BO : ENTITY_TYPE_OPTIONS}
                 readOnly={false}
                 disabled={readOnly}
                 placeholder="Select Entity Type"
