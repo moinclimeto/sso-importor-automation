@@ -325,6 +325,8 @@ export function sumSec5CategoryYear(rows = [], year = '', catIndex = 0) {
   return Number(sum.toFixed(4));
 }
 
+
+
 export function sumSec5abCategoryYear(sec5a = [], sec5b = [], year = '', catIndex = 0) {
   return Number((
     sumSec5CategoryYear(sec5a, year, catIndex) + sumSec5CategoryYear(sec5b, year, catIndex)

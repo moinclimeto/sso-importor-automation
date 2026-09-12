@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
 import {
   AUTO_FILLED_FIELDS,
   collectRegistrationUploadFileIssues,
@@ -179,6 +180,9 @@ export default function NewApplicationPage() {
   const [registrationBlocker, setRegistrationBlocker] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
+  const [showEprTargetsModal, setShowEprTargetsModal] = useState(false);
+  const [eprTargetsModalData, setEprTargetsModalData] = useState(null);
+  const [eprTargetsSubmitting, setEprTargetsSubmitting] = useState(false);
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
@@ -353,6 +357,35 @@ export default function NewApplicationPage() {
       if (stepHint) setCurrentAutomationStep(stepHint);
     });
   }, []);
+
+  useEffect(() => {
+    if (!window.pwp?.scraper?.onEprTargetsPrompt) return undefined;
+    return window.pwp.scraper.onEprTargetsPrompt((data) => {
+      setEprTargetsModalData(data || {});
+      setShowEprTargetsModal(true);
+      setEprTargetsSubmitting(false);
+      showToast('Section 7 EPR Targets calculated on CPCB portal — please confirm to submit.', 'info', { duration: 10000 });
+    });
+  }, [showToast]);
+
+  const handleConfirmEprTargets = async () => {
+    setEprTargetsSubmitting(true);
+    try {
+      await window.pwp?.scraper?.answerEprTargetsConfirmation?.({ confirmed: true });
+      setShowEprTargetsModal(false);
+      showToast('EPR Targets confirmed. Submitting Part C on CPCB portal...', 'success');
+    } catch (err) {
+      showToast('Failed to confirm EPR targets: ' + err.message, 'error');
+    } finally {
+      setEprTargetsSubmitting(false);
+    }
+  };
+
+  const handleCancelEprTargets = async () => {
+    setShowEprTargetsModal(false);
+    await window.pwp?.scraper?.answerEprTargetsConfirmation?.({ confirmed: false });
+    showToast('EPR Targets submission stopped by user.', 'info');
+  };
 
   const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
     const { data } = resolveRegistrationData(docData);
@@ -2387,6 +2420,14 @@ export default function NewApplicationPage() {
           </div>
         </div>
       )}
+
+      <EprTargetsConfirmationModal
+        isOpen={showEprTargetsModal}
+        data={eprTargetsModalData}
+        submitting={eprTargetsSubmitting}
+        onConfirm={handleConfirmEprTargets}
+        onCancel={handleCancelEprTargets}
+      />
 
       {false && !showAutomationLogsModal && automationLogs.length > 0 && (
         <button

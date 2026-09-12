@@ -138,6 +138,12 @@ contextBridge.exposeInMainWorld('pwp', {
       ipcRenderer.on('scraper:payment-bypass-prompt', handler);
       return () => ipcRenderer.removeListener('scraper:payment-bypass-prompt', handler);
     },
+    answerEprTargetsConfirmation: (payload) => ipcRenderer.invoke('scraper:answerEprTargetsConfirmation', payload),
+    onEprTargetsPrompt: (callback) => {
+      const handler = (_event, data) => callback?.(data);
+      ipcRenderer.on('scraper:epr-targets-prompt', handler);
+      return () => ipcRenderer.removeListener('scraper:epr-targets-prompt', handler);
+    },
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),

@@ -305,7 +305,7 @@ function dedupeDocList(list) {
   return out;
 }
 
-export default function RegistrationDocUpload({ onExtracted, showToast }) {
+export default function RegistrationDocUpload({ onExtracted, showToast, subApplicantType }) {
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
   const dbIdsByType = useRef({});
@@ -738,6 +738,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
       <ReadinessGuidelinesModal 
         isOpen={showGuidelines} 
         onClose={() => setShowGuidelines(false)} 
+        subApplicantType={subApplicantType}
       />
 
       <div className="flex items-center justify-between">

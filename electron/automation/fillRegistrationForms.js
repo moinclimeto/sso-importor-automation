@@ -6,6 +6,7 @@ import { spawn } from 'child_process';
 import { uploadDocumentByLabel } from './cpcbRegistration.js';
 import { getDb } from '../db/database.js';
 import { notifyPaymentBypassPrompt, waitForPaymentBypassAnswer } from './paymentBypassBridge.js';
+import { notifyEprTargetsPrompt, waitForEprTargetsConfirmation } from './eprTargetsConfirmationBridge.js';
 import {
   collectPortalAlerts,
   countInvalidControls,
@@ -1205,6 +1206,46 @@ async function clickPartCSubmitAndPay(page, onLog) {
   return false;
 }
 
+export async function scrapeEprTargetsTable(page, onLog) {
+  try {
+    const heading = page.getByText(/7\)\s*EPR Targets|EPR Targets/i).first();
+    let table = null;
+    if (await heading.isVisible({ timeout: 6000 }).catch(() => false)) {
+      table = heading.locator('xpath=following::table[1]');
+    }
+    if (!table || !(await table.isVisible({ timeout: 2000 }).catch(() => false))) {
+      table = page.locator('table').first();
+    }
+
+    if (await table.isVisible({ timeout: 4000 }).catch(() => false)) {
+      const data = await table.evaluate((tbl) => {
+        const headerElements = Array.from(
+          tbl.querySelectorAll('thead th, tr:first-child th, thead td, tr:first-child td')
+        );
+        const headers = headerElements.map((th) => th.innerText.trim()).filter(Boolean);
+
+        const rowElements = Array.from(tbl.querySelectorAll('tbody tr, tr:not(:first-child)'));
+        const rows = [];
+        for (const tr of rowElements) {
+          const cells = Array.from(tr.querySelectorAll('td, th')).map((td) => td.innerText.trim());
+          if (cells.length > 0 && cells.some((c) => c !== '')) {
+            rows.push(cells);
+          }
+        }
+        return { headers, rows };
+      });
+
+      if (data && (data.headers?.length > 0 || data.rows?.length > 0)) {
+        if (onLog) onLog(`CPCB 7) EPR Targets table extracted (${data.rows?.length || 0} rows).`);
+        return data;
+      }
+    }
+  } catch (err) {
+    if (onLog) onLog(`Could not extract Section 7 EPR Targets table: ${err.message}`);
+  }
+  return null;
+}
+
 export async function fillPartC(page, generalInfo, onLog) {
   const data = normalizeApplicationData(generalInfo);
   if (onLog) {
@@ -1222,10 +1263,46 @@ export async function fillPartC(page, generalInfo, onLog) {
     throw new Error(`Part C real documents missing: ${missingPartC.join(', ')}. Dummy PDFs will not be used.`);
   }
 
+  // 1. Fill document uploads & checkbox
+  await fillPartCDocuments(page, data, onLog);
+
+  // 2. Fetch / Scrape Section 7 EPR Targets table and prompt user for confirmation
+  if (onLog) onLog('Fetching Section 7 EPR Targets table from CPCB portal...');
+  const targetsTable = await scrapeEprTargetsTable(page, onLog);
+
+  if (onLog) onLog('Waiting for user to review and confirm Section 7 EPR Targets table...');
+  notifyEprTargetsPrompt({
+    subApplicantType: data.subApplicantType || 'Brand Owner',
+    table: targetsTable || {
+      headers: [
+        'Year',
+        'Rigid Plastic (Cat-I)',
+        'Flexible Plastic (Cat-II)',
+        'MLP (Cat-III)',
+        'Compostable Plastic (Cat-IV)',
+        'Total EPR Target',
+      ],
+      rows: [
+        ['Total EPR Target', '0', '0', '0', '0', '0'],
+        ['Minimum Recycling Target', '0', '0', '0', '0', '0'],
+      ],
+    },
+  });
+
+  const confirmation = await waitForEprTargetsConfirmation();
+  if (!confirmation?.confirmed) {
+    throw new Error('Form submission paused/cancelled by user during EPR Targets review.');
+  }
+
+  if (onLog) onLog('EPR Targets confirmed by user. Proceeding to submit Part C & payment...');
+
+  // 3. Click Submit & Pay with error guard
   await fillUntilPortalAccepts(page, {
     stepName: 'Part C',
     onLog,
-    fillFn: () => fillPartCDocuments(page, data, onLog),
+    fillFn: async () => {
+      await fillPartCDocuments(page, data, onLog);
+    },
     saveFn: async () => {
       await clickPartCSubmitAndPay(page, onLog);
       await waitForPortalBusy(page);

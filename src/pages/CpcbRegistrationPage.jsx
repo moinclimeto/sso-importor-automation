@@ -6,6 +6,7 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
 import PlasticThicknessMinInfoIcon from '../components/PlasticThicknessMinInfoIcon.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import PartAProductionFacilityFields from '../components/PartAProductionFacilityFields.jsx';
@@ -197,6 +198,9 @@ export default function CpcbRegistrationPage() {
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
+  const [showEprTargetsModal, setShowEprTargetsModal] = useState(false);
+  const [eprTargetsModalData, setEprTargetsModalData] = useState(null);
+  const [eprTargetsSubmitting, setEprTargetsSubmitting] = useState(false);
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
   const automationBusyRef = useRef(false);
@@ -431,6 +435,35 @@ export default function CpcbRegistrationPage() {
       showToast('Payment Bypass popup — choose Yes or No in the app.', 'success', { duration: 12000 });
     });
   }, [showToast]);
+
+  useEffect(() => {
+    if (!window.pwp?.scraper?.onEprTargetsPrompt) return undefined;
+    return window.pwp.scraper.onEprTargetsPrompt((data) => {
+      setEprTargetsModalData(data || {});
+      setShowEprTargetsModal(true);
+      setEprTargetsSubmitting(false);
+      showToast('Section 7 EPR Targets calculated on CPCB portal — please confirm to submit.', 'info', { duration: 10000 });
+    });
+  }, [showToast]);
+
+  const handleConfirmEprTargets = async () => {
+    setEprTargetsSubmitting(true);
+    try {
+      await window.pwp?.scraper?.answerEprTargetsConfirmation?.({ confirmed: true });
+      setShowEprTargetsModal(false);
+      showToast('EPR Targets confirmed. Submitting Part C on CPCB portal...', 'success');
+    } catch (err) {
+      showToast('Failed to confirm EPR targets: ' + err.message, 'error');
+    } finally {
+      setEprTargetsSubmitting(false);
+    }
+  };
+
+  const handleCancelEprTargets = async () => {
+    setShowEprTargetsModal(false);
+    await window.pwp?.scraper?.answerEprTargetsConfirmation?.({ confirmed: false });
+    showToast('EPR Targets submission stopped by user.', 'info');
+  };
 
   const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
     const { data } = resolveRegistrationData(docData);
@@ -1719,7 +1752,11 @@ export default function CpcbRegistrationPage() {
 
       {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
-        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+        <RegistrationDocUpload
+          onExtracted={handleDocExtracted}
+          showToast={showToast}
+          subApplicantType={generalInfo.subApplicantType}
+        />
 
         {fileNameIssues.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
@@ -2750,6 +2787,14 @@ export default function CpcbRegistrationPage() {
           </div>
         </div>
       )}
+
+      <EprTargetsConfirmationModal
+        isOpen={showEprTargetsModal}
+        data={eprTargetsModalData}
+        submitting={eprTargetsSubmitting}
+        onConfirm={handleConfirmEprTargets}
+        onCancel={handleCancelEprTargets}
+      />
 
       {false && showAutomationLogsModal && (
         <div className="fixed inset-0 z-50 bg-slate-900/50 backdrop-blur-sm flex items-center justify-center p-4">

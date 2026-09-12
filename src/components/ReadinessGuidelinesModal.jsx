@@ -1,7 +1,80 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import { X } from 'lucide-react';
 
-const GUIDELINES = [
+const BRAND_OWNER_GUIDELINES = [
+  {
+    title: 'Scanned copy of Company PAN in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Company CIN in PDF Format (If any)',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Company GST in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: "Scanned copy of Authorized Person's PAN in PDF Format",
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title:
+      'If the production facility registered with the District Industries Centre of the State Government or Union Territory, upload registration copy in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of details (Type & Quantity) of products Produced/Marketed in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title:
+      'Representative Picture of packaged covering different plastic categories under EPR in jpeg, jpg, png Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned PDF copy of Process flow diagram',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Combine copy of Consent (Air & Water Act) in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Covering Letter in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Signature in png, jpeg, jpg Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Document of Any other information (If any) in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Raw material storage area in png, jpeg, jpg Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Production process in png, jpeg, jpg Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of Products dispatch area in png, jpeg, jpg Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned copy of machinery in png, jpeg, jpg Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Document for supporting offsite facility for disaster management in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+];
+
+const IMPORTER_GUIDELINES = [
   {
     title: 'Company PAN *',
     subtitle: 'Scanned copy of Company PAN in PDF Format',
@@ -52,12 +125,59 @@ const GUIDELINES = [
   },
   {
     title: 'File naming (important)',
-    subtitle: 'The CPCB portal accepts simple file names such as person_pan.pdf and gst.pdf. Spaces, brackets (1), and double extensions (.pdf.pdf) are not allowed. An invalid name returns an "Invalid filename" error.',
+    subtitle:
+      'The CPCB portal accepts simple file names such as person_pan.pdf and gst.pdf. Spaces, brackets (1), and double extensions (.pdf.pdf) are not allowed. An invalid name returns an "Invalid filename" error.',
   },
 ];
 
-export default function ReadinessGuidelinesModal({ isOpen, onClose }) {
+export default function ReadinessGuidelinesModal({
+  isOpen,
+  onClose,
+  defaultType,
+  subApplicantType,
+}) {
+  const [activeType, setActiveType] = useState('Brand Owner');
+
+  useEffect(() => {
+    if (!isOpen) return;
+
+    if (subApplicantType) {
+      setActiveType(
+        /brand\s*owner/i.test(subApplicantType) ? 'Brand Owner' : 'Importer'
+      );
+      return;
+    }
+
+    if (defaultType) {
+      setActiveType(
+        /brand\s*owner/i.test(defaultType) ? 'Brand Owner' : 'Importer'
+      );
+      return;
+    }
+
+    // Auto-detect from stored registration if available
+    const checkSaved = async () => {
+      try {
+        if (window.pwp?.registration?.get) {
+          const res = await window.pwp.registration.get();
+          const savedType = res?.data?.sub_applicant_type;
+          if (savedType) {
+            setActiveType(
+              /brand\s*owner/i.test(savedType) ? 'Brand Owner' : 'Importer'
+            );
+          }
+        }
+      } catch (err) {
+        console.warn('Failed to load sub_applicant_type for guidelines:', err);
+      }
+    };
+    checkSaved();
+  }, [isOpen, subApplicantType, defaultType]);
+
   if (!isOpen) return null;
+
+  const currentList =
+    activeType === 'Brand Owner' ? BRAND_OWNER_GUIDELINES : IMPORTER_GUIDELINES;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
@@ -73,17 +193,18 @@ export default function ReadinessGuidelinesModal({ isOpen, onClose }) {
             <X size={20} />
           </button>
         </div>
-        <div className="px-8 py-6 overflow-y-auto space-y-6">
-          <div className="space-y-6">
-            {GUIDELINES.map((item, i) => (
-              <div key={i} className="space-y-0.5">
-                <p className="text-[15px] font-medium text-slate-800">
-                  {String(i + 1).padStart(2, '0')}. {item.title}
-                </p>
-                {item.subtitle && <p className="text-[15px] text-slate-700">{item.subtitle}</p>}
-              </div>
-            ))}
-          </div>
+
+        <div className="px-8 py-6 overflow-y-auto space-y-5">
+          {currentList.map((item, i) => (
+            <div key={i} className="space-y-0.5">
+              <p className="text-[15px] font-medium text-slate-800">
+                {String(i + 1).padStart(2, '0')}. {item.title}
+              </p>
+              {item.subtitle && (
+                <p className="text-[13px] text-slate-500 pl-6">{item.subtitle}</p>
+              )}
+            </div>
+          ))}
         </div>
       </div>
     </div>
