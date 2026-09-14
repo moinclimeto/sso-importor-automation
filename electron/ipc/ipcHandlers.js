@@ -63,6 +63,8 @@ import {
   submitLoginOtp,
   runApplicationOnboardingAfterLogin,
   resendLoginOtp,
+  getLoginSession,
+  openPlasticWasteManagementFlow,
 } from '../automation/cpcbLogin.js';
 import { runEprExtraction } from '../automation/cpcbEprScraper.js';
 import { upsertSupplierMasterRow } from '../supplierMasterService.js';
@@ -1772,6 +1774,27 @@ async function syncSupplierMasterFromRecord(
   ipcMain.handle('scraper:checkCpcbSession', async (_, { type } = {}) => {
     try {
       cpcbUploadType = type === 'sale' ? 'sale' : 'purchase';
+
+      // 1. Check active login session from cpcbLogin first
+      const loginSession = getLoginSession();
+      if (loginSession.page && !loginSession.page.isClosed()) {
+        try {
+          const currentUrl = loginSession.page.url() || '';
+          if (isAuthenticatedUrl(currentUrl) || /\/(dashboard|onboarding|home)/i.test(currentUrl)) {
+            startCpcbKeepAlive();
+            return {
+              success: true,
+              loggedIn: true,
+              keepAlive: true,
+              url: currentUrl,
+              type: cpcbUploadType,
+            };
+          }
+        } catch {
+          // fall through
+        }
+      }
+
       await ensureCpcbBrowser();
       const loggedIn = await detectExistingSession(cpcbPage);
       if (loggedIn) startCpcbKeepAlive();
@@ -1789,6 +1812,15 @@ async function syncSupplierMasterFromRecord(
         loggedIn: false,
         error: error?.message || 'Session check failed',
       };
+    }
+  });
+
+  ipcMain.handle('scraper:openPlasticWaste', async (event, payload = {}) => {
+    try {
+      const result = await openPlasticWasteManagementFlow((msg) => sendScraperLog(event, msg), payload);
+      return result;
+    } catch (err) {
+      return { success: false, error: err.message };
     }
   });
 

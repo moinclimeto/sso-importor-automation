@@ -10,6 +10,7 @@ import { Toast, useToast } from '../components/Toast.jsx';
 import { RefreshCw } from 'lucide-react';
 import { PageHeaderProvider, usePageHeader } from '../context/PageHeaderContext.jsx';
 import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
+import CpcbLoginModal from './CpcbLoginModal.jsx';
 
 const navLinks = [
   {
@@ -158,6 +159,42 @@ function MainLayoutInner() {
   const [myCompany, setMyCompany] = useState(null);
   const { toast, showToast, hideToast } = useToast();
   const [showRegistrationModal, setShowRegistrationModal] = useState(false);
+  const [showCpcbLoginModal, setShowCpcbLoginModal] = useState(false);
+  const [cpcbLoggedIn, setCpcbLoggedIn] = useState(false);
+
+  useEffect(() => {
+    const checkSession = async () => {
+      try {
+        if (window.pwp?.scraper?.checkCpcbSession) {
+          const res = await window.pwp.scraper.checkCpcbSession({ type: 'dashboard' });
+          setCpcbLoggedIn(Boolean(res?.loggedIn));
+        }
+      } catch {
+        setCpcbLoggedIn(false);
+      }
+    };
+    checkSession();
+
+    const handleSessionUpdate = (e) => {
+      if (typeof e?.detail?.loggedIn === 'boolean') {
+        setCpcbLoggedIn(e.detail.loggedIn);
+      } else {
+        checkSession();
+      }
+    };
+
+    const handleOpenLogin = () => {
+      setShowCpcbLoginModal(true);
+    };
+
+    window.addEventListener('cpcb-session-updated', handleSessionUpdate);
+    window.addEventListener('open-cpcb-login', handleOpenLogin);
+
+    return () => {
+      window.removeEventListener('cpcb-session-updated', handleSessionUpdate);
+      window.removeEventListener('open-cpcb-login', handleOpenLogin);
+    };
+  }, []);
 
   const handleRegistrationConfirm = async () => {
     try {
@@ -317,6 +354,8 @@ function MainLayoutInner() {
           <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
             {pageHeader?.actions}
 
+            {/* Centralized CPCB Login / Status Button (removed for now) */}
+
             {showRegistrationBtn && (
               <>
                 <button
@@ -379,6 +418,11 @@ function MainLayoutInner() {
               setShowCpcbGuidelines(false);
               navigate('/cpcb-registration');
             }} 
+          />
+          <CpcbLoginModal
+            isOpen={showCpcbLoginModal}
+            onClose={() => setShowCpcbLoginModal(false)}
+            onLoginSuccess={() => setCpcbLoggedIn(true)}
           />
           <div className="max-w-7xl mx-auto space-y-6">
             <Toast toast={toast} onClose={hideToast} />

@@ -594,6 +594,66 @@ export default function NewApplicationPage() {
     };
   }, [autoData, generalInfo]);
 
+  const [refreshingDocData, setRefreshingDocData] = useState(false);
+
+  const handleNavigateToDocProcessor = useCallback(async () => {
+    if (window.pwp?.registration?.save) {
+      try {
+        await window.pwp.registration.save(
+          buildRegistrationSavePayload({
+            savedRegistration,
+            email,
+            mobile,
+            autoData,
+            generalInfo,
+            ceprId: savedCeprId || savedRegistration?.cepr_id,
+          }),
+        );
+      } catch (e) {
+        console.error('Failed to save before navigating to doc processor:', e);
+      }
+    }
+    navigate('/doc-table', { state: { type: 'purchase' } });
+  }, [savedRegistration, email, mobile, autoData, generalInfo, savedCeprId, navigate]);
+
+  const handleRefreshDocData = useCallback(async () => {
+    setRefreshingDocData(true);
+    try {
+      const result = await fetchComputedPlasticConsumed3c({
+        gstin: autoData.gstin,
+        savedImporter3a: autoData.importer3a,
+      });
+      if (result?.hasData) {
+        const pruned = prunePlasticConsumedForPortal(result.plasticConsumed);
+        setGeneralInfo((prev) => {
+          const next = { ...prev, plasticConsumed: pruned };
+          if (window.pwp?.registration?.save) {
+            window.pwp.registration.save(
+              buildRegistrationSavePayload({
+                savedRegistration,
+                email,
+                mobile,
+                autoData,
+                generalInfo: next,
+                ceprId: savedCeprId || savedRegistration?.cepr_id,
+              }),
+            ).catch(console.error);
+          }
+          return next;
+        });
+        setPlasticConsumedSource(result.sourceLabel || '');
+        showToast('Synced Section 3c totals from published invoices.', 'success');
+      } else {
+        showToast('No published invoice totals found in Doc Processor.', 'info');
+      }
+    } catch (err) {
+      console.error('Failed to refresh Section 3c data:', err);
+      showToast('Failed to refresh Section 3c data.', 'error');
+    } finally {
+      setRefreshingDocData(false);
+    }
+  }, [autoData, savedRegistration, email, mobile, savedCeprId, showToast]);
+
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
     const pruned = prunePlasticConsumedForPortal(nextPlasticConsumed);
     setGeneralInfo((prev) => {
@@ -1785,6 +1845,9 @@ export default function NewApplicationPage() {
                     uploadingPdfField={uploadingPdfField}
                     onPlasticConsumedChange={handlePlasticConsumedChange}
                     plasticConsumedSource={plasticConsumedSource}
+                    onNavigateToDocProcessor={handleNavigateToDocProcessor}
+                    onRefreshDocData={handleRefreshDocData}
+                    refreshingDocData={refreshingDocData}
                   />
 
                   <div className="md:col-span-2">

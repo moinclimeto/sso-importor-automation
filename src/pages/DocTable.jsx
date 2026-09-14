@@ -1825,7 +1825,7 @@ export default function DocTable() {
             className="inline-flex items-center gap-2 rounded-lg border border-green-600 text-green-700 bg-white hover:bg-green-50 text-sm font-medium px-3 py-2 transition-colors"
           >
             <UploadCloud size={16} />
-            Upload CPCB
+            Upload to CPCB
           </button>
         </>
       ),

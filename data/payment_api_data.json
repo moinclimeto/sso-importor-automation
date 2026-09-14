@@ -1,0 +1,127 @@
+{
+  "getEprCategory": {
+    "status": 200,
+    "successMsg": "Erp category fetched successfully",
+    "data": {
+      "data": [
+        {
+          "id": "4",
+          "portalName": "Battery Waste Management"
+        },
+        {
+          "id": "8",
+          "portalName": "C&D Waste Management Portal"
+        },
+        {
+          "id": "12",
+          "portalName": "Common EPR Portal"
+        },
+        {
+          "id": "7",
+          "portalName": "CPCB User Management"
+        },
+        {
+          "id": "6",
+          "portalName": "EPR Trading Portal"
+        },
+        {
+          "id": "1",
+          "portalName": "E-Waste Management"
+        },
+        {
+          "id": "3",
+          "portalName": "Plastic Waste Management"
+        },
+        {
+          "id": "9",
+          "portalName": "Scrap of Non-Ferrous Metals"
+        },
+        {
+          "id": "5",
+          "portalName": "Tyre Waste Management"
+        },
+        {
+          "id": "2",
+          "portalName": "Used Oil Management"
+        }
+      ],
+      "total": 10,
+      "skip": 0,
+      "take": 10
+    },
+    "recentSSOLinkingStatus": null
+  },
+  "portals": {
+    "requestId": "268d02e0-f72d-4919-a9b4-3857df7bc2f1",
+    "data": [
+      {
+        "id": "1",
+        "portalName": "E-Waste Management",
+        "portalAbbr": "EWM"
+      },
+      {
+        "id": "2",
+        "portalName": "Used Oil Management",
+        "portalAbbr": "UOM"
+      },
+      {
+        "id": "3",
+        "portalName": "Plastic Waste Management",
+        "portalAbbr": "PWM"
+      },
+      {
+        "id": "4",
+        "portalName": "Battery Waste Management",
+        "portalAbbr": "BWM"
+      },
+      {
+        "id": "5",
+        "portalName": "Tyre Waste Management",
+        "portalAbbr": "TWM"
+      },
+      {
+        "id": "6",
+        "portalName": "EPR Trading Portal",
+        "portalAbbr": "ETP"
+      },
+      {
+        "id": "8",
+        "portalName": "C&D Waste Management Portal",
+        "portalAbbr": "CND"
+      },
+      {
+        "id": "9",
+        "portalName": "Scrap of Non-Ferrous Metals",
+        "portalAbbr": "NFM"
+      },
+      {
+        "id": "12",
+        "portalName": "Common EPR Portal",
+        "portalAbbr": "COMMON EPR"
+      }
+    ]
+  },
+  "stats": {
+    "statusCode": 200,
+    "message": "Request successful",
+    "timestamp": "2026-09-14T05:35:07.022Z",
+    "path": "/api/v1/wallet/stats",
+    "requestId": "d2771eff-5e88-40fd-b49c-7d78581e8bb3",
+    "data": {
+      "generated": {
+        "cat1": 987317,
+        "cat2": 2504838,
+        "cat3": 676975,
+        "cat4": 9918,
+        "total": 4179048
+      },
+      "transferred": {
+        "cat1": 24210,
+        "cat2": 50845,
+        "cat3": 10912,
+        "cat4": 223,
+        "total": 86190
+      }
+    }
+  }
+}

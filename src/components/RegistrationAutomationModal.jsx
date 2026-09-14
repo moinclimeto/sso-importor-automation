@@ -3,6 +3,8 @@ import { createPortal } from 'react-dom';
 import {
   AlertCircle,
   CheckCircle2,
+  Eye,
+  EyeOff,
   Loader2,
   RefreshCw,
   Sparkles,
@@ -42,6 +44,17 @@ export default function RegistrationAutomationModal({
   completeMessage = 'CPCB account created successfully. Closing…',
   captchaStepHint = 'Enter the captcha to finish registration',
   submitCaptchaLabel = 'Submit Captcha',
+  // Credentials Phase
+  ceprId = '',
+  onCeprIdChange,
+  password = '',
+  onPasswordChange,
+  showPassword = false,
+  onToggleShowPassword,
+  onSubmitCredentials,
+  credentialsError = '',
+  submitCredentialsLabel = 'Proceed to Login',
+  onRetryCredentials,
   // Email OTP
   email = '',
   emailOtp = '',
@@ -87,6 +100,7 @@ export default function RegistrationAutomationModal({
   if (!portalTarget) return null;
 
   const phaseLabel = {
+    credentials: 'CPCB Login Credentials',
     running: 'Automation in progress',
     email_otp: 'Email OTP required',
     mobile_otp: 'Mobile OTP required',
@@ -100,9 +114,11 @@ export default function RegistrationAutomationModal({
     ? 'text-green-700 bg-green-50 border-green-200'
     : phase === 'error'
       ? 'text-red-700 bg-red-50 border-red-200'
-      : phase === 'running'
-        ? 'text-blue-700 bg-blue-50 border-blue-200'
-        : 'text-amber-700 bg-amber-50 border-amber-200';
+      : phase === 'credentials'
+        ? 'text-indigo-700 bg-indigo-50 border-indigo-200'
+        : phase === 'running'
+          ? 'text-blue-700 bg-blue-50 border-blue-200'
+          : 'text-amber-700 bg-amber-50 border-amber-200';
 
   return createPortal(
     <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/50 p-4">
@@ -136,15 +152,17 @@ export default function RegistrationAutomationModal({
           <p className="text-sm font-medium mt-0.5 break-words">
             {phase === 'complete'
               ? completeMessage
-              : phase === 'email_otp'
-                ? `Enter the OTP sent to ${email}`
-                : phase === 'mobile_otp'
-                  ? `Enter the SMS OTP sent to ${mobile}`
-                  : phase === 'login_otp'
-                    ? (otpError || 'Enter the 6-digit login OTP from email/SMS')
-                    : phase === 'captcha'
-                      ? captchaStepHint
-                      : currentStep || loadingMsg || 'Starting automation…'}
+              : phase === 'credentials'
+                ? 'Enter your CEPR User ID / Email ID and Password to sign in'
+                : phase === 'email_otp'
+                  ? `Enter the OTP sent to ${email}`
+                  : phase === 'mobile_otp'
+                    ? `Enter the SMS OTP sent to ${mobile}`
+                    : phase === 'login_otp'
+                      ? (otpError || 'Enter the 6-digit login OTP from email/SMS')
+                      : phase === 'captcha'
+                        ? captchaStepHint
+                        : currentStep || loadingMsg || 'Starting automation…'}
           </p>
           {loading && phase === 'running' && (
             <p className="text-xs mt-1 flex items-center gap-1.5 opacity-80">
@@ -154,37 +172,116 @@ export default function RegistrationAutomationModal({
           )}
         </div>
 
-        <div className="mx-5 mt-3 mb-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex flex-col max-h-32">
-          <div className="px-3 py-1.5 border-b border-slate-200 bg-white">
-            <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Progress</p>
+        {phase !== 'credentials' && (
+          <div className="mx-5 mt-3 mb-3 rounded-lg border border-slate-200 bg-slate-50 overflow-hidden flex flex-col max-h-32">
+            <div className="px-3 py-1.5 border-b border-slate-200 bg-white">
+              <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-500">Progress</p>
+            </div>
+            <div className="overflow-y-auto p-2.5 space-y-1.5 min-h-[3rem]">
+              {logs.length === 0 ? (
+                <p className="text-xs text-slate-400 italic">Waiting for automation to start…</p>
+              ) : (
+                logs.map((log, index) => {
+                  const tone = logTone(log.message, log.type);
+                  return (
+                    <div key={`${index}-${log.message}`} className="flex items-start gap-2 text-xs leading-snug">
+                      <LogIcon tone={tone} />
+                      <span
+                        className={
+                          tone === 'error'
+                            ? 'text-red-700'
+                            : tone === 'success'
+                              ? 'text-green-700'
+                              : 'text-slate-700'
+                        }
+                      >
+                        {log.message}
+                      </span>
+                    </div>
+                  );
+                })
+              )}
+              <div ref={logsEndRef} />
+            </div>
           </div>
-          <div className="overflow-y-auto p-2.5 space-y-1.5 min-h-[3rem]">
-            {logs.length === 0 ? (
-              <p className="text-xs text-slate-400 italic">Waiting for automation to start…</p>
-            ) : (
-              logs.map((log, index) => {
-                const tone = logTone(log.message, log.type);
-                return (
-                  <div key={`${index}-${log.message}`} className="flex items-start gap-2 text-xs leading-snug">
-                    <LogIcon tone={tone} />
-                    <span
-                      className={
-                        tone === 'error'
-                          ? 'text-red-700'
-                          : tone === 'success'
-                            ? 'text-green-700'
-                            : 'text-slate-700'
-                      }
-                    >
-                      {log.message}
-                    </span>
-                  </div>
-                );
-              })
-            )}
-            <div ref={logsEndRef} />
-          </div>
-        </div>
+        )}
+
+        {phase === 'credentials' && (
+          <form
+            onSubmit={(e) => {
+              e.preventDefault();
+              onSubmitCredentials?.();
+            }}
+            className="px-5 pb-5 space-y-3.5 border-t border-slate-100 pt-4"
+          >
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                CEPR User ID / Email ID <span className="text-red-500">*</span>
+              </label>
+              <input
+                type="text"
+                value={ceprId}
+                onChange={(e) => onCeprIdChange?.(e.target.value)}
+                placeholder="Enter CEPR User ID or Email ID"
+                disabled={loading}
+                className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 transition-all ${
+                  credentialsError ? 'border-red-400 focus:ring-red-500' : 'border-slate-300'
+                }`}
+                autoFocus
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-slate-700 mb-1">
+                Password <span className="text-red-500">*</span>
+              </label>
+              <div className="relative">
+                <input
+                  type={showPassword ? 'text' : 'password'}
+                  value={password}
+                  onChange={(e) => onPasswordChange?.(e.target.value)}
+                  placeholder="Enter CPCB Portal Password"
+                  disabled={loading}
+                  className={`w-full px-3 py-2 text-sm border rounded-lg focus:ring-2 focus:ring-green-500 outline-none disabled:opacity-60 pr-10 transition-all ${
+                    credentialsError ? 'border-red-400 focus:ring-red-500' : 'border-slate-300'
+                  }`}
+                  autoComplete="current-password"
+                />
+                <button
+                  type="button"
+                  onClick={onToggleShowPassword}
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 transition-colors"
+                  tabIndex={-1}
+                  aria-label={showPassword ? 'Hide password' : 'Show password'}
+                >
+                  {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+                </button>
+              </div>
+            </div>
+
+            {credentialsError ? (
+              <p className="text-xs text-red-600 font-medium">{credentialsError}</p>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-3 pt-2">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 transition-colors"
+              >
+                Cancel
+              </button>
+              <button
+                type="submit"
+                disabled={loading || !ceprId?.trim() || !password}
+                className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 disabled:opacity-50 shadow-sm transition-colors cursor-pointer disabled:cursor-not-allowed"
+              >
+                {loading && <Loader2 size={14} className="animate-spin" />}
+                {submitCredentialsLabel}
+              </button>
+            </div>
+          </form>
+        )}
 
         {phase === 'email_otp' && (
           <div className="px-5 pb-4 space-y-3 border-t border-slate-100 pt-4">
@@ -369,7 +466,16 @@ export default function RegistrationAutomationModal({
         )}
 
         {phase === 'error' && (
-          <div className="px-5 pb-4 border-t border-slate-100 pt-4 flex justify-end">
+          <div className="px-5 pb-4 border-t border-slate-100 pt-4 flex items-center justify-between gap-3">
+            {onRetryCredentials ? (
+              <button
+                type="button"
+                onClick={onRetryCredentials}
+                className="px-4 py-2 text-sm font-medium text-blue-700 bg-blue-50 border border-blue-200 rounded-lg hover:bg-blue-100 transition-colors"
+              >
+                Edit Credentials & Retry
+              </button>
+            ) : <span />}
             <button
               type="button"
               onClick={onClose}

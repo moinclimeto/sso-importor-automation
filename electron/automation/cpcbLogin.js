@@ -738,18 +738,28 @@ async function selectRadioByLabelInModal(page, modal, labelText, onLog) {
   throw new Error(`Could not select option "${text}" in Applicant Type modal`);
 }
 
-async function clickPlasticWasteRegister(page, onLog) {
-  if (onLog) onLog('Clicking Register on Plastic Waste Management...');
+async function clickPlasticWasteCard(page, onLog) {
+  if (onLog) onLog('Locating Plastic Waste Management card on dashboard...');
 
-  // Find the exact text "Plastic Waste Management" and go to its parent container to find the Register button
-  const plasticHeading = page.locator('h1, h2, h3, h4, h5, div, span, p').filter({ hasText: /^Plastic Waste Management$/i }).last();
+  const plasticHeading = page.locator('h1, h2, h3, h4, h5, div, span, p, .card-title').filter({ hasText: /^Plastic Waste Management$/i }).last();
   
-  if (await plasticHeading.isVisible({ timeout: 5000 }).catch(() => false)) {
-    // Traverse up to find a container that has the 'Register' button inside it, specifically looking for button.card-btn
-    const registerBtn = plasticHeading.locator('xpath=ancestor::div[.//button[contains(translate(text(), "REGISTER", "register"), "register")]][1]').locator('button.card-btn, button').filter({ hasText: /Register/i }).first();
+  if (await plasticHeading.isVisible({ timeout: 10000 }).catch(() => false)) {
+    const card = plasticHeading.locator('xpath=ancestor::div[contains(@class, "card-content") or contains(@class, "card") or .//button[contains(@class, "card-btn")]][1]');
     
+    // Check for Open button first (preferred for existing/linked accounts)
+    const openBtn = card.locator('button.card-btn, button').filter({ hasText: /^\s*Open\s*$/i }).first();
+    if (await openBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+      if (onLog) onLog('Found "Open" button on Plastic Waste Management card. Clicking Open...');
+      await openBtn.scrollIntoViewIfNeeded().catch(() => {});
+      await openBtn.click({ timeout: 5000 });
+      await page.waitForTimeout(1500);
+      return;
+    }
+
+    // Check for Register button
+    const registerBtn = card.locator('button.card-btn, button').filter({ hasText: /^\s*Register\s*$/i }).first();
     if (await registerBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-      if (onLog) onLog('Found Plastic Waste Register button. Clicking...');
+      if (onLog) onLog('Found "Register" button on Plastic Waste Management card. Clicking Register...');
       await registerBtn.scrollIntoViewIfNeeded().catch(() => {});
       await registerBtn.click({ timeout: 5000 });
       await page.waitForTimeout(1500);
@@ -757,17 +767,155 @@ async function clickPlasticWasteRegister(page, onLog) {
     }
   }
 
-  if (onLog) onLog('Could not strictly verify Plastic Waste container. Clicking the first Register button as fallback...');
-  const fallbackEl = page.locator('button.card-btn').filter({ hasText: /Register/i }).first();
-  await fallbackEl.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-  
-  if (await fallbackEl.isVisible().catch(() => false)) {
-    await fallbackEl.scrollIntoViewIfNeeded().catch(() => {});
-    await fallbackEl.click({ timeout: 5000 });
+  // Fallback if container xpath failed
+  const fallbackOpen = page.locator('button.card-btn, button').filter({ hasText: /^\s*Open\s*$/i }).first();
+  if (await fallbackOpen.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (onLog) onLog('Clicking Open button fallback...');
+    await fallbackOpen.scrollIntoViewIfNeeded().catch(() => {});
+    await fallbackOpen.click({ timeout: 5000 });
     await page.waitForTimeout(1500);
-  } else {
-    throw new Error('Could not find the Register button on the dashboard');
+    return;
   }
+
+  const fallbackReg = page.locator('button.card-btn, button').filter({ hasText: /^\s*Register\s*$/i }).first();
+  if (await fallbackReg.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (onLog) onLog('Clicking Register button fallback...');
+    await fallbackReg.scrollIntoViewIfNeeded().catch(() => {});
+    await fallbackReg.click({ timeout: 5000 });
+    await page.waitForTimeout(1500);
+    return;
+  }
+
+  throw new Error('Could not find Open or Register button on Plastic Waste Management card');
+}
+
+async function clickPlasticWasteRegister(page, onLog) {
+  return clickPlasticWasteCard(page, onLog);
+}
+
+async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner') {
+  if (onLog) onLog(`Waiting for Applicant Type modal (selecting: ${targetRole})...`);
+
+  const modal = page.locator('[role="dialog"], div.rounded-2xl, div.w-cst-size, .modal-content, .cdk-overlay-pane').filter({
+    hasText: /Applicant Type|Please select your application type/i,
+  }).last();
+
+  await modal.waitFor({ state: 'visible', timeout: 15000 });
+  await page.waitForTimeout(800);
+
+  // Variant A: Role selection table (Table with Role / Email / Address)
+  const isTableModal = (await modal.locator('table, .applicant-type-table, .applcant-type-tb-wrapper').count().catch(() => 0)) > 0;
+  
+  if (isTableModal) {
+    if (onLog) onLog(`Role selection table detected in modal. Selecting "${targetRole}"...`);
+
+    // Find row with targetRole text
+    let roleRow = modal.locator('table tr, tbody tr').filter({
+      hasText: new RegExp(escapeRegex(targetRole), 'i')
+    }).first();
+
+    if ((await roleRow.count().catch(() => 0)) === 0) {
+      // Fallback: check Brand Owner if specified role was not found
+      roleRow = modal.locator('table tr, tbody tr').filter({ hasText: /Brand Owner/i }).first();
+    }
+    if ((await roleRow.count().catch(() => 0)) === 0) {
+      // Fallback to first non-header row
+      roleRow = modal.locator('table tbody tr, table tr').nth(1);
+    }
+
+    if (await roleRow.isVisible({ timeout: 5000 }).catch(() => false)) {
+      const radio = roleRow.locator('input[type="radio"], input[formcontrolname="type"]').first();
+      const label = roleRow.locator('label, span, p').first();
+
+      if (await radio.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await radio.click({ force: true });
+      } else if (await label.isVisible({ timeout: 2000 }).catch(() => false)) {
+        await label.click({ force: true });
+      } else {
+        await roleRow.click({ force: true });
+      }
+      if (onLog) onLog(`Selected "${targetRole}" in table.`);
+      await page.waitForTimeout(600);
+    }
+
+    // Click Open button on modal
+    const openBtn = modal.locator('button.signup-btn-fmt, app-button[type="submit"] button, button[type="submit"], button').filter({
+      hasText: /^\s*Open\s*$/i
+    }).last();
+
+    if (await openBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
+      if (onLog) onLog('Clicking Open button in Applicant Type modal...');
+      await openBtn.click({ timeout: 8000 });
+      await page.waitForTimeout(2500);
+    } else {
+      const submitBtn = modal.locator('button[type="submit"], button').filter({ hasText: /Open|Proceed|Submit/i }).last();
+      if (await submitBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
+        await submitBtn.click({ timeout: 8000 });
+        await page.waitForTimeout(2500);
+      }
+    }
+    return;
+  }
+
+  // Variant B: Wizard Modal (PIBO -> typeCategory -> Onboarding)
+  if (onLog) onLog(`Wizard options detected in modal. Selecting PIBO -> ${targetRole}...`);
+  const typeRadio = modal.locator('input[formcontrolname="type"]').first();
+  if (await typeRadio.isVisible({ timeout: 5000 }).catch(() => false)) {
+    await typeRadio.click({ force: true, timeout: 5000 });
+    await page.waitForTimeout(800);
+  }
+
+  await modal
+    .getByText(/Please select one of the following|Recycler|Cement Co-processing|Importer|Producer|Brand Owner/i)
+    .first()
+    .waitFor({ state: 'visible', timeout: 10000 })
+    .catch(() => {});
+
+  const subTypeRadios = modal.locator('input[formcontrolname="typeCategory"]');
+  const subTypeCount = await subTypeRadios.count();
+  if (subTypeCount > 1) {
+    const subTypeIndex = /Brand Owner/i.test(targetRole) ? 2 : 1;
+    await subTypeRadios.nth(subTypeIndex).click({ force: true, timeout: 5000 });
+  } else {
+    await selectRadioByLabelInModal(page, modal, targetRole, onLog).catch(() => {});
+  }
+
+  await clickOnboardingButton(modal, page, onLog);
+}
+
+async function openPlasticWasteManagement(page, onLog, targetRole = 'Brand Owner') {
+  await waitForDashboard(page, onLog);
+  await waitForCpcbLoaderGone(page);
+
+  const alreadyOnOnboarding = /\/onboarding/i.test(page.url() || '');
+  const newAppOnDashboard = page.getByRole('button', { name: /New Application/i }).first();
+  if (alreadyOnOnboarding && await newAppOnDashboard.isVisible({ timeout: 3000 }).catch(() => false)) {
+    if (onLog) onLog('Already on onboarding dashboard.');
+    return;
+  }
+
+  await clickPlasticWasteCard(page, onLog);
+  await handleApplicantTypeModal(page, onLog, targetRole);
+  await waitForCpcbLoaderGone(page, 40000);
+  await page.waitForTimeout(1500);
+}
+
+export async function openPlasticWasteManagementFlow(onLog, options = {}) {
+  const { targetRole } = options;
+  const session = getLoginSession();
+  let page = session.page;
+  if (!page || page.isClosed()) {
+    const fresh = await ensureLoginPage(onLog);
+    page = fresh.page;
+  }
+  const regResult = await getRegistrationDetails().catch(() => ({ data: {} }));
+  const role = targetRole || regResult.data?.sub_applicant_type || 'Brand Owner';
+  await openPlasticWasteManagement(page, onLog, role);
+  return {
+    success: true,
+    url: page.url() || '',
+    authenticated: true,
+  };
 }
 
 async function clickOnboardingButton(modal, page, onLog) {
@@ -783,7 +931,7 @@ async function clickOnboardingButton(modal, page, onLog) {
 async function startApplicationOnboarding(page, onLog) {
   const regResult = await getRegistrationDetails();
   const applicantType = regResult.data?.applicant_type || 'PIBO';
-  const subApplicantType = regResult.data?.sub_applicant_type || 'Importer';
+  const subApplicantType = regResult.data?.sub_applicant_type || 'Brand Owner';
 
   if (onLog) {
     onLog(`Starting application onboarding — ${applicantType} / ${subApplicantType}`);
@@ -797,39 +945,7 @@ async function startApplicationOnboarding(page, onLog) {
   if (alreadyOnOnboarding && await newAppOnDashboard.isVisible({ timeout: 3000 }).catch(() => false)) {
     if (onLog) onLog('Already on onboarding dashboard — skipping Register / Applicant Type.');
   } else {
-    await clickPlasticWasteRegister(page, onLog);
-
-  const modal = getApplicantTypeModal(page);
-  await modal.waitFor({ state: 'visible', timeout: 15000 });
-
-  // Select PIBO (first main option)
-  const typeRadio = modal.locator('input[formcontrolname="type"]').first();
-  await typeRadio.waitFor({ state: 'visible', timeout: 10000 });
-  // Ensure we click the element, force if needed
-  await typeRadio.click({ force: true, timeout: 5000 });
-  await page.waitForTimeout(800);
-
-  // Wait for the sub-options to appear
-  await modal
-    .getByText(/Please select one of the following|Recycler|Cement Co-processing|Importer|Producer|Brand Owner/i)
-    .first()
-    .waitFor({ state: 'visible', timeout: 10000 })
-    .catch(() => {});
-
-  // Select Importer (second sub-option: Producer, Importer, Brand Owner)
-  // We use nth(1) since Importer is typically the second radio button
-  const subTypeRadios = modal.locator('input[formcontrolname="typeCategory"]');
-  const subTypeCount = await subTypeRadios.count();
-  
-  if (subTypeCount > 1) {
-    // Portal sub-type order: 0=Producer, 1=Importer, 2=Brand Owner
-    const subTypeIndex = subApplicantType === 'Brand Owner' ? 2 : 1;
-    await subTypeRadios.nth(subTypeIndex).click({ force: true, timeout: 5000 });
-  } else {
-    // Fallback to text selection if formcontrolname is missing
-    await selectRadioByLabelInModal(page, modal, subApplicantType, onLog);
-  }
-  await clickOnboardingButton(modal, page, onLog);
+    await openPlasticWasteManagement(page, onLog, subApplicantType);
   }
 
   if (onLog) onLog('Waiting for onboarding dashboard (loader to finish)...');
@@ -1446,6 +1562,14 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
     await clickContinueAfterLoginVerify(page, onLog);
     await waitForCpcbLoaderGone(page, 40000);
     await waitForDashboard(page, onLog).catch(() => {});
+
+    try {
+      const regResult = await getRegistrationDetails().catch(() => ({ data: {} }));
+      const targetRole = regResult.data?.sub_applicant_type || 'Brand Owner';
+      await openPlasticWasteManagement(page, onLog, targetRole);
+    } catch (dashNavErr) {
+      if (onLog) onLog('Dashboard navigation note: ' + (dashNavErr.message || dashNavErr));
+    }
 
     const verifiedResult = {
       success: true,

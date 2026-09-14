@@ -8,57 +8,90 @@ import {
 } from '../../shared/entityRegistrationTypes.js';
 import { PORTAL_PLASTIC_MATERIALS } from '../../shared/partBSection5.js';
 import { FINANCIAL_YEAR_OPTIONS, resolveRecordTotalMt } from '../../shared/procurementConversionFactor.js';
+import { INDIAN_STATES } from './registrationGeneralInfo.js';
 
-/** Exact Excel column labels for Procurement (Purchases) */
+export const CONTAINER_CAPACITY_OPTIONS = ['<0.9 L', '0.9 L to 4.9 L', '>=5 L', 'N/A'];
+
+/** Exact Excel column labels for Brand Owner Procurement (Purchases) */
 export const PURCHASE_EXCEL_HEADERS = [
-  'Registration Type',
   'Entity Type',
-  'GST Number',
-  'Name Of The Entity',
-  'Country',
+  'Name of the Entity',
+  'State',
   'Address',
   'Mobile Number',
   'Plastic Material Type',
-  'Category Of Plastic',
+  'Category of Plastic',
+  'Cat-I Container Capacity',
+  'Total Plastic Quantity (Ton)',
   'Financial Year',
   'Date',
-  'Total Plastic Quantity (Ton)',
-  'Recycled Plastic %',
-  'Invoice Filename',
+  'HSN Code',
+  'Seller GST',
+  'Invoice Number/GST E-Invoice Number',
+  'Total Invoice Value',
+  'Invoice File Name',
 ];
 
 export const PURCHASE_TABLE_COLUMNS = [
-  { key: 'registration_type', label: 'Registration Type' },
   { key: 'entity_type', label: 'Entity Type' },
-  { key: 'supplier_gst_number', label: 'GST Number' },
-  { key: 'supplier_name', label: 'Name Of The Entity' },
-  { key: 'country', label: 'Country' },
+  { key: 'supplier_name', label: 'Name of the Entity' },
+  { key: 'state', label: 'State' },
   { key: 'address_line_1', label: 'Address' },
   { key: 'supplier_mobile_number', label: 'Mobile Number' },
   { key: 'plastic_type', label: 'Plastic Material Type' },
-  { key: 'category_of_plastic', label: 'Category Of Plastic' },
+  { key: 'category_of_plastic', label: 'Category of Plastic' },
+  { key: 'cat1_capacity', label: 'Cat-I Container Capacity' },
+  { key: 'quantity_mt', label: 'Total Plastic Quantity (Ton)' },
   { key: 'financial_year', label: 'Financial Year' },
   { key: 'procurement_date', label: 'Date' },
-  { key: 'quantity_mt', label: 'Total Plastic Quantity (Ton)' },
-  { key: 'recycled_plastic_percent', label: 'Recycled Plastic %' },
-  { key: 'invoice_filename', label: 'Invoice Filename' },
+  { key: 'hsn_code', label: 'HSN Code' },
+  { key: 'supplier_gst_number', label: 'Seller GST' },
+  { key: 'invoice_number', label: 'Invoice Number/GST E-Invoice Number' },
+  { key: 'total_amount', label: 'Total Invoice Value' },
+  { key: 'invoice_filename', label: 'Invoice File Name' },
 ];
 
 const PURCHASE_HEADER_TO_KEY = {
   registration_type: 'registration_type',
   entity_type: 'entity_type',
-  gst_number: 'supplier_gst_number',
   name_of_the_entity: 'supplier_name',
-  country: 'country',
+  supplier_name: 'supplier_name',
+  name_of_entity: 'supplier_name',
+  entity_name: 'supplier_name',
+  state: 'state',
   address: 'address_line_1',
+  address_line_1: 'address_line_1',
+  country: 'country',
   mobile_number: 'supplier_mobile_number',
+  supplier_mobile_number: 'supplier_mobile_number',
   plastic_material_type: 'plastic_type',
+  plastic_type: 'plastic_type',
   category_of_plastic: 'category_of_plastic',
+  cat_i_container_capacity: 'cat1_capacity',
+  cat1_container_capacity: 'cat1_capacity',
+  cat1_capacity: 'cat1_capacity',
+  container_capacity: 'cat1_capacity',
+  total_plastic_quantity_ton: 'quantity_mt',
+  quantity_mt: 'quantity_mt',
   financial_year: 'financial_year',
   date: 'procurement_date',
-  total_plastic_quantity_ton: 'quantity_mt',
-  recycled_plastic_percent: 'recycled_plastic_percent',
+  procurement_date: 'procurement_date',
+  invoice_date: 'procurement_date',
+  hsn_code: 'hsn_code',
+  seller_gst: 'supplier_gst_number',
+  seller_gstin: 'supplier_gst_number',
+  supplier_gst: 'supplier_gst_number',
+  supplier_gst_number: 'supplier_gst_number',
+  gst_number: 'supplier_gst_number',
+  invoice_number_gst_e_invoice_number: 'invoice_number',
+  invoice_number: 'invoice_number',
+  invoice_no: 'invoice_number',
+  total_invoice_value: 'total_amount',
+  total_amount: 'total_amount',
+  invoice_value: 'total_amount',
+  invoice_file_name: 'invoice_filename',
   invoice_filename: 'invoice_filename',
+  recycled_plastic_percent: 'recycled_plastic_percent',
 };
 
 /** Exact Excel column labels for Post Consumer (Sales) */
@@ -150,20 +183,22 @@ const SALE_HEADER_TO_KEY = {
 };
 
 const PURCHASE_SAMPLE = {
-  'Registration Type': 'Registered',
-  'Entity Type': 'Brand Owner',
-  'GST Number': '06AABCG1111H1Z8',
-  'Name Of The Entity': 'Green Plastics India',
-  'Country': 'India',
-  'Address': 'Plot 12, MIDC, Gurugram, Haryana',
+  'Entity Type': 'Manufacturer',
+  'Name of the Entity': 'Green Plastics India Pvt Ltd',
+  'State': 'Maharashtra',
+  'Address': 'Plot 12, MIDC, Andheri East, Mumbai',
   'Mobile Number': '9876543210',
   'Plastic Material Type': 'HDPE',
-  'Category Of Plastic': 'Cat-I',
+  'Category of Plastic': 'Cat-I',
+  'Cat-I Container Capacity': '<0.9 L',
+  'Total Plastic Quantity (Ton)': 12.5,
   'Financial Year': '2024-25',
   'Date': '2025-07-28',
-  'Total Plastic Quantity (Ton)': 12,
-  'Recycled Plastic %': 50,
-  'Invoice Filename': 'invoice_PO_2025_001.pdf',
+  'HSN Code': '3923',
+  'Seller GST': '27AABCG1111H1Z8',
+  'Invoice Number/GST E-Invoice Number': 'INV-2025-001',
+  'Total Invoice Value': 125000,
+  'Invoice File Name': 'invoice_001.pdf',
 };
 
 const SALE_SAMPLE = {
@@ -326,17 +361,22 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     if (flat[key] === undefined || flat[key] === '') flat[key] = v;
   }
 
-  const supplier_name = str(flat.supplier_name);
-  const procurement_date = excelDateToIso(flat.procurement_date);
-  const invoice_filename = str(flat.invoice_filename);
-  const quantity_mt = num(flat.quantity_mt);
+  const supplier_name = str(flat.supplier_name || flat.entity_name);
+  const procurement_date = excelDateToIso(flat.procurement_date || flat.invoice_date);
+  const invoice_filename = str(flat.invoice_filename || flat.invoice_file_name);
+  const invoice_number = str(flat.invoice_number || flat.invoice_no || invoice_filename);
+  const quantity_mt = num(flat.quantity_mt || flat.total_plastic_quantity_ton);
+  const total_amount = num(flat.total_amount || flat.total_invoice_value);
+  const hsn_code = str(flat.hsn_code);
+  const state = str(flat.state);
+  const cat1_capacity = str(flat.cat1_capacity);
 
-  if (!supplier_name && !invoice_filename && !quantity_mt) {
-    return null;
+  if (!supplier_name && !invoice_filename && !quantity_mt && !invoice_number) {
+    return null; // blank row
   }
 
   if (!supplier_name) {
-    errors.push(`Row ${rowNum}: Name Of The Entity is required`);
+    errors.push(`Row ${rowNum}: Name of the Entity is required`);
     return null;
   }
   if (!procurement_date) {
@@ -344,40 +384,43 @@ function mapPurchaseRow(mapped, rowNum, errors) {
     return null;
   }
   if (!invoice_filename) {
-    errors.push(`Row ${rowNum}: Invoice Filename is required`);
+    errors.push(`Row ${rowNum}: Invoice File Name is required`);
     return null;
   }
 
-  const supplier_gst = str(flat.supplier_gst_number || flat.supplier_gst).toUpperCase();
+  const supplier_gst = str(flat.supplier_gst_number || flat.seller_gst || flat.supplier_gst).toUpperCase();
   const is_gst = supplier_gst ? 'Yes' : 'No';
 
   return {
     company_id: null,
     record_type: 'purchase_epr',
-    registration_type: str(flat.registration_type),
+    registration_type: str(flat.registration_type) || (supplier_gst ? 'Registered' : 'Unregistered'),
     entity_type: str(flat.entity_type),
     category_of_plastic: normalizePlasticCategory(flat.category_of_plastic),
+    cat1_capacity,
     supplier_name,
-    address_line_1: str(flat.address_line_1),
-    supplier_mobile_number: str(flat.supplier_mobile_number),
-    plastic_type: str(flat.plastic_type),
-    country: str(flat.country),
+    address_line_1: str(flat.address_line_1 || flat.address),
+    state,
+    supplier_mobile_number: str(flat.supplier_mobile_number || flat.mobile_number),
+    plastic_type: str(flat.plastic_type || flat.plastic_material_type),
+    country: str(flat.country) || 'India',
     financial_year: str(flat.financial_year),
     is_supplier_gst_available: is_gst,
     supplier_gst_number: supplier_gst,
+    hsn_code,
     quantity_mt,
     recycled_plastic_percent: num(flat.recycled_plastic_percent),
     procurement_date,
     invoice_filename,
+    invoice_number,
     vendor_name: supplier_name,
     vendor_gstin: supplier_gst,
-    invoice_no: invoice_filename,
-    invoice_number: invoice_filename,
+    invoice_no: invoice_number,
     invoice_date: procurement_date,
     item_name: str(flat.plastic_type) || normalizePlasticCategory(flat.category_of_plastic) || 'Plastic',
     quantity: quantity_mt,
     unit: 'MT',
-    total_amount: 0,
+    total_amount,
     doc_status: 'inbox',
   };
 }
@@ -426,6 +469,14 @@ function addSharedLookupsSheet(wb) {
   FINANCIAL_YEAR_OPTIONS.forEach((value, idx) => {
     lookups.getCell(`E${idx + 2}`).value = value;
   });
+  lookups.getCell('F1').value = 'Cat-I Container Capacity';
+  CONTAINER_CAPACITY_OPTIONS.forEach((value, idx) => {
+    lookups.getCell(`F${idx + 2}`).value = value;
+  });
+  lookups.getCell('G1').value = 'State';
+  INDIAN_STATES.forEach((value, idx) => {
+    lookups.getCell(`G${idx + 2}`).value = value;
+  });
   lookups.state = 'veryHidden';
   return lookups;
 }
@@ -455,19 +506,10 @@ async function buildProcurementWorkbook() {
   ws.addRow(PURCHASE_EXCEL_HEADERS.map((header) => PURCHASE_SAMPLE[header] ?? ''));
 
   PURCHASE_EXCEL_HEADERS.forEach((header, idx) => {
-    ws.getColumn(idx + 1).width = Math.min(40, Math.max(16, header.length + 2));
+    ws.getColumn(idx + 1).width = Math.min(42, Math.max(16, header.length + 2));
   });
 
   const lastRow = 500;
-  addListValidation(
-    ws,
-    PURCHASE_EXCEL_HEADERS,
-    'Registration Type',
-    lastRow,
-    `Lookups!$A$2:$A$${REGISTRATION_TYPE_OPTIONS.length + 1}`,
-    'Invalid Registration Type',
-    'Choose Registered or Unregistered.',
-  );
   addListValidation(
     ws,
     PURCHASE_EXCEL_HEADERS,
@@ -476,6 +518,15 @@ async function buildProcurementWorkbook() {
     `Lookups!$B$2:$B$${ENTITY_TYPE_OPTIONS.length + 1}`,
     'Invalid Entity Type',
     'Choose Producer, PWP, Brand Owner, Importer, Manufacturer, or Other.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'State',
+    lastRow,
+    `Lookups!$G$2:$G$${INDIAN_STATES.length + 1}`,
+    'Invalid State',
+    'Choose a valid State from the list.',
   );
   addListValidation(
     ws,
@@ -489,11 +540,20 @@ async function buildProcurementWorkbook() {
   addListValidation(
     ws,
     PURCHASE_EXCEL_HEADERS,
-    'Category Of Plastic',
+    'Category of Plastic',
     lastRow,
     `Lookups!$D$2:$D$${PLASTIC_CATEGORIES.length + 1}`,
-    'Invalid Category Of Plastic',
+    'Invalid Category of Plastic',
     'Choose Cat-I, Cat-II, Cat-III, or Cat-IV.',
+  );
+  addListValidation(
+    ws,
+    PURCHASE_EXCEL_HEADERS,
+    'Cat-I Container Capacity',
+    lastRow,
+    `Lookups!$F$2:$F$${CONTAINER_CAPACITY_OPTIONS.length + 1}`,
+    'Invalid Container Capacity',
+    'Choose <0.9 L, 0.9 L to 4.9 L, >=5 L, or N/A.',
   );
   addListValidation(
     ws,

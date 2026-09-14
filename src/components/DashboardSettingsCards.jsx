@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react';
 import { CreditCard, Edit2, Check, X, UserCheck, Loader2 } from 'lucide-react';
+import { Toast, useToast } from './Toast.jsx';
 
 const SUB_APPLICANT_OPTIONS = ['Importer', 'Brand Owner'];
 
 export default function DashboardSettingsCards() {
+  const { toast, showToast, hideToast } = useToast();
   const [bankDetails, setBankDetails] = useState({ account_number: '', ifsc_code: '' });
   const [isEditingBank, setIsEditingBank] = useState(false);
   const [editBankDetails, setEditBankDetails] = useState({ account_number: '', ifsc_code: '' });
@@ -90,102 +92,97 @@ export default function DashboardSettingsCards() {
   };
 
   return (
-    <div className="space-y-4">
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
-        <div className="flex items-center gap-4">
-          <div className="p-3 rounded-lg bg-indigo-500">
-            <CreditCard size={22} className="text-white" />
-          </div>
-          <div>
-            <p className="text-sm text-slate-500 font-medium">Global Sale Bank Details</p>
-            <p className="text-xs text-slate-400 mt-0.5">Account No & IFSC auto-fill all Post Consumer (Sale) entries</p>
-            {bankSaveMessage && (
-              <p className={`text-xs mt-1 ${bankSaveMessage.includes('required') || bankSaveMessage.includes('Failed') || bankSaveMessage.includes('not available') ? 'text-red-600' : 'text-emerald-600'}`}>
-                {bankSaveMessage}
-              </p>
-            )}
-            {isEditingBank ? (
-              <div className="flex items-center gap-3 mt-1">
-                <input
-                  type="text"
-                  placeholder="Account Number"
-                  value={editBankDetails.account_number}
-                  onChange={(e) => setEditBankDetails({ ...editBankDetails, account_number: e.target.value })}
-                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-40"
-                />
-                <input
-                  type="text"
-                  placeholder="IFSC Code"
-                  value={editBankDetails.ifsc_code}
-                  onChange={(e) => setEditBankDetails({
-                    ...editBankDetails,
-                    ifsc_code: e.target.value.toUpperCase(),
-                  })}
-                  className="border border-slate-200 rounded-md px-2 py-1 text-sm outline-none focus:border-indigo-500 w-32"
-                />
-              </div>
-            ) : (
-              <p className="text-sm font-semibold text-slate-800 mt-0.5">
-                {bankDetails.account_number || 'Not Added'} <span className="text-slate-400 mx-1">|</span> {bankDetails.ifsc_code || 'Not Added'}
-              </p>
-            )}
-          </div>
-        </div>
-        <div>
-          {isEditingBank ? (
-            <div className="flex items-center gap-2">
-              <button onClick={handleSaveBankDetails} className="p-1.5 bg-green-50 text-green-600 rounded-md hover:bg-green-100 transition">
-                <Check size={16} />
-              </button>
-              <button onClick={() => setIsEditingBank(false)} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition">
-                <X size={16} />
-              </button>
+    <>
+      <Toast toast={toast} onClose={hideToast} />
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+        {/* Global Bank Details */}
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100 flex items-center justify-between">
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="p-3 rounded-lg bg-indigo-500 flex-shrink-0">
+              <CreditCard size={22} className="text-white" />
             </div>
-          ) : (
-            <button
-              onClick={() => {
-                setEditBankDetails(bankDetails);
-                setBankSaveMessage('');
-                setIsEditingBank(true);
-              }}
-              className="p-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 transition"
-              title="Edit Bank Details"
-            >
-              <Edit2 size={16} />
-            </button>
-          )}
-        </div>
-      </div>
-
-      <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
-        <div className="flex items-start justify-between gap-4">
-          <div className="flex items-start gap-4">
-            <div className="p-3 rounded-lg bg-emerald-500">
-              <UserCheck size={22} className="text-white" />
-            </div>
-            <div>
-              <p className="text-sm text-slate-500 font-medium">Registration Applicant Type</p>
-              <p className="text-xs text-slate-400 mt-0.5">
-                Saved in registration details and used on the CPCB portal
-              </p>
-              {regSaveMessage && (
-                <p className={`text-xs mt-1 ${regSaveMessage.startsWith('Saved') ? 'text-emerald-600' : 'text-red-600'}`}>
-                  {regSaveMessage}
+            <div className="min-w-0">
+              <p className="text-sm text-slate-500 font-medium truncate">Global Sale Bank Details</p>
+              <p className="text-xs text-slate-400 mt-0.5 truncate">Auto-fills Post Consumer (Sale) entries</p>
+              {bankSaveMessage && (
+                <p className={`text-xs mt-1 truncate ${bankSaveMessage.includes('required') || bankSaveMessage.includes('Failed') || bankSaveMessage.includes('not available') ? 'text-red-600' : 'text-emerald-600'}`}>
+                  {bankSaveMessage}
                 </p>
               )}
-              <div className="mt-3 flex flex-wrap items-center gap-6">
-                <div>
-                  <p className="text-xs font-medium text-slate-500 mb-1.5">Applicant</p>
-                  <label className="inline-flex items-center gap-1.5 text-sm font-semibold text-slate-800">
-                    <input type="radio" name="applicantType" checked readOnly className="accent-emerald-600" />
-                    PIBO
-                  </label>
+              {isEditingBank ? (
+                <div className="flex items-center gap-2 mt-1">
+                  <input
+                    type="text"
+                    placeholder="Account No"
+                    value={editBankDetails.account_number}
+                    onChange={(e) => setEditBankDetails({ ...editBankDetails, account_number: e.target.value })}
+                    className="border border-slate-200 rounded-md px-2 py-1 text-xs outline-none focus:border-indigo-500 w-28"
+                  />
+                  <input
+                    type="text"
+                    placeholder="IFSC"
+                    value={editBankDetails.ifsc_code}
+                    onChange={(e) => setEditBankDetails({
+                      ...editBankDetails,
+                      ifsc_code: e.target.value.toUpperCase(),
+                    })}
+                    className="border border-slate-200 rounded-md px-2 py-1 text-xs outline-none focus:border-indigo-500 w-24"
+                  />
                 </div>
-                <div>
-                  <p className="text-xs font-medium text-slate-500 mb-1.5">Sub-Applicant</p>
-                  <div className="flex items-center gap-4">
+              ) : (
+                <p className="text-sm font-semibold text-slate-800 mt-0.5 truncate">
+                  {bankDetails.account_number || 'Not Added'} <span className="text-slate-400 mx-1">|</span> {bankDetails.ifsc_code || 'Not Added'}
+                </p>
+              )}
+            </div>
+          </div>
+          <div className="flex-shrink-0 ml-2">
+            {isEditingBank ? (
+              <div className="flex items-center gap-1.5">
+                <button onClick={handleSaveBankDetails} className="p-1.5 bg-green-50 text-green-600 rounded-md hover:bg-green-100 transition" title="Save">
+                  <Check size={16} />
+                </button>
+                <button onClick={() => setIsEditingBank(false)} className="p-1.5 bg-red-50 text-red-600 rounded-md hover:bg-red-100 transition" title="Cancel">
+                  <X size={16} />
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => {
+                  setEditBankDetails(bankDetails);
+                  setBankSaveMessage('');
+                  setIsEditingBank(true);
+                }}
+                className="p-1.5 bg-slate-50 text-slate-600 rounded-md hover:bg-slate-100 transition"
+                title="Edit Bank Details"
+              >
+                <Edit2 size={16} />
+              </button>
+            )}
+          </div>
+        </div>
+
+        {/* Registration Applicant Type */}
+        <div className="bg-white rounded-xl p-4 shadow-sm border border-slate-100">
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-start gap-4 min-w-0">
+              <div className="p-3 rounded-lg bg-emerald-500 flex-shrink-0">
+                <UserCheck size={22} className="text-white" />
+              </div>
+              <div className="min-w-0">
+                <p className="text-sm text-slate-500 font-medium truncate">Applicant Type</p>
+                <p className="text-xs text-slate-400 mt-0.5 truncate">
+                  Saved registration config
+                </p>
+                {regSaveMessage && (
+                  <p className={`text-xs mt-1 truncate ${regSaveMessage.startsWith('Saved') ? 'text-emerald-600' : 'text-red-600'}`}>
+                    {regSaveMessage}
+                  </p>
+                )}
+                <div className="mt-2 flex items-center gap-3">
+                  <div className="flex items-center gap-3">
                     {SUB_APPLICANT_OPTIONS.map((type) => (
-                      <label key={type} className="inline-flex items-center gap-1.5 text-sm cursor-pointer">
+                      <label key={type} className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 cursor-pointer">
                         <input
                           type="radio"
                           name="subApplicantType"
@@ -202,10 +199,12 @@ export default function DashboardSettingsCards() {
                 </div>
               </div>
             </div>
+            {savingReg && <Loader2 size={18} className="animate-spin text-emerald-600 mt-1 flex-shrink-0" />}
           </div>
-          {savingReg && <Loader2 size={18} className="animate-spin text-emerald-600 mt-1" />}
         </div>
       </div>
-    </div>
+    </>
   );
 }
+
+
