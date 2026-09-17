@@ -5,6 +5,8 @@ import { useNavigate } from 'react-router-dom';
 import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import RegistrationPartBSimpRawMaterial from '../components/RegistrationPartBSimpRawMaterial.jsx';
+import RegistrationPartCSimpRawMaterial from '../components/RegistrationPartCSimpRawMaterial.jsx';
 import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
 import {
   AUTO_FILLED_FIELDS,
@@ -24,6 +26,8 @@ import {
   mergeAutoData,
   mergeGeneralInfoFromSources,
   pickNonEmpty,
+  applyPartAPdfPath,
+  PART_A_PDF_DOC_BASE,
 } from '../utils/registrationFormPersistence.js';
 import {
   TYPE_OF_BUSINESS_OPTIONS,
@@ -46,8 +50,10 @@ import RegistrationAutomationModal, {
 } from '../components/RegistrationAutomationModal.jsx';
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
+import { isSimpRawMaterial } from '../../shared/entityRegistrationTypes.js';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
+import RegistrationPartASimpRawMaterial from '../components/RegistrationPartASimpRawMaterial.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
@@ -294,7 +300,7 @@ export default function NewApplicationPage() {
     if (needsPersist && window.pwp?.registration?.save) {
       await window.pwp.registration.save({
         applicant_type: saved.applicant_type || 'PIBO',
-        sub_applicant_type: saved.sub_applicant_type || 'Importer',
+        sub_applicant_type: saved.sub_applicant_type || (/simp/i.test(saved.applicant_type) ? 'Importer of raw material' : 'Importer'),
         cepr_id: saved.cepr_id,
         success_screenshot_path: saved.success_screenshot_path,
         email: loginCreds.email,
@@ -541,11 +547,7 @@ export default function NewApplicationPage() {
   const handlePartAPdfUpload = useCallback(async (field, file) => {
     setUploadingPdfField(field);
     try {
-      const docBase = field === 'detailsOfProductsPath'
-        ? 'operations_details'
-        : field === 'representativePicturePath'
-          ? 'plastic_packaging_picture'
-          : 'document';
+      const docBase = PART_A_PDF_DOC_BASE[field] || 'document';
       const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
       const portalFileName = registrationDocFileName(docBase, ext);
       const stored = await storeCompressedUpload(file, {
@@ -556,14 +558,18 @@ export default function NewApplicationPage() {
         showToast(stored.message || 'Could not save PDF.', 'error');
         return;
       }
-      const nextAuto = { ...autoData, [field]: stored.filePath };
-      setAutoData(nextAuto);
-      await persistRegistrationForm(generalInfo, nextAuto);
+      setAutoData((prev) => {
+        const nextAuto = applyPartAPdfPath(prev, field, stored.filePath);
+        persistRegistrationForm(generalInfo, nextAuto).catch(console.error);
+        return nextAuto;
+      });
       showToast('PDF uploaded.', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Could not save PDF.', 'error');
     } finally {
       setUploadingPdfField('');
     }
-  }, [autoData, generalInfo, persistRegistrationForm, showToast]);
+  }, [generalInfo, persistRegistrationForm, showToast]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1116,7 +1122,13 @@ export default function NewApplicationPage() {
 
     const plasticConsumed = generalInfo.plasticConsumed || {};
 
-    const applicationDefaults = {
+    const isSimpApp = isSimpRawMaterial(
+      generalForValidation.applicantType,
+      generalForValidation.subApplicantType,
+    );
+    const applicationDefaults = isSimpApp
+      ? { ...generalForValidation }
+      : {
       ...generalForValidation,
       yearOfCommencement: generalInfo.yearOfCommencement || String(new Date().getFullYear()),
       complianceStatus: generalInfo.complianceStatus || 'Yes',
@@ -1132,11 +1144,13 @@ export default function NewApplicationPage() {
 
     if (window.pwp?.registration?.save) {
       try {
+        const appType = applicationDefaults.applicantType || 'PIBO';
+        const defaultSub = /simp/i.test(appType) ? 'Importer of raw material' : 'Importer';
         const savePayload = {
           email,
           mobile,
-          applicant_type: applicationDefaults.applicantType || 'PIBO',
-          sub_applicant_type: applicationDefaults.subApplicantType || 'Importer',
+          applicant_type: appType,
+          sub_applicant_type: applicationDefaults.subApplicantType || defaultSub,
           form_data_json: JSON.stringify({
             email,
             mobile,
@@ -1717,185 +1731,223 @@ export default function NewApplicationPage() {
           </div>
           <div className="space-y-6 mt-8 border-t pt-8">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
+              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">
+                Part A: General Information {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? '(SIMP - Importer of Raw Material)' : ''}
+              </h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <RegistrationPartALoginCredentials
-                    ceprId={savedCeprId}
-                    password={generalInfo.password || ''}
-                    onPasswordChange={(value) =>
-                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
-                    }
-                    showPassword={showPassword}
-                    onToggleShowPassword={() => setShowPassword((v) => !v)}
-                    onBlur={() => persistRegistrationForm().catch(console.error)}
-                    inputClass={inputClass}
-                  />
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <OperatingStatesMultiSelect
-                      value={generalInfo.operatingStates || []}
-                      onChange={(newState) => {
-                        setGeneralInfo((prev) => {
-                          const newStateObj = { ...prev, operatingStates: newState };
+                <RegistrationPartALoginCredentials
+                  ceprId={savedCeprId}
+                  password={generalInfo.password || ''}
+                  onPasswordChange={(value) =>
+                    setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                  }
+                  showPassword={showPassword}
+                  onToggleShowPassword={() => setShowPassword((v) => !v)}
+                  onBlur={() => persistRegistrationForm().catch(console.error)}
+                  inputClass={inputClass}
+                />
 
+                {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+                  <RegistrationPartASimpRawMaterial
+                    generalInfo={generalInfo}
+                    autoData={autoData}
+                    email={email}
+                    mobile={mobile}
+                    onChange={handleGeneralChange}
+                    onFileSelect={(field, file) => handlePartAPdfUpload(field, file)}
+                    inputClass={inputClass}
+                    selectClass={inputClass}
+                    uploadingField={uploadingPdfField}
+                  />
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
+                      <OperatingStatesMultiSelect
+                        value={generalInfo.operatingStates || []}
+                        onChange={(newState) => {
+                          setGeneralInfo((prev) => {
+                            const newStateObj = { ...prev, operatingStates: newState };
+
+                            if (window.pwp?.registration?.save) {
+                              const updatedFormData = {
+                                ...(savedRegistration?.formData || {}),
+                                email,
+                                mobile,
+                                autoData,
+                                generalInfo: newStateObj,
+                              };
+                              window.pwp.registration.save({
+                                ...(savedRegistration || {}),
+                                email,
+                                mobile,
+                                form_data_json: JSON.stringify(updatedFormData),
+                              }).catch(console.error);
+                            }
+
+                            return newStateObj;
+                          });
+                        }}
+                      />
+                    </div>
+                    <PartAProductionFacilityFields
+                      generalInfo={generalInfo}
+                      autoData={autoData}
+                      inputClass={inputClass}
+                      onHasProductionFacilityChange={(e) => {
+                        const next = { ...generalInfo, hasProductionFacility: e.target.value };
+                        setGeneralInfo(next);
+                        persistRegistrationForm(next, autoData);
+                      }}
+                      onDicRegisteredChange={(e) => {
+                        const next = { ...generalInfo, dicRegistered: e.target.value };
+                        setGeneralInfo(next);
+                        persistRegistrationForm(next, autoData);
+                      }}
+                      onDicDocSelect={(file) => handlePartAPdfUpload('dicRegistrationDoc', file)}
+                    />
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
+                      <input
+                        name="capitalInvested"
+                        value={generalInfo.capitalInvested || ''}
+                        onChange={handleGeneralChange}
+                        onBlur={async () => {
+                          // Auto-save on blur
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),
-                              email,
-                              mobile,
-                              autoData,
-                              generalInfo: newStateObj,
+                              email, mobile, autoData, generalInfo
                             };
                             window.pwp.registration.save({
                               ...(savedRegistration || {}),
-                              email,
-                              mobile,
-                              form_data_json: JSON.stringify(updatedFormData),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
                             }).catch(console.error);
                           }
-
-                          return newStateObj;
-                        });
-                      }}
+                        }}
+                        type="text"
+                        placeholder="Enter Total Capital Invested"
+                        className={inputClass}
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
+                      <select
+                        name="yearOfCommencement"
+                        value={generalInfo.yearOfCommencement || ''}
+                        onChange={async (e) => {
+                          handleGeneralChange(e);
+                          // Auto-save logic
+                          if (window.pwp?.registration?.save) {
+                            const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email, mobile, autoData, generalInfo: newStateObj
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                        }}
+                        className={inputClass}
+                      >
+                        <option value="">Enter year</option>
+                        {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
+                      </select>
+                    </div>
+                    
+                    <ImporterEprPreparedReview
+                      detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                      representativePicturePath={autoData.representativePicturePath || ''}
+                      yearOfCommencement={generalInfo.yearOfCommencement || ''}
+                      plasticConsumed={
+                        generalInfo.plasticConsumed || Object.fromEntries(
+                          reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                        )
+                      }
+                      reportingYears={reportingFys}
+                      onPdfUpload={handlePartAPdfUpload}
+                      uploadingPdfField={uploadingPdfField}
+                      onPlasticConsumedChange={handlePlasticConsumedChange}
+                      plasticConsumedSource={plasticConsumedSource}
+                      onNavigateToDocProcessor={handleNavigateToDocProcessor}
+                      onRefreshDocData={handleRefreshDocData}
+                      refreshingDocData={refreshingDocData}
                     />
-                  </div>
-                  <PartAProductionFacilityFields
-                    generalInfo={generalInfo}
-                    autoData={autoData}
-                    inputClass={inputClass}
-                    onHasProductionFacilityChange={(e) => {
-                      const next = { ...generalInfo, hasProductionFacility: e.target.value };
-                      setGeneralInfo(next);
-                      persistRegistrationForm(next, autoData);
-                    }}
-                    onDicRegisteredChange={(e) => {
-                      const next = { ...generalInfo, dicRegistered: e.target.value };
-                      setGeneralInfo(next);
-                      persistRegistrationForm(next, autoData);
-                    }}
-                    onDicDocSelect={(file) => handlePartAPdfUpload('dicRegistrationDoc', file)}
-                  />
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
-                    <input
-                      name="capitalInvested"
-                      value={generalInfo.capitalInvested || ''}
-                      onChange={handleGeneralChange}
-                      onBlur={async () => {
-                        // Auto-save on blur
-                        if (window.pwp?.registration?.save) {
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      type="text"
-                      placeholder="Enter Total Capital Invested"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
-                    <select
-                      name="yearOfCommencement"
-                      value={generalInfo.yearOfCommencement || ''}
-                      onChange={async (e) => {
-                        handleGeneralChange(e);
-                        // Auto-save logic
-                        if (window.pwp?.registration?.save) {
-                          const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
-                    >
-                      <option value="">Enter year</option>
-                      {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
-                        <option key={year} value={year}>{year}</option>
-                      ))}
-                    </select>
-                  </div>
-                  
-                  <ImporterEprPreparedReview
-                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
-                    representativePicturePath={autoData.representativePicturePath || ''}
-                    yearOfCommencement={generalInfo.yearOfCommencement || ''}
-                    plasticConsumed={
-                      generalInfo.plasticConsumed || Object.fromEntries(
-                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
-                      )
-                    }
-                    reportingYears={reportingFys}
-                    onPdfUpload={handlePartAPdfUpload}
-                    uploadingPdfField={uploadingPdfField}
-                    onPlasticConsumedChange={handlePlasticConsumedChange}
-                    plasticConsumedSource={plasticConsumedSource}
-                    onNavigateToDocProcessor={handleNavigateToDocProcessor}
-                    onRefreshDocData={handleRefreshDocData}
-                    refreshingDocData={refreshingDocData}
-                  />
 
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
-                    <select
-                      name="complianceStatus"
-                      value={generalInfo.complianceStatus || ''}
-                      onChange={handleGeneralChange}
-                      className={inputClass}
-                    >
-                      <option value="">Select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                    {generalInfo.complianceStatus === 'No' && (
-                      <p className="text-xs text-red-600 mt-1 font-medium">
-                        ⚠️ Alert: Selecting "No" can lead to rejection of your application.
-                      </p>
-                    )}
-                  </div>
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                      <select
+                        name="complianceStatus"
+                        value={generalInfo.complianceStatus || ''}
+                        onChange={handleGeneralChange}
+                        className={inputClass}
+                      >
+                        <option value="">Select</option>
+                        <option value="Yes">Yes</option>
+                        <option value="No">No</option>
+                      </select>
+                      {generalInfo.complianceStatus === 'No' && (
+                        <p className="text-xs text-red-600 mt-1 font-medium">
+                          ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                        </p>
+                      )}
+                    </div>
 
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                3e) Thickness of Plastic Packaging (In Microns) *
-              </label>
-              <input
-                type="text"
-                name="thicknessOfPlastic"
-                value={generalInfo.thicknessOfPlastic || ''}
-                onChange={handleGeneralChange}
-                placeholder="Enter thickness"
-                className={inputClass}
-                required
-              />
-              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
-                <strong>Approved Minimum Thickness:</strong>
-                <ul className="list-disc pl-4 mt-1 space-y-0.5">
-                  <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
-                  <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
-                  <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
-                </ul>
+                    <div className="mt-4">
+                      <label className="block text-sm font-medium text-slate-700 mb-1">
+                        3e) Thickness of Plastic Packaging (In Microns) *
+                      </label>
+                      <input
+                        type="text"
+                        name="thicknessOfPlastic"
+                        value={generalInfo.thicknessOfPlastic || ''}
+                        onChange={handleGeneralChange}
+                        placeholder="Enter thickness"
+                        className={inputClass}
+                        required
+                      />
+                      <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                        <strong>Approved Minimum Thickness:</strong>
+                        <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                          <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
+                          <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
+                          <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
+                        </ul>
+                      </div>
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </div>
-        </div>
-        </div>
-        </div>
 
+        {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+          <>
+            <RegistrationPartBSimpRawMaterial
+              generalInfo={generalInfo}
+              setGeneralInfo={setGeneralInfo}
+              gstin={autoData.gstin}
+              onPersist={(next) => persistRegistrationForm(next)}
+            />
+            <RegistrationPartCSimpRawMaterial
+              generalInfo={generalInfo}
+              setGeneralInfo={setGeneralInfo}
+              autoData={autoData}
+              setAutoData={setAutoData}
+              email={email}
+              mobile={mobile}
+              showToast={showToast}
+              inputClass={inputClass}
+            />
+          </>
+        ) : (
+          <>
         <RegistrationPartB
           generalInfo={generalInfo}
           setGeneralInfo={setGeneralInfo}
@@ -1912,6 +1964,8 @@ export default function NewApplicationPage() {
           mobile={mobile}
           showToast={showToast}
         />
+          </>
+        )}
           </>
           )}
 

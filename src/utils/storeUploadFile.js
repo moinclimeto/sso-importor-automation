@@ -1,7 +1,10 @@
-import { getLocalFilePath } from './partCLetterValues.js';
+import { getLocalFilePath, persistLocalUpload } from './partCLetterValues.js';
 
 export async function storeCompressedUpload(file, options = {}) {
-  const sourcePath = getLocalFilePath(file) || file?.path || '';
+  let sourcePath = getLocalFilePath(file) || file?.path || '';
+  if (!sourcePath) {
+    sourcePath = await persistLocalUpload(file);
+  }
   if (!sourcePath) {
     return { success: false, message: 'Could not read the file path. Please upload from the desktop app.' };
   }
@@ -10,11 +13,13 @@ export async function storeCompressedUpload(file, options = {}) {
     return { success: true, filePath: sourcePath, compressed: false };
   }
 
-  return window.pwp.files.storeUpload({
+  const stored = await window.pwp.files.storeUpload({
     sourcePath,
     fileName: options.fileName || file?.name,
     destSubdir: options.destSubdir || 'processed_uploads',
   });
+  if (stored?.success && stored.filePath) return stored;
+  return { success: true, filePath: sourcePath, compressed: false, warning: stored?.message };
 }
 
 export async function storeCompressedUploadPath(sourcePath, options = {}) {

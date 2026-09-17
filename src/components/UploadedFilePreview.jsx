@@ -8,14 +8,15 @@ export default function UploadedFilePreview({
   prefix = 'Selected',
   suffix = '',
   className = 'mt-1',
+  previewUrl = '',
 }) {
-  if (!filePath) return null;
+  if (!filePath && !previewUrl) return null;
 
-  const name = fileName || String(filePath).split(/[/\\]/).pop();
+  const name = fileName || String(filePath || '').split(/[/\\]/).pop() || 'Document';
 
   return (
     <div className={`flex flex-wrap items-center gap-2 text-xs text-emerald-800 ${className}`}>
-      <span className="truncate min-w-0" title={filePath}>
+      <span className="truncate min-w-0" title={filePath || name}>
         {label ?? (
           <>
             {prefix}: <strong>{name}</strong>
@@ -23,7 +24,7 @@ export default function UploadedFilePreview({
           </>
         )}
       </span>
-      <LocalFilePreview filePath={filePath} fileName={name} />
+      <LocalFilePreview filePath={filePath} fileName={name} previewUrl={previewUrl} />
     </div>
   );
 }

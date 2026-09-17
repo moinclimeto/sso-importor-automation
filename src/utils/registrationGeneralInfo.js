@@ -195,6 +195,8 @@ export const GENERAL_INFO_EMPTY = {
   complianceStatus: '',
   thicknessOfPlastic: '',
   
+  plantState: '',
+
   // Part B
   partBConsents: [],
   partBSection4: [],
@@ -204,6 +206,8 @@ export const GENERAL_INFO_EMPTY = {
     sec5c: [],
     sec5d: []
   },
+  simpImportDetails: [],
+  simpSupplyDetails: [],
 
   // Part C (document paths)
   partCCoveringLetter: '',
@@ -211,4 +215,6 @@ export const GENERAL_INFO_EMPTY = {
   partCAuditedStatement: '',
   partCApplicationNo: '',
   partCLetterPlace: '',
+  latitude: '',
+  longitude: '',
 };

@@ -85,7 +85,9 @@ export default function RegistrationPartC({
   email,
   mobile,
   showToast,
+  variant = 'pibo',
 }) {
+  const isSimp = variant === 'simp';
   const [studioOpen, setStudioOpen] = useState(false);
   const [studioLetterId, setStudioLetterId] = useState('coveringLetter');
   const [iec, setIec] = useState('');
@@ -181,12 +183,14 @@ export default function RegistrationPartC({
   };
 
   return (
-    <div id="part-c-letters" className="space-y-6 mt-8 border-t pt-8">
+    <div id="part-c-letters" className={`space-y-6 ${isSimp ? '' : 'mt-8 border-t pt-8'}`}>
       <div className="flex flex-col lg:flex-row lg:items-end lg:justify-between gap-4">
         <div>
-          <h3 className="text-lg font-bold text-slate-800">Part C: EPR Action Plan</h3>
+          <h3 className="text-lg font-bold text-slate-800">{isSimp ? 'Part C documents' : 'Part C: EPR Action Plan'}</h3>
           <p className="text-sm text-slate-500 mt-1">
-            Attach portal PDFs here before CPCB upload. Use Ready Letters to auto-fill covering letter and declarations from Part A.
+            {isSimp
+              ? 'Cover Letter, Signature, and Any other Information & Self Declaration — PDF only, as on the CPCB Importer Facility form.'
+              : 'Attach portal PDFs here before CPCB upload. Use Ready Letters to auto-fill covering letter and declarations from Part A.'}
           </p>
         </div>
         <button
@@ -214,14 +218,16 @@ export default function RegistrationPartC({
         </div>
       </div>
 
+      {!isSimp ? (
       <div className="bg-blue-50 border border-blue-100 rounded-xl p-4 text-sm text-blue-800">
         EPR targets (total EPR target and minimum recycling target) are calculated by the CPCB portal from Part A and Part B.
       </div>
+      ) : null}
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <DocumentCard
-          title="Covering Letter"
-          hint="Official covering letter for the EPR application. PDF only."
+          title={isSimp ? 'Cover Letter (Only PDF File)' : 'Covering Letter'}
+          hint={isSimp ? 'Portal Part C Cover Letter. PDF only, max 1MB.' : 'Official covering letter for the EPR application. PDF only.'}
           required
           icon={FileText}
           filePath={generalInfo.partCCoveringLetter}
@@ -230,8 +236,8 @@ export default function RegistrationPartC({
           prepareLabel="Fill covering letter"
         />
         <DocumentCard
-          title="Self-declaration"
-          hint="Self-declaration based on audited statements. PDF only."
+          title={isSimp ? 'Any other Information & Self Declaration (PDF)' : 'Self-declaration'}
+          hint={isSimp ? 'Portal Part C self-declaration upload. PDF only, max 1MB.' : 'Self-declaration based on audited statements. PDF only.'}
           required
           icon={FileText}
           filePath={generalInfo.partCAuditedStatement}
@@ -240,14 +246,14 @@ export default function RegistrationPartC({
           prepareLabel="Fill declaration"
         />
         <DocumentCard
-          title="Signature"
+          title={isSimp ? 'Please Upload Signature (Only PDF File)' : 'Signature'}
           hint="Scan of authorised signatory signature. PDF only."
           required
           icon={FileSignature}
           filePath={generalInfo.partCSignature}
           onUpload={(file) => handlePdfUpload('partCSignature', 'generalInfo', file)}
         />
-        {String(generalInfo.typeOfCompany || '').toLowerCase() === 'large' && (
+        {!isSimp && String(generalInfo.typeOfCompany || '').toLowerCase() === 'large' && (
           <DocumentCard
             title="Large-entity declaration"
             hint="Used as supporting document for company category instead of Udyam."

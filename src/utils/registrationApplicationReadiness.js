@@ -52,6 +52,9 @@ function partAHint(label = '') {
   ].some((hint) => label.includes(hint));
 }
 
+import { isSimpRawMaterial, unitGstMatchesCompanyPan, panFromGstin } from '../../shared/entityRegistrationTypes.js';
+import { validateSimpRawMaterialSupplyAgainstImport, validateSimpImportCoveringRequiredYears } from '../../shared/simpRawMaterialPartB.js';
+
 /** Blockers for Register / New Application — runs before login or automation. */
 export function getRegisterApplicationBlockers({
   savedCeprId = '',
@@ -63,6 +66,7 @@ export function getRegisterApplicationBlockers({
   const years = reportingYears?.length ? reportingYears : getCpcbPortalPartA3cYears();
   const portalPlasticConsumed = alignPlasticConsumedToYears(generalInfo.plasticConsumed, years);
   const showHistorical = requiresHistoricalEprData(generalInfo.yearOfCommencement);
+  const isSimp = isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType);
 
   if (!String(savedCeprId || '').trim()) {
     blockers.push({
@@ -78,6 +82,92 @@ export function getRegisterApplicationBlockers({
       label: 'Enter CPCB portal Password in Part A → Login credentials.',
       section: 'partA',
     });
+  }
+
+  if (isSimp) {
+    if (!String(generalInfo.plantState || generalInfo.stateUt || '').trim()) {
+      blockers.push({ id: 'plantState', label: 'Plant / Unit State', section: 'partA' });
+    }
+    if (!generalInfo.isSameAsRegisteredAddress && !String(generalInfo.plantAddress || '').trim()) {
+      blockers.push({ id: 'plantAddress', label: 'Plant / Unit Address', section: 'partA' });
+    }
+    if (!String(generalInfo.unitGst || '').trim()) {
+      blockers.push({ id: 'unitGst', label: 'Plant/Unit GST', section: 'partA' });
+    } else {
+      const companyPan = generalInfo.companyPan || autoData.companyPan || autoData.pan || panFromGstin(generalInfo.gstin || autoData.gstin);
+      if (!unitGstMatchesCompanyPan(generalInfo.unitGst, companyPan, generalInfo.gstin || autoData.gstin)) {
+        blockers.push({
+          id: 'unitGst-pan',
+          label: 'Plant/Unit GST PAN does not match Company PAN (CPCB will reject verification). Use a GSTIN issued to the same PAN.',
+          section: 'partA',
+        });
+      }
+    }
+    if (!autoData.unitGstDoc) {
+      blockers.push({ id: 'unitGstDoc', label: 'Plant/Unit GST document', section: 'partA' });
+    }
+    if (!autoData.gstDoc && !autoData.gstinDoc && !autoData.gstDocumentPath) {
+      blockers.push({ id: 'gstDoc', label: 'GST document', section: 'partA' });
+    }
+    if (!autoData.companyPanDoc && !autoData.panDoc && !autoData.companyPanDocumentPath && !autoData.panDocumentPath) {
+      blockers.push({ id: 'companyPanDoc', label: 'Company PAN document', section: 'partA' });
+    }
+    if (!autoData.personPanDoc && !autoData.authPanDoc && !autoData.personPanDocumentPath) {
+      blockers.push({ id: 'personPanDoc', label: 'Authorized Person PAN document', section: 'partA' });
+    }
+    if (!autoData.cinDoc && !autoData.cinDocumentPath) {
+      blockers.push({ id: 'cinDoc', label: 'Company CIN document', section: 'partA' });
+    }
+    if (!String(generalInfo.yearOfCommencement || '').trim()) {
+      blockers.push({ id: 'yearOfCommencement', label: 'Year of Commencement of Production', section: 'partA' });
+    }
+    if (!String(generalInfo.capitalInvested || '').trim()) {
+      blockers.push({ id: 'capitalInvested', label: 'Total Capital Invested on the Project (Rs in Crores)', section: 'partA' });
+    }
+    if (/^yes$/i.test(String(generalInfo.dicRegistered || '')) && !autoData.dicRegistrationDoc && !generalInfo.dicRegistrationDoc) {
+      blockers.push({ id: 'dicRegistrationDoc', label: 'DIC/DCSSI Supporting Document', section: 'partA' });
+    }
+
+    const importYearIssues = validateSimpImportCoveringRequiredYears(
+      generalInfo.simpImportDetails || [],
+    );
+    for (const issue of importYearIssues) {
+      blockers.push({
+        id: `simp-import-fy-${(issue.missingYears || []).join('-')}`,
+        label: issue.message,
+        section: 'partB',
+      });
+    }
+
+    const supplyIssues = validateSimpRawMaterialSupplyAgainstImport(
+      generalInfo.simpImportDetails || [],
+      generalInfo.simpSupplyDetails || [],
+    );
+    for (const issue of supplyIssues) {
+      blockers.push({
+        id: `simp-supply-${issue.financialYear}-${issue.plasticType}`,
+        label: issue.message,
+        section: 'partB',
+      });
+    }
+
+    if (!String(generalInfo.latitude || '').trim()) {
+      blockers.push({ id: 'latitude', label: 'Part C: GPS Latitude', section: 'partC' });
+    }
+    if (!String(generalInfo.longitude || '').trim()) {
+      blockers.push({ id: 'longitude', label: 'Part C: GPS Longitude', section: 'partC' });
+    }
+    if (!generalInfo.partCCoveringLetter && !autoData.coveringLetterDoc) {
+      blockers.push({ id: 'partCCoveringLetter', label: 'Part C: Cover Letter', section: 'partC' });
+    }
+    if (!generalInfo.partCSignature && !autoData.signatureDoc) {
+      blockers.push({ id: 'partCSignature', label: 'Part C: Signature', section: 'partC' });
+    }
+    if (!generalInfo.partCAuditedStatement && !autoData.selfDeclarationDoc) {
+      blockers.push({ id: 'partCAuditedStatement', label: 'Part C: Self Declaration', section: 'partC' });
+    }
+
+    return blockers;
   }
 
   for (const req of PART_A_REQUIRED) {

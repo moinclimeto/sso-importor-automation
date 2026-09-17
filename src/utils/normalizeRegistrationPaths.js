@@ -41,6 +41,15 @@ const AUTO_DATA_FIELDS = {
   detailsOfProductsPath: ['operations_details', 'processed_registration_docs'],
   representativePicturePath: ['plastic_packaging_picture', 'processed_registration_docs'],
   dicRegistrationDoc: ['dic_registration', 'processed_registration_docs'],
+  cinDoc: ['cin', 'processed_registration_docs'],
+  cinDocumentPath: ['cin', 'processed_registration_docs'],
+  companyPanDoc: ['company_pan', 'processed_registration_docs'],
+  companyPanDocumentPath: ['company_pan', 'processed_registration_docs'],
+  personPanDoc: ['person_pan', 'processed_registration_docs'],
+  personPanDocumentPath: ['person_pan', 'processed_registration_docs'],
+  gstDoc: ['gst', 'processed_registration_docs'],
+  gstDocumentPath: ['gst', 'processed_registration_docs'],
+  unitGstDoc: ['unit_gst', 'processed_registration_docs'],
 };
 
 const GENERAL_INFO_FIELDS = {

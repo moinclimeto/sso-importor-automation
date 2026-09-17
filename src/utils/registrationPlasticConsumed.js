@@ -9,9 +9,10 @@ import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
 export function resolveCompanyIdFromGstin(companies = [], gstin = '') {
   const normalized = String(gstin || '').trim().toUpperCase();
   if (!normalized) return null;
-  const match = companies.find(
-    (company) => String(company.gstin || '').trim().toUpperCase() === normalized,
-  );
+  const match = companies.find((company) => {
+    const value = String(company.gstin || company.gst || company.GSTIN || '').trim().toUpperCase();
+    return value === normalized;
+  });
   return match?.id ?? null;
 }
 

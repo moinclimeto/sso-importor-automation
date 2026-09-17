@@ -2,7 +2,16 @@ import { useEffect, useState } from 'react';
 import { CreditCard, Edit2, Check, X, UserCheck, Loader2 } from 'lucide-react';
 import { Toast, useToast } from './Toast.jsx';
 
-const SUB_APPLICANT_OPTIONS = ['Importer', 'Brand Owner'];
+const APPLICANT_OPTIONS = ['PIBO', 'SIMP'];
+const SUB_APPLICANT_OPTIONS_MAP = {
+  PIBO: ['Importer', 'Brand Owner'],
+  SIMP: [
+    'Importer of raw material',
+    'Seller of raw material',
+    'Producer (Small or Micro)',
+    'Manufacturer of raw material',
+  ],
+};
 
 export default function DashboardSettingsCards() {
   const { toast, showToast, hideToast } = useToast();
@@ -21,9 +30,12 @@ export default function DashboardSettingsCards() {
     });
     window.pwp?.registration?.get?.().then((res) => {
       if (res?.success && res?.data) {
-        setApplicantType(res.data.applicant_type || 'PIBO');
+        const appType = res.data.applicant_type || 'PIBO';
+        setApplicantType(appType);
         if (res.data.sub_applicant_type) {
           setSubApplicantType(res.data.sub_applicant_type);
+        } else if (appType === 'SIMP') {
+          setSubApplicantType('Importer of raw material');
         }
       }
     });
@@ -62,8 +74,15 @@ export default function DashboardSettingsCards() {
   };
 
   const saveRegistrationTypes = async ({ applicant, subApplicant }) => {
-    const nextApplicant = applicant || 'PIBO';
-    const nextSub = subApplicant || subApplicantType;
+    const nextApplicant = applicant || applicantType || 'PIBO';
+    let nextSub = subApplicant || subApplicantType;
+    
+    // Auto-select valid default sub-applicant type if switching applicant type
+    const availableSubs = SUB_APPLICANT_OPTIONS_MAP[nextApplicant] || SUB_APPLICANT_OPTIONS_MAP.PIBO;
+    if (!availableSubs.includes(nextSub)) {
+      nextSub = availableSubs[0];
+    }
+
     if (nextApplicant === applicantType && nextSub === subApplicantType) return;
     setSavingReg(true);
     setRegSaveMessage('');
@@ -90,6 +109,8 @@ export default function DashboardSettingsCards() {
       setSavingReg(false);
     }
   };
+
+  const currentSubOptions = SUB_APPLICANT_OPTIONS_MAP[applicantType] || SUB_APPLICANT_OPTIONS_MAP.PIBO;
 
   return (
     <>
@@ -170,18 +191,44 @@ export default function DashboardSettingsCards() {
                 <UserCheck size={22} className="text-white" />
               </div>
               <div className="min-w-0">
-                <p className="text-sm text-slate-500 font-medium truncate">Applicant Type</p>
-                <p className="text-xs text-slate-400 mt-0.5 truncate">
-                  Saved registration config
-                </p>
+                <div className="flex items-center gap-2">
+                  <p className="text-sm text-slate-500 font-medium truncate">Applicant Type</p>
+                  <span className="text-xs px-2 py-0.5 bg-emerald-50 text-emerald-700 rounded-full font-semibold border border-emerald-200">
+                    {applicantType} · {subApplicantType}
+                  </span>
+                </div>
                 {regSaveMessage && (
                   <p className={`text-xs mt-1 truncate ${regSaveMessage.startsWith('Saved') ? 'text-emerald-600' : 'text-red-600'}`}>
                     {regSaveMessage}
                   </p>
                 )}
-                <div className="mt-2 flex items-center gap-3">
-                  <div className="flex items-center gap-3">
-                    {SUB_APPLICANT_OPTIONS.map((type) => (
+                
+                {/* Level 1: Applicant Type (PIBO / SIMP) */}
+                <div className="mt-2.5 flex items-center gap-3">
+                  <span className="text-xs font-semibold text-slate-600">Type:</span>
+                  <div className="flex items-center gap-2.5">
+                    {APPLICANT_OPTIONS.map((type) => (
+                      <label key={type} className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 cursor-pointer">
+                        <input
+                          type="radio"
+                          name="applicantType"
+                          value={type}
+                          checked={applicantType === type}
+                          disabled={savingReg}
+                          onChange={() => saveRegistrationTypes({ applicant: type, subApplicant: null })}
+                          className="accent-emerald-600"
+                        />
+                        {type}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+
+                {/* Level 2: Sub-Applicant Category */}
+                <div className="mt-2 flex flex-wrap items-center gap-2">
+                  <span className="text-xs font-semibold text-slate-600">Category:</span>
+                  <div className="flex flex-wrap items-center gap-2">
+                    {currentSubOptions.map((type) => (
                       <label key={type} className="inline-flex items-center gap-1 text-xs font-medium text-slate-700 cursor-pointer">
                         <input
                           type="radio"
@@ -189,7 +236,7 @@ export default function DashboardSettingsCards() {
                           value={type}
                           checked={subApplicantType === type}
                           disabled={savingReg}
-                          onChange={() => saveRegistrationTypes({ applicant: 'PIBO', subApplicant: type })}
+                          onChange={() => saveRegistrationTypes({ applicant: applicantType, subApplicant: type })}
                           className="accent-emerald-600"
                         />
                         {type}

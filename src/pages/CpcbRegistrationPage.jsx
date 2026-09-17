@@ -6,6 +6,8 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import RegistrationPartBSimpRawMaterial from '../components/RegistrationPartBSimpRawMaterial.jsx';
+import RegistrationPartCSimpRawMaterial from '../components/RegistrationPartCSimpRawMaterial.jsx';
 import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
 import PlasticThicknessMinInfoIcon from '../components/PlasticThicknessMinInfoIcon.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
@@ -35,9 +37,12 @@ import {
   mergeAutoData,
   mergeGeneralInfoFromSources,
   pickNonEmpty,
+  applyPartAPdfPath,
+  PART_A_PDF_DOC_BASE,
 } from '../utils/registrationFormPersistence.js';
-import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
+import { storeCompressedUpload } from '../utils/storeUploadFile.js';
+import { APPLICANT_TYPES, SUB_APPLICANT_OPTIONS_MAP, isSimpRawMaterial } from '../../shared/entityRegistrationTypes.js';
 import { getStartRegistrationBlockers } from '../utils/registrationStartReadiness.js';
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
 import { showRegistrationAutomationError, isLoginOtpFailureResult } from '../utils/registrationAutomationErrors.js';
@@ -50,6 +55,7 @@ import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
 import RegistrationPartALoginCredentials from '../components/RegistrationPartALoginCredentials.jsx';
+import RegistrationPartASimpRawMaterial from '../components/RegistrationPartASimpRawMaterial.jsx';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
 import {
   fetchComputedPlasticConsumed3c,
@@ -767,19 +773,11 @@ export default function CpcbRegistrationPage() {
   };
 
   const persistPartCFile = async (file, field) => {
-    const PART_C_DOC_BASE = {
-      detailsOfProductsPath: 'operations_details',
-      representativePicturePath: 'plastic_packaging_picture',
-      typeOfCompanyDoc: 'supporting_category_doc',
-      dicRegistrationDoc: 'dic_registration',
-    };
-    const docBase = PART_C_DOC_BASE[field] || 'document';
+    const docBase = PART_A_PDF_DOC_BASE[field] || 'document';
     const ext = file?.name?.match(/\.[^.]+$/i)?.[0] || '.pdf';
     const portalFileName = registrationDocFileName(docBase, ext);
     const stored = await storeCompressedUpload(file, {
-      destSubdir: field === 'typeOfCompanyDoc' || field === 'detailsOfProductsPath' || field === 'representativePicturePath' || field === 'dicRegistrationDoc'
-        ? 'processed_registration_docs'
-        : 'processed_part_c',
+      destSubdir: 'processed_registration_docs',
       fileName: portalFileName,
     });
     if (!stored.success || !stored.filePath) {
@@ -787,7 +785,7 @@ export default function CpcbRegistrationPage() {
       return;
     }
     setAutoData((prev) => {
-      const next = { ...prev, [field]: stored.filePath };
+      const next = applyPartAPdfPath(prev, field, stored.filePath);
       const savePayload = {
         ...(savedRegistration || {}),
         email,
@@ -818,6 +816,8 @@ export default function CpcbRegistrationPage() {
     try {
       await persistPartCFile(file, field);
       showToast('PDF uploaded.', 'success');
+    } catch (err) {
+      showToast(err?.message || 'Could not save PDF.', 'error');
     } finally {
       setUploadingPdfField('');
     }
@@ -825,6 +825,26 @@ export default function CpcbRegistrationPage() {
 
   const handleSaveAndNext = async () => {
     if (wizardStep === 'partA') {
+      const isSimp = isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType);
+      if (isSimp) {
+        if (!generalInfo.plantState && !generalInfo.stateUt && (!generalInfo.operatingStates || !generalInfo.operatingStates.length)) {
+          showToast('Plant / Unit State is required.', 'error');
+          return;
+        }
+        if (!generalInfo.yearOfCommencement) {
+          showToast('Year of Commencement of Production is required.', 'error');
+          return;
+        }
+        if (!generalInfo.capitalInvested) {
+          showToast('Total Capital Invested on the Project is required.', 'error');
+          return;
+        }
+        await persistRegistrationForm();
+        showToast('Part A saved.', 'success');
+        setWizardStep('partB');
+        return;
+      }
+
       if (!generalInfo.operatingStates?.length) {
         showToast('Select at least one operating state.', 'error');
         return;
@@ -833,15 +853,15 @@ export default function CpcbRegistrationPage() {
         showToast('Cannot select exactly 2 states. Select 1, or 3 or more.', 'error');
         return;
       }
-      if (!generalInfo.yearOfCommencement && !generalInfo.yearOfCommencement) {
+      if (!generalInfo.yearOfCommencement) {
         showToast('Year of Commencement is required.', 'error');
         return;
       }
-      if (!generalInfo.complianceStatus && !generalInfo.complianceStatus) {
+      if (!generalInfo.complianceStatus) {
         showToast('Compliance Status (3d) is required.', 'error');
         return;
       }
-      if (!String(generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '').trim()) {
+      if (!String(generalInfo.thicknessOfPlastic || '').trim()) {
         showToast('Thickness of Plastic (3e) is required.', 'error');
         return;
       }
@@ -1742,29 +1762,56 @@ export default function CpcbRegistrationPage() {
       <CpcbPortalToastFeed items={portalToasts} />
 
       <h2 className="text-lg font-semibold text-slate-800 mb-1">
-        PIBO Registration —{' '}
+        {generalInfo.applicantType || 'PIBO'} Registration —{' '}
         <span className="text-green-700">{generalInfo.subApplicantType || 'Importer'}</span>
       </h2>
 
       {/* Sub-applicant type selector — visible only before registration is complete */}
       {!registrationComplete && (
-        <div className="mb-4 flex items-center gap-3">
-          <span className="text-sm font-medium text-slate-600">Applicant Type:</span>
-          {['Importer', 'Brand Owner'].map((type) => (
-            <label key={type} className="flex items-center gap-1.5 text-sm cursor-pointer">
-              <input
-                type="radio"
-                name="subApplicantType"
-                value={type}
-                checked={(generalInfo.subApplicantType || 'Importer') === type}
-                onChange={() =>
-                  setGeneralInfo((prev) => ({ ...prev, subApplicantType: type }))
-                }
-                className="accent-green-600"
-              />
-              {type}
-            </label>
-          ))}
+        <div className="mb-5 p-3.5 bg-slate-50 border border-slate-200 rounded-lg flex flex-col gap-2.5">
+          <div className="flex items-center gap-3">
+            <span className="text-xs font-semibold text-slate-600">Applicant Type:</span>
+            <div className="flex items-center gap-3">
+              {['PIBO', 'SIMP'].map((type) => (
+                <label key={type} className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="applicantType"
+                    value={type}
+                    checked={(generalInfo.applicantType || 'PIBO') === type}
+                    onChange={() => {
+                      const subs = SUB_APPLICANT_OPTIONS_MAP[type] || SUB_APPLICANT_OPTIONS_MAP.PIBO;
+                      const nextSub = subs.includes(generalInfo.subApplicantType) ? generalInfo.subApplicantType : subs[0];
+                      setGeneralInfo((prev) => ({ ...prev, applicantType: type, subApplicantType: nextSub }));
+                    }}
+                    className="accent-green-600"
+                  />
+                  {type}
+                </label>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap items-center gap-3">
+            <span className="text-xs font-semibold text-slate-600">Sub-Applicant Category:</span>
+            <div className="flex flex-wrap items-center gap-3">
+              {(SUB_APPLICANT_OPTIONS_MAP[generalInfo.applicantType || 'PIBO'] || SUB_APPLICANT_OPTIONS_MAP.PIBO).map((type) => (
+                <label key={type} className="flex items-center gap-1.5 text-xs font-medium text-slate-700 cursor-pointer">
+                  <input
+                    type="radio"
+                    name="subApplicantType"
+                    value={type}
+                    checked={(generalInfo.subApplicantType || 'Importer') === type}
+                    onChange={() =>
+                      setGeneralInfo((prev) => ({ ...prev, subApplicantType: type }))
+                    }
+                    className="accent-green-600"
+                  />
+                  {type}
+                </label>
+              ))}
+            </div>
+          </div>
         </div>
       )}
 
@@ -1815,6 +1862,7 @@ export default function CpcbRegistrationPage() {
         <RegistrationDocUpload
           onExtracted={handleDocExtracted}
           showToast={showToast}
+          applicantType={generalInfo.applicantType}
           subApplicantType={generalInfo.subApplicantType}
         />
 
@@ -2076,204 +2124,258 @@ export default function CpcbRegistrationPage() {
         {registrationComplete && wizardStep === 'partA' && (
           <div className="space-y-6">
             <div>
-              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
+              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">
+                Part A: General Information {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? '(SIMP - Importer of Raw Material)' : ''}
+              </h3>
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <RegistrationPartALoginCredentials
-                    ceprId={savedCeprId}
-                    password={generalInfo.password || ''}
-                    onPasswordChange={(value) =>
-                      setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
-                    }
-                    showPassword={showPassword}
-                    onToggleShowPassword={() => setShowPassword((v) => !v)}
-                    onBlur={() => persistRegistrationForm().catch(console.error)}
-                    inputClass={inputClass}
-                  />
-                  <RegistrationPartACompanyProfile
+                <RegistrationPartALoginCredentials
+                  ceprId={savedCeprId}
+                  password={generalInfo.password || ''}
+                  onPasswordChange={(value) =>
+                    setGeneralInfo((prev) => ({ ...prev, password: value, confirmPassword: value }))
+                  }
+                  showPassword={showPassword}
+                  onToggleShowPassword={() => setShowPassword((v) => !v)}
+                  onBlur={() => persistRegistrationForm().catch(console.error)}
+                  inputClass={inputClass}
+                />
+
+                {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+                  <RegistrationPartASimpRawMaterial
                     generalInfo={generalInfo}
-                    onChange={handleGeneralChange}
                     autoData={autoData}
-                    onTypeOfCompanyDocSelect={(file) => persistPartCFile(file, 'typeOfCompanyDoc')}
+                    email={email}
+                    mobile={mobile}
+                    onChange={handleGeneralChange}
+                    onFileSelect={(field, file) => handlePartAPdfUpload(field, file)}
                     inputClass={inputClass}
                     selectClass={inputClass}
+                    uploadingField={uploadingPdfField}
                   />
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <OperatingStatesMultiSelect
-                      value={generalInfo.operatingStates || []}
-                      onChange={(newState) => {
-                        setGeneralInfo((prev) => {
-                          const newStateObj = { ...prev, operatingStates: newState };
+                ) : (
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <RegistrationPartACompanyProfile
+                      generalInfo={generalInfo}
+                      onChange={handleGeneralChange}
+                      autoData={autoData}
+                      onTypeOfCompanyDocSelect={(file) => persistPartCFile(file, 'typeOfCompanyDoc')}
+                      inputClass={inputClass}
+                      selectClass={inputClass}
+                    />
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
+                      <OperatingStatesMultiSelect
+                        value={generalInfo.operatingStates || []}
+                        onChange={(newState) => {
+                          setGeneralInfo((prev) => {
+                            const newStateObj = { ...prev, operatingStates: newState };
 
+                            if (window.pwp?.registration?.save) {
+                              const updatedFormData = {
+                                ...(savedRegistration?.formData || {}),
+                                email,
+                                mobile,
+                                autoData,
+                                generalInfo: newStateObj,
+                              };
+                              window.pwp.registration.save({
+                                ...(savedRegistration || {}),
+                                email,
+                                mobile,
+                                form_data_json: JSON.stringify(updatedFormData),
+                              }).catch(console.error);
+                            }
+
+                            return newStateObj;
+                          });
+                        }}
+                      />
+                    </div>
+                    <PartAProductionFacilityFields
+                      generalInfo={generalInfo}
+                      autoData={autoData}
+                      inputClass={inputClass}
+                      onHasProductionFacilityChange={(e) => persistGeneralPatch({ hasProductionFacility: e.target.value })}
+                      onDicRegisteredChange={(e) => persistGeneralPatch({ dicRegistered: e.target.value })}
+                      onDicDocSelect={(file) => persistPartCFile(file, 'dicRegistrationDoc')}
+                    />
+                    <div>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
+                      <input
+                        name="capitalInvested"
+                        value={generalInfo.capitalInvested || ''}
+                        onChange={handleGeneralChange}
+                        onBlur={async () => {
+                          // Auto-save on blur
                           if (window.pwp?.registration?.save) {
                             const updatedFormData = {
                               ...(savedRegistration?.formData || {}),
-                              email,
-                              mobile,
-                              autoData,
-                              generalInfo: newStateObj,
+                              email, mobile, autoData, generalInfo
                             };
                             window.pwp.registration.save({
                               ...(savedRegistration || {}),
-                              email,
-                              mobile,
-                              form_data_json: JSON.stringify(updatedFormData),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
                             }).catch(console.error);
                           }
-
-                          return newStateObj;
-                        });
-                      }}
-                    />
-                  </div>
-                  <PartAProductionFacilityFields
-                    generalInfo={generalInfo}
-                    autoData={autoData}
-                    inputClass={inputClass}
-                    onHasProductionFacilityChange={(e) => persistGeneralPatch({ hasProductionFacility: e.target.value })}
-                    onDicRegisteredChange={(e) => persistGeneralPatch({ dicRegistered: e.target.value })}
-                    onDicDocSelect={(file) => persistPartCFile(file, 'dicRegistrationDoc')}
-                  />
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
-                    <input
-                      name="capitalInvested"
-                      value={generalInfo.capitalInvested || ''}
-                      onChange={handleGeneralChange}
-                      onBlur={async () => {
-                        // Auto-save on blur
-                        if (window.pwp?.registration?.save) {
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      type="text"
-                      placeholder="Enter Total Capital Invested"
-                      className={inputClass}
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
-                    <select
-                      name="yearOfCommencement"
-                      value={generalInfo.yearOfCommencement || ''}
-                      onChange={async (e) => {
-                        handleGeneralChange(e);
-                        // Auto-save logic
-                        if (window.pwp?.registration?.save) {
-                          const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
-                    >
-                      <option value="">Enter year</option>
-                      {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
-                        <option key={year} value={year}>{year}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
-                    <input
-                      name="district"
-                      value={generalInfo.district || ''}
-                      onChange={handleGeneralChange}
-                      type="text"
-                      placeholder="Enter district"
-                      className={lockedInputClass}
-                      required
-                    />
-                  </div>
-                  
-                  <ImporterEprPreparedReview
-                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
-                    representativePicturePath={autoData.representativePicturePath || ''}
-                    yearOfCommencement={generalInfo.yearOfCommencement || ''}
-                    plasticConsumed={
-                      generalInfo.plasticConsumed || Object.fromEntries(
-                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
-                      )
-                    }
-                    reportingYears={reportingFys}
-                    onPdfUpload={handlePartAPdfUpload}
-                    uploadingPdfField={uploadingPdfField}
-                    onPlasticConsumedChange={handlePlasticConsumedChange}
-                    plasticConsumedSource={plasticConsumedSource}
-                    onNavigateToDocProcessor={handleNavigateToDocProcessor}
-                    onRefreshDocData={handleRefreshDocData}
-                    refreshingDocData={refreshingDocData}
-                  />
-
-                  <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        }}
+                        type="text"
+                        placeholder="Enter Total Capital Invested"
+                        className={inputClass}
+                      />
+                    </div>
                     <div>
-                      <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
                       <select
-                        name="complianceStatus"
-                        value={generalInfo.complianceStatus || ''}
-                        onChange={handleGeneralChange}
+                        name="yearOfCommencement"
+                        value={generalInfo.yearOfCommencement || ''}
+                        onChange={async (e) => {
+                          handleGeneralChange(e);
+                          // Auto-save logic
+                          if (window.pwp?.registration?.save) {
+                            const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
+                              email, mobile, autoData, generalInfo: newStateObj
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                        }}
                         className={inputClass}
                       >
-                        <option value="">Select</option>
-                        <option value="Yes">Yes</option>
-                        <option value="No">No</option>
+                        <option value="">Enter year</option>
+                        {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                          <option key={year} value={year}>{year}</option>
+                        ))}
                       </select>
-                      {generalInfo.complianceStatus === 'No' && (
-                        <p className="text-xs text-red-600 mt-1 font-medium">
-                          ⚠️ Alert: Selecting "No" can lead to rejection of your application.
-                        </p>
-                      )}
                     </div>
-
                     <div>
-                      <label className="flex items-center text-sm font-medium text-slate-700 mb-1">
-                        <span>3e) Thickness of Plastic Packaging (In Microns) *</span>
-                        <PlasticThicknessMinInfoIcon />
-                      </label>
+                      <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
                       <input
-                        type="text"
-                        name="thicknessOfPlastic"
-                        value={generalInfo.thicknessOfPlastic || ''}
+                        name="district"
+                        value={generalInfo.district || ''}
                         onChange={handleGeneralChange}
-                        placeholder="Enter thickness"
-                        className={inputClass}
+                        type="text"
+                        placeholder="Enter district"
+                        className={lockedInputClass}
                         required
                       />
                     </div>
+                    
+                    <ImporterEprPreparedReview
+                      detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+                      representativePicturePath={autoData.representativePicturePath || ''}
+                      yearOfCommencement={generalInfo.yearOfCommencement || ''}
+                      plasticConsumed={
+                        generalInfo.plasticConsumed || Object.fromEntries(
+                          reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                        )
+                      }
+                      reportingYears={reportingFys}
+                      onPdfUpload={handlePartAPdfUpload}
+                      uploadingPdfField={uploadingPdfField}
+                      onPlasticConsumedChange={handlePlasticConsumedChange}
+                      plasticConsumedSource={plasticConsumedSource}
+                      onNavigateToDocProcessor={handleNavigateToDocProcessor}
+                      onRefreshDocData={handleRefreshDocData}
+                      refreshingDocData={refreshingDocData}
+                    />
+
+                    <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-2 gap-4">
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                        <select
+                          name="complianceStatus"
+                          value={generalInfo.complianceStatus || ''}
+                          onChange={handleGeneralChange}
+                          className={inputClass}
+                        >
+                          <option value="">Select</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                        {generalInfo.complianceStatus === 'No' && (
+                          <p className="text-xs text-red-600 mt-1 font-medium">
+                            ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                          </p>
+                        )}
+                      </div>
+
+                      <div>
+                        <label className="flex items-center text-sm font-medium text-slate-700 mb-1">
+                          <span>3e) Thickness of Plastic Packaging (In Microns) *</span>
+                          <PlasticThicknessMinInfoIcon />
+                        </label>
+                        <input
+                          type="text"
+                          name="thicknessOfPlastic"
+                          value={generalInfo.thicknessOfPlastic || ''}
+                          onChange={handleGeneralChange}
+                          placeholder="Enter thickness"
+                          className={inputClass}
+                          required
+                        />
+                      </div>
+                    </div>
                   </div>
+                )}
+              </div>
+            </div>
           </div>
-        </div>
-        </div>
-        </div>
         )}
 
         {registrationComplete && wizardStep === 'partB' && (
+          isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+            <RegistrationPartBSimpRawMaterial
+              generalInfo={generalInfo}
+              setGeneralInfo={setGeneralInfo}
+              gstin={autoData.gstin}
+              onPersist={(next) => {
+                if (next && window.pwp?.registration?.save) {
+                  window.pwp.registration.save(
+                    buildRegistrationSavePayload({
+                      savedRegistration,
+                      email,
+                      mobile,
+                      autoData,
+                      generalInfo: next,
+                      ceprId: savedCeprId || savedRegistration?.cepr_id,
+                    })
+                  ).catch(console.error);
+                } else {
+                  persistRegistrationForm();
+                }
+              }}
+            />
+          ) : (
           <RegistrationPartB
             generalInfo={generalInfo}
             setGeneralInfo={setGeneralInfo}
             gstin={autoData.gstin}
             onPersist={persistRegistrationForm}
           />
+          )
         )}
 
         {registrationComplete && wizardStep === 'partC' && (
         <div className="space-y-6">
+          {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+            <RegistrationPartCSimpRawMaterial
+              generalInfo={generalInfo}
+              setGeneralInfo={setGeneralInfo}
+              autoData={autoData}
+              setAutoData={setAutoData}
+              email={email}
+              mobile={mobile}
+              showToast={showToast}
+              inputClass={inputClass}
+            />
+          ) : (
+          <>
           <div>
             <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
             <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
@@ -2308,6 +2410,8 @@ export default function CpcbRegistrationPage() {
             mobile={mobile}
             showToast={showToast}
           />
+          </>
+          )}
         </div>
         )}
 

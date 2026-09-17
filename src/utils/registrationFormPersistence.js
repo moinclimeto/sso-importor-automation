@@ -13,6 +13,34 @@ export function pickNonEmpty(obj = {}) {
   );
 }
 
+export const PART_A_PDF_DOC_BASE = {
+  detailsOfProductsPath: 'operations_details',
+  representativePicturePath: 'plastic_packaging_picture',
+  typeOfCompanyDoc: 'supporting_category_doc',
+  dicRegistrationDoc: 'dic_registration',
+  cinDoc: 'cin',
+  companyPanDoc: 'company_pan',
+  personPanDoc: 'person_pan',
+  gstDoc: 'gst',
+  gstinDoc: 'gst',
+  unitGstDoc: 'unit_gst',
+};
+
+const PART_A_PDF_ALIASES = {
+  cinDoc: ['cinDocumentPath'],
+  companyPanDoc: ['companyPanDocumentPath'],
+  personPanDoc: ['personPanDocumentPath', 'authPanDoc'],
+  gstDoc: ['gstDocumentPath', 'gstinDoc'],
+};
+
+export function applyPartAPdfPath(autoData, field, filePath) {
+  const next = { ...(autoData || {}), [field]: filePath };
+  for (const alias of PART_A_PDF_ALIASES[field] || []) {
+    next[alias] = filePath;
+  }
+  return next;
+}
+
 /** Document OCR fills empty fields; saved user edits win on conflict. */
 export function mergeAutoData(emptyAuto, docData = {}, savedAuto = {}) {
   return { ...emptyAuto, ...pickNonEmpty(docData), ...pickNonEmpty(savedAuto) };
@@ -81,9 +109,11 @@ export function buildRegistrationSavePayload({
   generalInfo,
   ceprId,
 }) {
+  const appType = generalInfo?.applicantType || savedRegistration?.applicant_type || 'PIBO';
+  const defaultSub = /simp/i.test(appType) ? 'Importer of raw material' : 'Importer';
   const payload = {
-    applicant_type: savedRegistration?.applicant_type || 'PIBO',
-    sub_applicant_type: generalInfo?.subApplicantType || savedRegistration?.sub_applicant_type || 'Importer',
+    applicant_type: appType,
+    sub_applicant_type: generalInfo?.subApplicantType || savedRegistration?.sub_applicant_type || defaultSub,
     email: String(email || '').trim() || undefined,
     mobile: String(mobile || '').trim() || undefined,
     password: generalInfo?.password?.trim() || undefined,

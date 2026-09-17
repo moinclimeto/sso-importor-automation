@@ -10,7 +10,7 @@ function mimeFromPath(filePath) {
   return 'application/octet-stream';
 }
 
-export default function LocalFilePreview({ filePath, fileName }) {
+export default function LocalFilePreview({ filePath, fileName, previewUrl = '' }) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState('');
   const [loading, setLoading] = useState(false);
@@ -19,7 +19,14 @@ export default function LocalFilePreview({ filePath, fileName }) {
   const isPdf = /\.pdf$/i.test(filePath || name);
 
   useEffect(() => {
-    if (!open || !filePath) return undefined;
+    if (!open) return undefined;
+    if (previewUrl) {
+      setUrl(previewUrl);
+      setLoading(false);
+      setError('');
+      return undefined;
+    }
+    if (!filePath) return undefined;
     let objectUrl = '';
     let cancelled = false;
     setLoading(true);
@@ -52,9 +59,9 @@ export default function LocalFilePreview({ filePath, fileName }) {
       cancelled = true;
       if (objectUrl) URL.revokeObjectURL(objectUrl);
     };
-  }, [open, filePath]);
+  }, [open, filePath, previewUrl]);
 
-  if (!filePath) return null;
+  if (!filePath && !previewUrl) return null;
 
   return (
     <>

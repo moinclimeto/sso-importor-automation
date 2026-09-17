@@ -74,6 +74,41 @@ const BRAND_OWNER_GUIDELINES = [
   },
 ];
 
+const SIMP_RAW_MATERIAL_GUIDELINES = [
+  {
+    title: 'Scanned Copy of Company PAN in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned Copy of Company CIN in PDF Format (If any)',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned Copy of Company GST in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: "Scanned copy of Authorized Person's PAN in PDF Format",
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Copy of Registration with the DIC or DCSSI of the State Government or Union Territory',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Covering Letter in PDF Format',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Scanned PDF Copy of Signature',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+  {
+    title: 'Documents of Any other Information (If any)',
+    subtitle: 'Maximum file size should be 1 MB',
+  },
+];
+
 const IMPORTER_GUIDELINES = [
   {
     title: 'Company PAN *',
@@ -130,28 +165,35 @@ const IMPORTER_GUIDELINES = [
   },
 ];
 
+function resolveGuidelinesType(applicantType = '', subApplicantType = '') {
+  if (/simp/i.test(applicantType) || /raw\s*material/i.test(subApplicantType)) {
+    return 'SIMP';
+  }
+  if (/brand\s*owner/i.test(subApplicantType)) {
+    return 'Brand Owner';
+  }
+  return 'Importer';
+}
+
 export default function ReadinessGuidelinesModal({
   isOpen,
   onClose,
   defaultType,
+  applicantType,
   subApplicantType,
 }) {
-  const [activeType, setActiveType] = useState('Brand Owner');
+  const [activeType, setActiveType] = useState('SIMP');
 
   useEffect(() => {
     if (!isOpen) return;
 
-    if (subApplicantType) {
-      setActiveType(
-        /brand\s*owner/i.test(subApplicantType) ? 'Brand Owner' : 'Importer'
-      );
+    if (applicantType || subApplicantType) {
+      setActiveType(resolveGuidelinesType(applicantType, subApplicantType));
       return;
     }
 
     if (defaultType) {
-      setActiveType(
-        /brand\s*owner/i.test(defaultType) ? 'Brand Owner' : 'Importer'
-      );
+      setActiveType(resolveGuidelinesType(defaultType, defaultType));
       return;
     }
 
@@ -160,24 +202,27 @@ export default function ReadinessGuidelinesModal({
       try {
         if (window.pwp?.registration?.get) {
           const res = await window.pwp.registration.get();
-          const savedType = res?.data?.sub_applicant_type;
-          if (savedType) {
-            setActiveType(
-              /brand\s*owner/i.test(savedType) ? 'Brand Owner' : 'Importer'
-            );
+          const savedApp = res?.data?.applicant_type;
+          const savedSub = res?.data?.sub_applicant_type;
+          if (savedApp || savedSub) {
+            setActiveType(resolveGuidelinesType(savedApp, savedSub));
           }
         }
       } catch (err) {
-        console.warn('Failed to load sub_applicant_type for guidelines:', err);
+        console.warn('Failed to load applicant types for guidelines:', err);
       }
     };
     checkSaved();
-  }, [isOpen, subApplicantType, defaultType]);
+  }, [isOpen, applicantType, subApplicantType, defaultType]);
 
   if (!isOpen) return null;
 
   const currentList =
-    activeType === 'Brand Owner' ? BRAND_OWNER_GUIDELINES : IMPORTER_GUIDELINES;
+    activeType === 'SIMP'
+      ? SIMP_RAW_MATERIAL_GUIDELINES
+      : activeType === 'Brand Owner'
+        ? BRAND_OWNER_GUIDELINES
+        : IMPORTER_GUIDELINES;
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/50 backdrop-blur-sm">
