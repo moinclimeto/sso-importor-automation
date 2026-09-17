@@ -1,5 +1,32 @@
 export const REGISTRATION_TYPE_OPTIONS = ['Registered', 'Unregistered'];
 
+export const APPLICANT_TYPES = ['PIBO', 'SIMP', 'PWP', 'ULB'];
+
+export const SUB_APPLICANT_OPTIONS_MAP = {
+  PIBO: ['Importer', 'Brand Owner'],
+  SIMP: [
+    'Importer of raw material',
+    'Seller of raw material',
+    'Producer (Small or Micro)',
+    'Manufacturer of raw material',
+  ],
+  PWP: ['Recycler', 'Co-processor'],
+  ULB: ['ULB'],
+};
+
+export function isSimpApplicant(applicantType = '') {
+  return /simp/i.test(String(applicantType || ''));
+}
+
+/** SIMP → Importer of raw material only (not seller / manufacturer / producer). */
+export function isSimpRawMaterial(applicantType = '', subApplicantType = '') {
+  return (
+    isSimpApplicant(applicantType) &&
+    /importer\s+of\s+raw\s+material/i.test(String(subApplicantType || ''))
+  );
+}
+
+
 export const PURCHASE_ENTITY_TYPES = [
   'Producer',
   'PWP',
@@ -23,7 +50,7 @@ export const ENTITY_TYPE_OPTIONS = PURCHASE_ENTITY_TYPES;
 export const ENTITY_TYPE_OPTIONS_BO = PURCHASE_ENTITY_TYPES_BO;
 
 export function getPurchaseEntityTypes(subApplicantType = '') {
-  if (/brand\s*owner/i.test(subApplicantType)) {
+  if (/brand\s*owner|raw\s*material|simp/i.test(subApplicantType)) {
     return PURCHASE_ENTITY_TYPES_BO;
   }
   return PURCHASE_ENTITY_TYPES;
@@ -31,6 +58,19 @@ export function getPurchaseEntityTypes(subApplicantType = '') {
 
 export function normalizeGstin(gst) {
   return String(gst || '').trim().toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 15);
+}
+
+/** GSTIN characters 3–12 are the PAN. CPCB Plant/Unit GST must match company PAN. */
+export function panFromGstin(gstin = '') {
+  const g = normalizeGstin(gstin);
+  return g.length >= 12 ? g.slice(2, 12) : '';
+}
+
+export function unitGstMatchesCompanyPan(unitGst = '', companyPan = '', companyGstin = '') {
+  const unitPan = panFromGstin(unitGst);
+  const pan = String(companyPan || panFromGstin(companyGstin) || '').trim().toUpperCase();
+  if (!unitPan || !pan) return true;
+  return unitPan === pan;
 }
 
 export function normalizeRegistrationType(value) {
