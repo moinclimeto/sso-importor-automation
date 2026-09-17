@@ -426,50 +426,68 @@ export async function fetchCaptchaFromApi(page) {
   };
 }
 
-/** Find captcha canvas/img on CPCB Supporting Documents tab. */
+/** Find captcha canvas/img on CPCB Supporting Documents tab or login form. */
 export async function findCaptchaElement(page) {
   const canvasCandidates = [
     page.locator('app-captcha canvas').first(),
     page.locator('.captch-canvas-blk canvas').first(),
+    page.locator('.captcha-container canvas, canvas.captcha-canvas').first(),
     page.locator('canvas').filter({ has: page.locator('xpath=ancestor::app-captcha') }).first(),
   ];
 
   for (const canvas of canvasCandidates) {
-    if (await canvas.isVisible({ timeout: 2000 }).catch(() => false)) {
-      return { type: 'canvas', locator: canvas };
+    if (await canvas.isVisible({ timeout: 1500 }).catch(() => false)) {
+      const box = await canvas.boundingBox().catch(() => null);
+      if (box && box.width >= 40 && box.width <= 320 && box.height >= 15 && box.height <= 100) {
+        return { type: 'canvas', locator: canvas };
+      }
     }
   }
 
   const imgCandidates = [
     page.locator('app-captcha img').first(),
     page.locator('.captch-canvas-blk img').first(),
+    page.locator('img[src*="data:image"], img[alt*="captcha" i]').first(),
   ];
 
   for (const img of imgCandidates) {
     if (await img.isVisible({ timeout: 1000 }).catch(() => false)) {
       const src = (await img.getAttribute('src').catch(() => '')) || '';
-      if (!/icon|info|eye|logo|refresh/i.test(src)) {
-        return { type: 'img', locator: img };
+      const alt = (await img.getAttribute('alt').catch(() => '')) || '';
+      const cls = (await img.getAttribute('class').catch(() => '')) || '';
+      if (!/icon|info|eye|logo|refresh|banner|background|bg|hero/i.test(`${src} ${alt} ${cls}`)) {
+        const box = await img.boundingBox().catch(() => null);
+        if (box && box.width >= 40 && box.width <= 320 && box.height >= 15 && box.height <= 100) {
+          return { type: 'img', locator: img };
+        }
       }
     }
   }
 
   const captchaInput = page.getByPlaceholder(/Enter Captcha/i);
   if ((await captchaInput.count()) > 0) {
-    for (let level = 2; level <= 8; level += 1) {
+    for (let level = 1; level <= 3; level += 1) {
       let ancestor = captchaInput.first();
       for (let i = 0; i < level; i += 1) {
         ancestor = ancestor.locator('xpath=..');
       }
       const canvas = ancestor.locator('canvas').first();
       if (await canvas.isVisible().catch(() => false)) {
-        return { type: 'canvas', locator: canvas };
+        const box = await canvas.boundingBox().catch(() => null);
+        if (box && box.width >= 40 && box.width <= 320 && box.height >= 15 && box.height <= 100) {
+          return { type: 'canvas', locator: canvas };
+        }
       }
       const img = ancestor.locator('img').first();
       if (await img.isVisible().catch(() => false)) {
         const src = (await img.getAttribute('src').catch(() => '')) || '';
-        if (!/icon|info|eye|logo|refresh/i.test(src)) {
-          return { type: 'img', locator: img };
+        const alt = (await img.getAttribute('alt').catch(() => '')) || '';
+        const cls = (await img.getAttribute('class').catch(() => '')) || '';
+        if (!/icon|info|eye|logo|refresh|banner|background|bg|hero/i.test(`${src} ${alt} ${cls}`)) {
+          const box = await img.boundingBox().catch(() => null);
+          if (box && box.width >= 40 && box.width <= 320 && box.height >= 15 && box.height <= 100) {
+            return { type: 'img', locator: img };
+          }
         }
       }
     }
@@ -477,6 +495,7 @@ export async function findCaptchaElement(page) {
 
   return null;
 }
+
 
 /** Return captcha as data URL for frontend — must match portal session (never a separate API fetch). */
 export async function getCaptchaImageDataUrl(page, onLog) {

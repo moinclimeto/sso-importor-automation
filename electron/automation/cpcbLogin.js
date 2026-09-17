@@ -118,14 +118,6 @@ function loginInput(page, formControlName) {
 
 async function getLoginCaptchaImageDataUrl(page, onLog) {
   attachCaptchaNetworkListener(page);
-  const element = await findCaptchaElement(page);
-  if (element?.locator) {
-    await element.locator.scrollIntoViewIfNeeded().catch(() => {});
-    await page.waitForTimeout(300);
-    const buffer = await element.locator.screenshot();
-    if (onLog) onLog('Login captcha synced from portal canvas');
-    return { captchaImage: `data:image/png;base64,${buffer.toString('base64')}` };
-  }
   return getCaptchaImageDataUrl(page, onLog);
 }
 
@@ -739,6 +731,16 @@ async function selectRadioByLabelInModal(page, modal, labelText, onLog) {
 }
 
 async function clickPlasticWasteCard(page, onLog) {
+  // Check if modal is already open
+  const existingModal = page.locator('[role="dialog"], app-modal-frame, div.rounded-2xl, div.w-cst-size, .modal-content, .cdk-overlay-pane').filter({
+    hasText: /Applicant Type|Please select your application type/i,
+  }).last();
+
+  if (await existingModal.isVisible({ timeout: 1500 }).catch(() => false)) {
+    if (onLog) onLog('Applicant Type modal is already open on dashboard.');
+    return;
+  }
+
   if (onLog) onLog('Locating Plastic Waste Management card on dashboard...');
 
   const plasticHeading = page.locator('h1, h2, h3, h4, h5, div, span, p, .card-title').filter({ hasText: /^Plastic Waste Management$/i }).last();
@@ -751,7 +753,7 @@ async function clickPlasticWasteCard(page, onLog) {
     if (await openBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       if (onLog) onLog('Found "Open" button on Plastic Waste Management card. Clicking Open...');
       await openBtn.scrollIntoViewIfNeeded().catch(() => {});
-      await openBtn.click({ timeout: 5000 });
+      await openBtn.click({ force: true, timeout: 5000 });
       await page.waitForTimeout(1500);
       return;
     }
@@ -761,7 +763,7 @@ async function clickPlasticWasteCard(page, onLog) {
     if (await registerBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
       if (onLog) onLog('Found "Register" button on Plastic Waste Management card. Clicking Register...');
       await registerBtn.scrollIntoViewIfNeeded().catch(() => {});
-      await registerBtn.click({ timeout: 5000 });
+      await registerBtn.click({ force: true, timeout: 5000 });
       await page.waitForTimeout(1500);
       return;
     }
@@ -772,7 +774,7 @@ async function clickPlasticWasteCard(page, onLog) {
   if (await fallbackOpen.isVisible({ timeout: 3000 }).catch(() => false)) {
     if (onLog) onLog('Clicking Open button fallback...');
     await fallbackOpen.scrollIntoViewIfNeeded().catch(() => {});
-    await fallbackOpen.click({ timeout: 5000 });
+    await fallbackOpen.click({ force: true, timeout: 5000 });
     await page.waitForTimeout(1500);
     return;
   }
@@ -781,7 +783,7 @@ async function clickPlasticWasteCard(page, onLog) {
   if (await fallbackReg.isVisible({ timeout: 3000 }).catch(() => false)) {
     if (onLog) onLog('Clicking Register button fallback...');
     await fallbackReg.scrollIntoViewIfNeeded().catch(() => {});
-    await fallbackReg.click({ timeout: 5000 });
+    await fallbackReg.click({ force: true, timeout: 5000 });
     await page.waitForTimeout(1500);
     return;
   }
@@ -793,10 +795,18 @@ async function clickPlasticWasteRegister(page, onLog) {
   return clickPlasticWasteCard(page, onLog);
 }
 
-async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner') {
-  if (onLog) onLog(`Waiting for Applicant Type modal (selecting: ${targetRole})...`);
+async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner', applicantType = 'PIBO') {
+  let appType = String(applicantType || 'PIBO').trim();
+  let subType = String(targetRole || 'Brand Owner').trim();
 
-  const modal = page.locator('[role="dialog"], div.rounded-2xl, div.w-cst-size, .modal-content, .cdk-overlay-pane').filter({
+  // If SIMP and subType is generic 'Importer' or empty, map to 'Importer of raw material'
+  if (/simp/i.test(appType) && (/^importer$/i.test(subType) || !subType)) {
+    subType = 'Importer of raw material';
+  }
+
+  if (onLog) onLog(`Waiting for Applicant Type modal (selecting: ${appType} -> ${subType})...`);
+
+  const modal = page.locator('[role="dialog"], app-modal-frame, div.rounded-2xl, div.w-cst-size, .modal-content, .cdk-overlay-pane').filter({
     hasText: /Applicant Type|Please select your application type/i,
   }).last();
 
@@ -807,11 +817,11 @@ async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner')
   const isTableModal = (await modal.locator('table, .applicant-type-table, .applcant-type-tb-wrapper').count().catch(() => 0)) > 0;
   
   if (isTableModal) {
-    if (onLog) onLog(`Role selection table detected in modal. Selecting "${targetRole}"...`);
+    if (onLog) onLog(`Role selection table detected in modal. Selecting "${subType}"...`);
 
     // Find row with targetRole text
     let roleRow = modal.locator('table tr, tbody tr').filter({
-      hasText: new RegExp(escapeRegex(targetRole), 'i')
+      hasText: new RegExp(escapeRegex(subType), 'i')
     }).first();
 
     if ((await roleRow.count().catch(() => 0)) === 0) {
@@ -834,7 +844,7 @@ async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner')
       } else {
         await roleRow.click({ force: true });
       }
-      if (onLog) onLog(`Selected "${targetRole}" in table.`);
+      if (onLog) onLog(`Selected "${subType}" in table.`);
       await page.waitForTimeout(600);
     }
 
@@ -845,45 +855,140 @@ async function handleApplicantTypeModal(page, onLog, targetRole = 'Brand Owner')
 
     if (await openBtn.isVisible({ timeout: 5000 }).catch(() => false)) {
       if (onLog) onLog('Clicking Open button in Applicant Type modal...');
-      await openBtn.click({ timeout: 8000 });
+      await openBtn.click({ force: true, timeout: 8000 });
       await page.waitForTimeout(2500);
     } else {
       const submitBtn = modal.locator('button[type="submit"], button').filter({ hasText: /Open|Proceed|Submit/i }).last();
       if (await submitBtn.isVisible({ timeout: 3000 }).catch(() => false)) {
-        await submitBtn.click({ timeout: 8000 });
+        await submitBtn.click({ force: true, timeout: 8000 });
         await page.waitForTimeout(2500);
       }
     }
     return;
   }
 
-  // Variant B: Wizard Modal (PIBO -> typeCategory -> Onboarding)
-  if (onLog) onLog(`Wizard options detected in modal. Selecting PIBO -> ${targetRole}...`);
-  const typeRadio = modal.locator('input[formcontrolname="type"]').first();
-  if (await typeRadio.isVisible({ timeout: 5000 }).catch(() => false)) {
-    await typeRadio.click({ force: true, timeout: 5000 });
+  // Variant B: Wizard Modal (PIBO / SIMP -> typeCategory -> Onboarding)
+  if (onLog) onLog(`Wizard options detected in modal. Selecting ${appType} -> ${subType}...`);
+
+  // 1. Select Applicant Type (e.g. PIBO, SIMP, PWP, ULB)
+  let appTypeSelected = false;
+
+  // Exact label inside type container
+  const appTypeLabel = modal.locator('label').filter({
+    hasText: new RegExp(`^\\s*${escapeRegex(appType)}\\s*$`, 'i'),
+  }).first();
+
+  if (await appTypeLabel.isVisible({ timeout: 3000 }).catch(() => false)) {
+    const parentCont = appTypeLabel.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+    const radio = parentCont.locator('input[type="radio"], input[formcontrolname="type"]').first();
+    if (await radio.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await radio.click({ force: true });
+    } else {
+      await appTypeLabel.click({ force: true });
+    }
+    appTypeSelected = true;
+    if (onLog) onLog(`Selected Applicant Type: ${appType}`);
     await page.waitForTimeout(800);
   }
 
+  if (!appTypeSelected) {
+    const typeRadios = modal.locator('input[formcontrolname="type"], input[type="radio"]');
+    const typeCount = await typeRadios.count();
+    if (/simp/i.test(appType) && typeCount >= 3) {
+      await typeRadios.nth(2).click({ force: true, timeout: 4000 }); // PIBO=0, PWP=1, SIMP=2, ULB=3
+      appTypeSelected = true;
+    } else if (typeCount > 0) {
+      await typeRadios.first().click({ force: true, timeout: 4000 });
+      appTypeSelected = true;
+    }
+    await page.waitForTimeout(800);
+  }
+
+  // 2. Wait for Sub-Applicant Category options to appear
   await modal
-    .getByText(/Please select one of the following|Recycler|Cement Co-processing|Importer|Producer|Brand Owner/i)
+    .getByText(/Please select one of the following|Recycler|Cement Co-processing|Importer|Producer|Brand Owner|raw material/i)
     .first()
     .waitFor({ state: 'visible', timeout: 10000 })
     .catch(() => {});
 
-  const subTypeRadios = modal.locator('input[formcontrolname="typeCategory"]');
-  const subTypeCount = await subTypeRadios.count();
-  if (subTypeCount > 1) {
-    const subTypeIndex = /Brand Owner/i.test(targetRole) ? 2 : 1;
-    await subTypeRadios.nth(subTypeIndex).click({ force: true, timeout: 5000 });
-  } else {
-    await selectRadioByLabelInModal(page, modal, targetRole, onLog).catch(() => {});
+  await page.waitForTimeout(600);
+
+  // 3. Select Sub-Applicant category (e.g., Importer of raw material)
+  let subSelected = false;
+
+  // Look for exact label (e.g. "Importer of raw material")
+  const subLabelExact = modal.locator('label').filter({
+    hasText: new RegExp(`^\\s*${escapeRegex(subType)}\\s*$`, 'i'),
+  }).first();
+
+  if (await subLabelExact.isVisible({ timeout: 4000 }).catch(() => false)) {
+    const parentRow = subLabelExact.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+    const radioInRow = parentRow.locator('input[type="radio"], input[formcontrolname="typeCategory"]').first();
+    if (await radioInRow.isVisible({ timeout: 1500 }).catch(() => false)) {
+      await radioInRow.click({ force: true });
+    } else {
+      await subLabelExact.click({ force: true });
+    }
+    subSelected = true;
+    if (onLog) onLog(`Selected category "${subType}" via exact label.`);
+    await page.waitForTimeout(600);
+  }
+
+  if (!subSelected) {
+    // Partial / fuzzy label search
+    const subLabelFuzzy = modal.locator('label').filter({
+      hasText: new RegExp(escapeRegex(subType), 'i'),
+    }).first();
+
+    if (await subLabelFuzzy.isVisible({ timeout: 3000 }).catch(() => false)) {
+      const parentRow = subLabelFuzzy.locator('xpath=ancestor::div[contains(@class, "flex")][1]');
+      const radioInRow = parentRow.locator('input[type="radio"], input[formcontrolname="typeCategory"]').first();
+      if (await radioInRow.isVisible({ timeout: 1500 }).catch(() => false)) {
+        await radioInRow.click({ force: true });
+      } else {
+        await subLabelFuzzy.click({ force: true });
+      }
+      subSelected = true;
+      if (onLog) onLog(`Selected category "${subType}" via fuzzy label.`);
+      await page.waitForTimeout(600);
+    }
+  }
+
+  if (!subSelected) {
+    const subTypeRadios = modal.locator('input[formcontrolname="typeCategory"]');
+    const subTypeCount = await subTypeRadios.count();
+    if (subTypeCount > 1) {
+      if (/simp/i.test(appType)) {
+        // SIMP order in DOM:
+        // 0: Seller of raw material
+        // 1: Importer of raw material
+        // 2: Manufacturer of raw material
+        // 3: Producer (Small or Micro)
+        const sIndex = /importer/i.test(subType) ? 1 :
+                       /seller/i.test(subType) ? 0 :
+                       /manufacturer/i.test(subType) ? 2 :
+                       /producer/i.test(subType) ? 3 : 1;
+        if (sIndex < subTypeCount) {
+          await subTypeRadios.nth(sIndex).click({ force: true, timeout: 5000 });
+          subSelected = true;
+          if (onLog) onLog(`Selected SIMP category at index ${sIndex}.`);
+        }
+      } else {
+        const subTypeIndex = /Brand Owner/i.test(subType) ? 2 : 1;
+        if (subTypeIndex < subTypeCount) {
+          await subTypeRadios.nth(subTypeIndex).click({ force: true, timeout: 5000 });
+          subSelected = true;
+        }
+      }
+    } else {
+      await selectRadioByLabelInModal(page, modal, subType, onLog).catch(() => {});
+    }
   }
 
   await clickOnboardingButton(modal, page, onLog);
 }
 
-async function openPlasticWasteManagement(page, onLog, targetRole = 'Brand Owner') {
+async function openPlasticWasteManagement(page, onLog, targetRole = 'Brand Owner', applicantType = 'PIBO') {
   await waitForDashboard(page, onLog);
   await waitForCpcbLoaderGone(page);
 
@@ -894,14 +999,24 @@ async function openPlasticWasteManagement(page, onLog, targetRole = 'Brand Owner
     return;
   }
 
-  await clickPlasticWasteCard(page, onLog);
-  await handleApplicantTypeModal(page, onLog, targetRole);
+  // Check if modal or modal backdrop is already open
+  const modalAlreadyOpen = await page.locator('[role="dialog"], app-modal-frame, div.w-cst-size').filter({
+    hasText: /Applicant Type|Please select your application type/i
+  }).first().isVisible({ timeout: 2000 }).catch(() => false);
+
+  if (modalAlreadyOpen) {
+    if (onLog) onLog('Applicant Type modal is already open on dashboard.');
+  } else {
+    await clickPlasticWasteCard(page, onLog);
+  }
+
+  await handleApplicantTypeModal(page, onLog, targetRole, applicantType);
   await waitForCpcbLoaderGone(page, 40000);
   await page.waitForTimeout(1500);
 }
 
 export async function openPlasticWasteManagementFlow(onLog, options = {}) {
-  const { targetRole } = options;
+  const { targetRole, applicantType: optAppType } = options;
   const session = getLoginSession();
   let page = session.page;
   if (!page || page.isClosed()) {
@@ -909,8 +1024,9 @@ export async function openPlasticWasteManagementFlow(onLog, options = {}) {
     page = fresh.page;
   }
   const regResult = await getRegistrationDetails().catch(() => ({ data: {} }));
-  const role = targetRole || regResult.data?.sub_applicant_type || 'Brand Owner';
-  await openPlasticWasteManagement(page, onLog, role);
+  const appType = optAppType || regResult.data?.applicant_type || 'PIBO';
+  const role = targetRole || regResult.data?.sub_applicant_type || (/simp/i.test(appType) ? 'Importer of raw material' : 'Brand Owner');
+  await openPlasticWasteManagement(page, onLog, role, appType);
   return {
     success: true,
     url: page.url() || '',
@@ -921,17 +1037,27 @@ export async function openPlasticWasteManagementFlow(onLog, options = {}) {
 async function clickOnboardingButton(modal, page, onLog) {
   if (onLog) onLog('Clicking Onboarding...');
 
-  const btn = modal.locator('button[type="submit"]').filter({ hasText: /Onboarding/i }).first();
-  await btn.waitFor({ state: 'visible', timeout: 10000 });
-  await btn.scrollIntoViewIfNeeded().catch(() => {});
-  await btn.click({ timeout: 10000 });
+  const btn = modal.locator('button.signup-btn-fmt, button[type="submit"], app-button[type="submit"] button, button').filter({
+    hasText: /^\s*Onboarding\s*$/i
+  }).first();
+
+  if (await btn.isVisible({ timeout: 10000 }).catch(() => false)) {
+    await btn.scrollIntoViewIfNeeded().catch(() => {});
+    await btn.click({ force: true, timeout: 10000 });
+    await page.waitForTimeout(3000);
+    return;
+  }
+
+  const fallbackBtn = modal.locator('button').filter({ hasText: /Onboarding/i }).first();
+  await fallbackBtn.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
+  await fallbackBtn.click({ force: true, timeout: 10000 });
   await page.waitForTimeout(3000);
 }
 
 async function startApplicationOnboarding(page, onLog) {
   const regResult = await getRegistrationDetails();
   const applicantType = regResult.data?.applicant_type || 'PIBO';
-  const subApplicantType = regResult.data?.sub_applicant_type || 'Brand Owner';
+  const subApplicantType = regResult.data?.sub_applicant_type || (/simp/i.test(applicantType) ? 'Importer of raw material' : 'Brand Owner');
 
   if (onLog) {
     onLog(`Starting application onboarding — ${applicantType} / ${subApplicantType}`);
@@ -945,7 +1071,7 @@ async function startApplicationOnboarding(page, onLog) {
   if (alreadyOnOnboarding && await newAppOnDashboard.isVisible({ timeout: 3000 }).catch(() => false)) {
     if (onLog) onLog('Already on onboarding dashboard — skipping Register / Applicant Type.');
   } else {
-    await openPlasticWasteManagement(page, onLog, subApplicantType);
+    await openPlasticWasteManagement(page, onLog, subApplicantType, applicantType);
   }
 
   if (onLog) onLog('Waiting for onboarding dashboard (loader to finish)...');
@@ -980,6 +1106,48 @@ async function startApplicationOnboarding(page, onLog) {
 
     try {
       const db = getDb();
+      let mergedGeneralInfo = {};
+      let mergedAutoData = {};
+      try {
+        const regDetails = await db.get('SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1');
+        if (regDetails?.form_data_json) {
+          const parsed = JSON.parse(regDetails.form_data_json);
+          mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
+          mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
+          if (regDetails.details_of_products_produced_marketed) {
+            mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
+          }
+          if (regDetails.representative_picture_of_plastic_packaging) {
+            mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
+          }
+        }
+      } catch (err) {
+        if (onLog) onLog('Failed to fetch fields from DB: ' + err.message);
+      }
+
+      const isSimp = /simp/i.test(applicantType) || /raw\s*material/i.test(subApplicantType);
+      if (isSimp) {
+        if (onLog) onLog(`SIMP application detected (${applicantType} -> ${subApplicantType}). Routing directly to SIMP flow...`);
+        await fillNewApplicationFlow(page, {
+          ...mergedGeneralInfo,
+          ...mergedAutoData,
+          applicantType,
+          subApplicantType,
+          plasticConsumed: mergedGeneralInfo.plasticConsumed,
+          partBSection4: mergedGeneralInfo.partBSection4,
+          partBTransactions: mergedGeneralInfo.partBTransactions,
+        }, onLog);
+        
+        if (onLog) onLog('SIMP Raw Material application flow completed.');
+        return {
+          success: true,
+          step: 'APPLICATION_ONBOARDING_COMPLETE',
+          applicantType,
+          subApplicantType,
+          url: page.url() || '',
+        };
+      }
+
       const docs = await db.all('SELECT doc_type, file_path, document_number FROM company_documents ORDER BY created_at DESC');
       
       const iecDoc = docs.find(d => d.doc_type === 'iec');
@@ -1069,30 +1237,7 @@ async function startApplicationOnboarding(page, onLog) {
         if (onLog) onLog('Attempting to upload Udyam/MSME on dashboard...');
         await tryUpload('Supporting document for company category', udyamDoc.file_path);
       }
-
-      let mergedGeneralInfo = {};
-      let mergedAutoData = {};
-      try {
-        const regDetails = await db.get('SELECT form_data_json, details_of_products_produced_marketed, representative_picture_of_plastic_packaging FROM registration_details ORDER BY _internal_id DESC LIMIT 1');
-        
-        if (regDetails && regDetails.form_data_json) {
-          const parsed = JSON.parse(regDetails.form_data_json);
-          
-          // Older saves keep the fields at the root, newer ones nest them under
-          // generalInfo / autoData — support both shapes.
-          mergedGeneralInfo = { ...(parsed || {}), ...(parsed?.generalInfo || {}) };
-          mergedAutoData = { ...(parsed || {}), ...(parsed?.autoData || {}) };
-          
-           if (regDetails.details_of_products_produced_marketed) {
-             mergedAutoData.detailsOfProductsPath = regDetails.details_of_products_produced_marketed;
-          }
-           if (regDetails.representative_picture_of_plastic_packaging) {
-             mergedAutoData.representativePicturePath = regDetails.representative_picture_of_plastic_packaging;
-          }
-        }
-      } catch (err) {
-        if (onLog) onLog('Failed to fetch fields from DB: ' + err.message);
-      }
+      // DB details were already loaded into mergedGeneralInfo and mergedAutoData above
 
       const operatingStates = Array.isArray(mergedGeneralInfo.operatingStates) ? mergedGeneralInfo.operatingStates : [];
       const hasProductionFacility = mergedGeneralInfo.hasProductionFacility || '';
@@ -1132,87 +1277,7 @@ async function startApplicationOnboarding(page, onLog) {
         );
       }
 
-      if (false && operatingStates.length > 0) {
-        if (onLog) onLog('Attempting to select Operating States...');
-        let foundDropdown = false;
-        
-        // Find the multiselect dropdown for states
-        let dropdownContainer = page.locator('div.selected-items').filter({ hasText: /Select states/i }).first();
-        let arrowBtn = page.locator('svg.dropdown-icon').first();
 
-        // If not found by text (e.g. already has a state selected), try finding it near the label
-        if (!(await dropdownContainer.isVisible({ timeout: 2000 }).catch(() => false))) {
-           const stateLabel = page.locator('label, div').filter({ hasText: /Select States\/UTs in which the (Importer|Brand Owner|Producer) is Operating/i }).last();
-           // Go up to a common wrapper (like a row or form-group) and find the dropdown inside
-           dropdownContainer = stateLabel.locator('xpath=ancestor::div[contains(@class, "row") or contains(@class, "form-group") or contains(@class, "col")][1]//div[contains(@class, "selected-items")]').first();
-           arrowBtn = dropdownContainer.locator('xpath=..//svg[contains(@class, "dropdown-icon")]').first();
-        }
-        
-        if (await dropdownContainer.isVisible({ timeout: 5000 }).catch(() => false)) {
-          // Click the container div to open the dropdown
-          await dropdownContainer.click({ force: true, timeout: 3000 }).catch(async () => {
-             await arrowBtn.click({ force: true }).catch(() => {});
-          });
-          foundDropdown = true;
-        } else if (await arrowBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
-          await arrowBtn.click({ force: true, timeout: 3000 }).catch(() => {});
-          foundDropdown = true;
-        } else {
-          if (onLog) onLog('ERROR: Could not find or open States dropdown. Saving screenshot to states_dropdown_error.png');
-          await page.screenshot({ path: 'states_dropdown_error.png', fullPage: true }).catch(() => {});
-        }
-
-        if (foundDropdown) {
-          await page.waitForTimeout(1000);
-          
-          for (const state of operatingStates) {
-            // Type the state into the search bar to filter the list and make it visible
-            const searchInput = page.locator('input.search-input, input[placeholder="Select states"], input[placeholder="Search"]').first();
-            if (await searchInput.isVisible({ timeout: 2000 }).catch(() => false)) {
-              await searchInput.click();
-              await searchInput.fill('');
-              await page.keyboard.press('Control+A');
-              await page.keyboard.press('Backspace');
-              await searchInput.fill(state);
-              // Wait for Angular to filter the list
-              await page.waitForTimeout(600);
-            } else {
-               if (onLog) onLog('WARNING: Search input not found inside dropdown. Proceeding without search...');
-            }
-
-            // Find any visible option in the dropdown that contains the state text
-            let optionRow = page.locator('.ng-option, .dropdown-item, li, mat-option').filter({ hasText: new RegExp(escapeRegex(state), 'i') }).first();
-            
-            if ((await optionRow.count().catch(() => 0)) === 0) {
-               optionRow = page.getByText(new RegExp(escapeRegex(state), 'i')).filter({ visible: true }).last();
-            }
-            
-            if (await optionRow.isVisible({ timeout: 3000 }).catch(() => false)) {
-              if (onLog) onLog(`Selecting operating state: ${state}`);
-              // Click the row directly
-              await optionRow.scrollIntoViewIfNeeded().catch(() => {});
-              
-              // If there IS a real checkbox inside, try clicking that first, otherwise click the row
-              const realCheckbox = optionRow.locator('input[type="checkbox"]').first();
-              if (await realCheckbox.isVisible({ timeout: 500 }).catch(() => false)) {
-                 await realCheckbox.click({ force: true }).catch(() => optionRow.click({ force: true }));
-              } else {
-                 await optionRow.click({ force: true });
-              }
-              await page.waitForTimeout(500);
-            } else {
-              if (onLog) onLog(`ERROR: Could not find checkbox for operating state: ${state}. Saving screenshot to state_checkbox_error_${state}.png`);
-              await page.screenshot({ path: `state_checkbox_error_${state}.png` }).catch(() => {});
-            }
-          }
-          
-          // Press escape to close the dropdown
-          await page.keyboard.press('Escape');
-          await page.waitForTimeout(1000);
-        } else {
-          if (onLog) onLog('Select states dropdown not found on this form - continuing...');
-        }
-      }
 
       if (hasProductionFacility) {
         if (onLog) onLog(`Setting Production Facility to ${hasProductionFacility}...`);
@@ -1565,8 +1630,9 @@ export async function submitLoginOtp(otp, onLog, options = {}) {
 
     try {
       const regResult = await getRegistrationDetails().catch(() => ({ data: {} }));
-      const targetRole = regResult.data?.sub_applicant_type || 'Brand Owner';
-      await openPlasticWasteManagement(page, onLog, targetRole);
+      const applicantType = regResult.data?.applicant_type || 'PIBO';
+      const targetRole = regResult.data?.sub_applicant_type || (/simp/i.test(applicantType) ? 'Importer of raw material' : 'Brand Owner');
+      await openPlasticWasteManagement(page, onLog, targetRole, applicantType);
     } catch (dashNavErr) {
       if (onLog) onLog('Dashboard navigation note: ' + (dashNavErr.message || dashNavErr));
     }

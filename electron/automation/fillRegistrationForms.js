@@ -35,8 +35,10 @@ import {
   validatePlasticConsumed3cForPortal,
   formatPlasticConsumed3cIssue,
 } from '../../shared/plasticConsumed3cValidation.js';
-import { alignPlasticConsumedToYears, prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
+import { prunePlasticConsumedForPortal } from '../../shared/plasticConsumed3c.js';
 import { sanitizeCpcbPortalFileName, registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
+import { isSimpRawMaterial } from '../../shared/entityRegistrationTypes.js';
+import { runSimpRawMaterialApplicationFlow } from './portalSimpRawMaterial.js';
 
 const UPLOAD_LABEL_BASE_NAMES = {
   'Company PAN': 'company_pan',
@@ -111,7 +113,9 @@ export function normalizeApplicationData(raw = {}) {
     operatingStates: Array.isArray(src.operatingStates) ? src.operatingStates : [],
     hasProductionFacility: src.hasProductionFacility || '',
     capitalInvested: src.capitalInvested || '',
-    yearOfCommencement: src.yearOfCommencement || '2026',
+    yearOfCommencement:
+      src.yearOfCommencement
+      || (isSimpRawMaterial(src.applicantType, src.subApplicantType) ? '' : '2026'),
     plasticConsumed: prunePlasticConsumedForPortal(
       src.plasticConsumed && typeof src.plasticConsumed === 'object' ? src.plasticConsumed : ZERO_PLASTIC,
     ),
@@ -163,7 +167,27 @@ export function normalizeApplicationData(raw = {}) {
     partBTransactions: src.partBTransactions && typeof src.partBTransactions === 'object'
       ? src.partBTransactions
       : { sec5a: [], sec5b: [], sec5c: [], sec5d: [] },
+    applicantType: src.applicantType || 'PIBO',
     subApplicantType: src.subApplicantType || 'Importer',
+    typeOfBusiness: src.typeOfBusiness || src.businessType || src.constitutionOfBusiness || '',
+    typeOfCompany: src.typeOfCompany || '',
+    plantState: src.plantState || src.unitState || src.state || '',
+    dicRegistered: src.dicRegistered || '',
+    latitude: src.latitude || src.lat || '',
+    longitude: src.longitude || src.lng || src.long || '',
+    gstDoc: existingFile(src.gstDoc) || existingFile(src.gstinDoc) || existingFile(src.gstDocumentPath),
+    companyPanDoc: existingFile(src.companyPanDoc) || existingFile(src.panDoc) || existingFile(src.companyPanDocumentPath) || existingFile(src.panDocumentPath),
+    cinDoc: existingFile(src.cinDoc) || existingFile(src.cinDocumentPath),
+    personPanDoc: existingFile(src.personPanDoc) || existingFile(src.authPanDoc) || existingFile(src.personPanDocumentPath),
+    registeredAddress: src.registeredAddress || src.registeredAddressLine1 || '',
+    designation: src.designation || src.authDesignation || '',
+    simpImportDetails: Array.isArray(src.simpImportDetails) ? src.simpImportDetails : [],
+    simpSupplyDetails: Array.isArray(src.simpSupplyDetails) ? src.simpSupplyDetails : [],
+    legalName: src.legalName || src.companyName || '',
+    tradeName: src.tradeName || src.companyName || '',
+    gstin: src.gstin || src.gst || '',
+    companyPan: src.companyPan || src.pan || '',
+    cin: src.cin || '',
   };
 }
 
@@ -1654,6 +1678,13 @@ export async function fillPartBAndPartCOnly(page, formData, onLog) {
 
 export async function fillNewApplicationFlow(page, formData, onLog) {
   const data = normalizeApplicationData(formData);
+
+  if (isSimpRawMaterial(data.applicantType, data.subApplicantType)) {
+    if (onLog) onLog(`Routing to SIMP Raw Material automation flow (${data.applicantType} -> ${data.subApplicantType})...`);
+    await runSimpRawMaterialApplicationFlow(page, data, onLog);
+    return;
+  }
+
   const needsHistorical = requiresHistoricalEprData(data.yearOfCommencement);
   data.partBSection4 = await resolvePartBSection4ForAutomation({
     partBSection4: needsHistorical ? data.partBSection4 : [],

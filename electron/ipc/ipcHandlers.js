@@ -484,6 +484,11 @@ export function registerIpcHandlers() {
     }
   });
 
+  ipcMain.handle('files:exists', async (_, filePath = '') => {
+    const p = String(filePath || '').trim();
+    return { exists: Boolean(p && fs.existsSync(p)) };
+  });
+
   async function storeInvoicePdfLocally(data) {
     if (!data._page) return data;
     const source = data._page.sourceFilePath || data._page.sourceFileName;

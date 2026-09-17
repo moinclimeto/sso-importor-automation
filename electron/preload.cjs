@@ -20,6 +20,7 @@ contextBridge.exposeInMainWorld('pwp', {
   },
   files: {
     storeUpload: (payload) => ipcRenderer.invoke('files:store-upload', payload),
+    exists: (filePath) => ipcRenderer.invoke('files:exists', filePath),
   },
   letters: {
     preview: (payload) => ipcRenderer.invoke('letters:preview', payload),

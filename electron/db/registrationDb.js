@@ -96,13 +96,15 @@ function buildFormDataJson(data = {}, existingFormDataJson = null) {
     }
   }
 
-  if (!existingFormDataJson && (data.email || data.mobile || data.password || data.sub_applicant_type || data.subApplicantType)) {
+  if (!existingFormDataJson && (data.email || data.mobile || data.password || data.sub_applicant_type || data.subApplicantType || data.applicant_type || data.applicantType)) {
+    const appType = data.applicant_type || data.applicantType || 'PIBO';
+    const defaultSub = /simp/i.test(appType) ? 'Importer of raw material' : 'Importer';
     return JSON.stringify({
       email: data.email || '',
       mobile: data.mobile || '',
       generalInfo: {
-        applicantType: data.applicant_type || data.applicantType || 'PIBO',
-        subApplicantType: data.sub_applicant_type || data.subApplicantType || 'Importer',
+        applicantType: appType,
+        subApplicantType: data.sub_applicant_type || data.subApplicantType || defaultSub,
       },
       autoData: {},
     });
@@ -296,7 +298,7 @@ export async function saveRegistrationDetails(data = {}) {
       (applicant_type, sub_applicant_type, cepr_id, success_screenshot_path, email, mobile, password, confirm_password, form_data_json, has_production_facility, capital_invested, year_of_commencement, details_of_products_produced_marketed, representative_picture_of_plastic_packaging, plastic_consumed_json, compliance_status, thickness_of_plastic, importer_3a_json, importer_3a_status, importer_3b_json)
      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     emptyToNull(data.applicant_type) || 'PIBO',
-    emptyToNull(data.sub_applicant_type) || 'Importer',
+    emptyToNull(data.sub_applicant_type) || (/simp/i.test(data.applicant_type) ? 'Importer of raw material' : 'Importer'),
     ceprId,
     emptyToNull(data.success_screenshot_path),
     email,

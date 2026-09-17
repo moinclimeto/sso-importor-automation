@@ -13,6 +13,12 @@ import {
 } from '../../shared/partBSection5.js';
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 import { getCpcbPortalPartA3cYears } from '../../shared/financialYearScope.js';
+import {
+  buildSimpImportRowsFromPurchases,
+  importRowQuantity,
+  buildSimpSupplyRowsFromSales,
+  requiredSimpImportFinancialYears,
+} from '../../shared/simpRawMaterialPartB.js';
 
 async function resolveCompanyIdForAutomation({ companyId = null, gstin = '' } = {}) {
   if (companyId != null && companyId !== '') return companyId;
@@ -179,5 +185,85 @@ export async function resolvePartBTransactionsForAutomation({
       ...base,
       sec5b: existing5b.map(normalizeSec5bRowForPortal),
     };
+  }
+}
+
+export async function resolveSimpImportDetailsForAutomation({
+  existing = [],
+  gstin = '',
+  companyId = null,
+  onLog,
+} = {}) {
+  const saved = Array.isArray(existing) ? existing.filter((row) => importRowQuantity(row) > 0) : [];
+  if (saved.length) return saved;
+
+  try {
+    const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
+    const { purchases } = await loadCompanyRecords(resolvedCompanyId);
+    let supplierMaster = [];
+    try {
+      const db = getDb();
+      supplierMaster = resolvedCompanyId
+        ? await db.all('SELECT * FROM supplier_master WHERE company_id = ?', [resolvedCompanyId])
+        : await db.all('SELECT * FROM supplier_master');
+    } catch {
+      supplierMaster = [];
+    }
+    const rows = buildSimpImportRowsFromPurchases(purchases, {
+      reportingYears: requiredSimpImportFinancialYears(),
+      companyId: resolvedCompanyId,
+      supplierMaster,
+    });
+    if (onLog) {
+      onLog(
+        rows.length
+          ? `Prepared ${rows.length} SIMP import row(s) from published Doc Processor purchases.`
+          : 'No published purchases found to prepare SIMP Import Details — fill Part B manually.',
+      );
+    }
+    return rows;
+  } catch (err) {
+    if (onLog) onLog(`Failed to prepare SIMP import rows from Doc Processor: ${err.message}`);
+    return saved;
+  }
+}
+
+export async function resolveSimpSupplyDetailsForAutomation({
+  existing = [],
+  gstin = '',
+  companyId = null,
+  onLog,
+} = {}) {
+  const saved = Array.isArray(existing) ? existing.filter((row) => importRowQuantity(row) > 0) : [];
+  if (saved.length) return saved;
+
+  try {
+    const resolvedCompanyId = await resolveCompanyIdForAutomation({ companyId, gstin });
+    const { sales } = await loadCompanyRecords(resolvedCompanyId);
+    let supplierMaster = [];
+    try {
+      const db = getDb();
+      supplierMaster = resolvedCompanyId
+        ? await db.all('SELECT * FROM supplier_master WHERE company_id = ?', [resolvedCompanyId])
+        : await db.all('SELECT * FROM supplier_master');
+    } catch {
+      supplierMaster = [];
+    }
+    const rows = buildSimpSupplyRowsFromSales(sales, {
+      reportingYears: requiredSimpImportFinancialYears(),
+      companyId: resolvedCompanyId,
+      supplierMaster,
+    });
+    if (onLog) {
+      onLog(
+        rows.length
+          ? `Prepared ${rows.length} SIMP sales row(s) from published Doc Processor sales.`
+          : 'No published sales found to prepare SIMP Producers/Sellers supplied — fill Part B manually.',
+      );
+    }
+    return rows;
+  } catch (err) {
+    if (onLog) onLog(`Failed to prepare SIMP sales rows from Doc Processor: ${err.message}`);
+    return saved;
   }
 }
