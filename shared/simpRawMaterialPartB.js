@@ -9,6 +9,7 @@ import {
 } from './procurementConversionFactor.js';
 import { resolveSalesAddress } from './reviewEnrichment.js';
 
+/** CPCB SIMP Importer Import/Sales template dropdown — PVC/PE/PBS/PMMA/EPS are rejected. */
 export const SIMP_PLASTIC_TYPES = [
   'HDPE',
   'PET',
@@ -18,14 +19,19 @@ export const SIMP_PLASTIC_TYPES = [
   'LLDPE',
   'PLA',
   'PBAT',
-  'PBS',
   'MLP',
-  'PE',
-  'PVC',
-  'PMMA',
-  'EPS',
   'Others',
 ];
+
+const SIMP_PLASTIC_TYPE_ALIASES = {
+  PVC: 'Others',
+  PE: 'LDPE',
+  PBS: 'Others',
+  PMMA: 'Others',
+  EPS: 'PS',
+  OTHER: 'Others',
+  OTHERS: 'Others',
+};
 
 export const SIMP_REGISTRATION_TYPES = ['Registered', 'Unregistered'];
 
@@ -51,6 +57,7 @@ export function emptySimpSupplyRow() {
     entityType: '',
     eprRegistrationNo: '',
     entityName: '',
+    country: 'India',
     address: '',
     contact: '',
     financialYear: '',
@@ -91,12 +98,13 @@ export const SIMP_SUPPLY_DETAILS_COLUMNS = [
   { header: 'Entity Type', key: 'entityType', width: 22 },
   { header: 'EPR Registration No.', key: 'eprRegistrationNo', width: 22 },
   { header: 'Name', key: 'entityName', width: 28 },
+  { header: 'Country', key: 'country', width: 16 },
   { header: 'Address', key: 'address', width: 36 },
   { header: 'Contact', key: 'contact', width: 16 },
   { header: 'Financial Year', key: 'financialYear', width: 16 },
   { header: 'Type Of Plastic Raw Material', key: 'plasticType', width: 28 },
   { header: 'Quantity(tons)', key: 'quantityTons', width: 16 },
-  { header: 'Sales Date (YYYY-MM-DD)', key: 'salesDate', width: 24 },
+  { header: 'Import Date (YYYY-MM-DD)', key: 'salesDate', width: 24 },
 ];
 
 export function normalizePlasticTypeKey(value = '') {
@@ -129,29 +137,44 @@ export function mapToSimpPlasticType(value = '') {
   const raw = String(value || '').trim();
   if (!raw) return '';
   const compact = normalizePlasticTypeKey(raw);
+  if (SIMP_PLASTIC_TYPE_ALIASES[compact]) return SIMP_PLASTIC_TYPE_ALIASES[compact];
   const exact = SIMP_PLASTIC_TYPES.find((t) => normalizePlasticTypeKey(t) === compact);
   if (exact) return exact;
-  const partial = SIMP_PLASTIC_TYPES.find((t) => compact.includes(normalizePlasticTypeKey(t)));
+  const longerFirst = [...SIMP_PLASTIC_TYPES].sort(
+    (a, b) => normalizePlasticTypeKey(b).length - normalizePlasticTypeKey(a).length,
+  );
+  const partial = longerFirst.find((t) => compact.includes(normalizePlasticTypeKey(t)));
   return partial || 'Others';
+}
+
+function pad2(n) {
+  return String(n).padStart(2, '0');
 }
 
 export function formatSimpImportDate(value = '') {
   if (value instanceof Date && !Number.isNaN(value.getTime())) {
-    const y = value.getFullYear();
-    const m = String(value.getMonth() + 1).padStart(2, '0');
-    const d = String(value.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
+    return `${value.getUTCFullYear()}-${pad2(value.getUTCMonth() + 1)}-${pad2(value.getUTCDate())}`;
   }
-  const text = String(value || '').trim();
+  const text = String(value || '').replace(/^\u200B/, '').replace(/^'/, '').trim();
   if (!text) return '';
-  const iso = text.match(/^(\d{4}-\d{2}-\d{2})/);
-  if (iso) return iso[1];
+  const iso = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (iso) return `${iso[1]}-${iso[2]}-${iso[3]}`;
+  const dmy = text.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{4})$/);
+  if (dmy) {
+    const day = Number(dmy[1]);
+    const month = Number(dmy[2]);
+    const year = Number(dmy[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${year}-${pad2(month)}-${pad2(day)}`;
+    }
+  }
   const parsed = new Date(text);
   if (Number.isNaN(parsed.getTime())) return text;
-  const y = parsed.getFullYear();
-  const m = String(parsed.getMonth() + 1).padStart(2, '0');
-  const d = String(parsed.getDate()).padStart(2, '0');
-  return `${y}-${m}-${d}`;
+  return `${parsed.getUTCFullYear()}-${pad2(parsed.getUTCMonth() + 1)}-${pad2(parsed.getUTCDate())}`;
+}
+
+function defaultSimpCountry(value = '') {
+  return String(value || '').trim() || 'India';
 }
 
 export function importRowQuantity(row = {}) {
@@ -357,6 +380,7 @@ export function buildSimpSupplyRowsFromSales(
         entityName: String(
           sale.entity_name || sale.customer_name || sale.buyer_name || fromMaster?.trade_name || '',
         ).trim(),
+        country: defaultSimpCountry(sale.country || sale.buyer_country || fromMaster?.country),
         address,
         contact: resolveSimpSupplyContact(sale, supplierMaster),
         financialYear: fy,
@@ -404,7 +428,7 @@ export function buildSimpImportRowsFromPurchases(
       rows.push({
         ...emptySimpImportRow(),
         entityName: String(purchase.supplier_name || purchase.vendor_name || purchase.entity_name || '').trim(),
-        country: String(purchase.country || purchase.origin_country || purchase.supplier_country || '').trim(),
+        country: defaultSimpCountry(purchase.country || purchase.origin_country || purchase.supplier_country),
         address: [purchase.address_line_1, purchase.address_line_2, purchase.address]
           .map((part) => String(part || '').trim())
           .filter(Boolean)
@@ -487,8 +511,6 @@ export function validateSimpRawMaterialSupplyAgainstImport(importRows = [], supp
   return issues;
 }
 
-const SIMP_EXCEL_DROPDOWN_LAST_ROW = 500;
-
 function excelColumnLetter(index1Based) {
   let n = Number(index1Based);
   let out = '';
@@ -504,57 +526,83 @@ function excelFinancialYearDropdownValues() {
   return requiredSimpImportFinancialYears().slice().reverse();
 }
 
-function addLookupColumn(sheet, colIndex, heading, values = []) {
-  sheet.getCell(1, colIndex).value = heading;
-  values.forEach((value, i) => {
-    sheet.getCell(i + 2, colIndex).value = value;
-  });
-  const letter = excelColumnLetter(colIndex);
-  const last = Math.max(values.length, 1) + 1;
-  return `Lookups!$${letter}$2:$${letter}$${last}`;
+function excelListFormula(values = []) {
+  return `"${values.join(',')}"`;
 }
 
-function applySimpExcelListValidation(sheet, colIndex, lookupRef, prompt) {
-  if (!colIndex) return;
+function applySimpExcelListValidation(sheet, colIndex, values, lastRow, prompt) {
+  if (!colIndex || !values?.length) return;
   const letter = excelColumnLetter(colIndex);
-  sheet.dataValidations.add(`${letter}2:${letter}${SIMP_EXCEL_DROPDOWN_LAST_ROW}`, {
+  sheet.dataValidations.add(`${letter}2:${letter}${lastRow}`, {
     type: 'list',
     allowBlank: true,
-    formulae: [lookupRef],
+    formulae: [excelListFormula(values)],
     showErrorMessage: true,
     errorStyle: 'warning',
     errorTitle: 'Select from list',
     error: prompt,
-    showInputMessage: true,
-    promptTitle: 'Select',
-    prompt,
   });
 }
 
-function applySimpPartBExcelDropdowns(workbook, sheet, columns = [], extraLists = {}) {
-  let lookups = workbook.getWorksheet('Lookups');
-  if (!lookups) {
-    lookups = workbook.addWorksheet('Lookups');
-    lookups.state = 'hidden';
+function applyYmdTextColumn(sheet, columns = [], lastRow = 50) {
+  for (const key of ['importDate', 'salesDate']) {
+    const colIndex = columns.findIndex((col) => col.key === key) + 1;
+    if (!colIndex) continue;
+    const column = sheet.getColumn(colIndex);
+    column.numFmt = '@';
+    column.width = Math.max(column.width || 0, 22);
+    for (let row = 2; row <= lastRow; row += 1) {
+      const cell = sheet.getCell(row, colIndex);
+      cell.numFmt = '@';
+      if (cell.value == null || cell.value === '') continue;
+      const raw = cell.value?.richText
+        ? cell.value.richText.map((part) => part.text || '').join('')
+        : cell.value;
+      const ymd = formatSimpImportDate(raw);
+      cell.value = ymd || null;
+    }
   }
+}
 
-  const fyRef = addLookupColumn(lookups, 1, 'Financial Year', excelFinancialYearDropdownValues());
-  const plasticRef = addLookupColumn(lookups, 2, 'Type Of Plastic Raw Material', SIMP_PLASTIC_TYPES);
+function applySimpPartBExcelDropdowns(workbook, sheet, columns = [], extraLists = {}, rowCount = 0) {
+  const lastRow = Math.max(rowCount + 25, 50);
   const fyCol = columns.findIndex((col) => col.key === 'financialYear') + 1;
   const plasticCol = columns.findIndex((col) => col.key === 'plasticType') + 1;
-  applySimpExcelListValidation(sheet, fyCol, fyRef, 'Choose Financial Year from the dropdown.');
-  applySimpExcelListValidation(sheet, plasticCol, plasticRef, 'Choose Type Of Plastic Raw Material from the dropdown.');
-
+  applySimpExcelListValidation(
+    sheet,
+    fyCol,
+    excelFinancialYearDropdownValues(),
+    lastRow,
+    'Choose Financial Year from the dropdown.',
+  );
+  applySimpExcelListValidation(
+    sheet,
+    plasticCol,
+    SIMP_PLASTIC_TYPES,
+    lastRow,
+    'Choose Type Of Plastic Raw Material from the dropdown.',
+  );
   if (extraLists.registrationType?.length) {
-    const ref = addLookupColumn(lookups, 3, 'Registration Type', extraLists.registrationType);
     const col = columns.findIndex((item) => item.key === 'registrationType') + 1;
-    applySimpExcelListValidation(sheet, col, ref, 'Choose Registration Type from the dropdown.');
+    applySimpExcelListValidation(
+      sheet,
+      col,
+      extraLists.registrationType,
+      lastRow,
+      'Choose Registration Type from the dropdown.',
+    );
   }
   if (extraLists.entityType?.length) {
-    const ref = addLookupColumn(lookups, 4, 'Entity Type', extraLists.entityType);
     const col = columns.findIndex((item) => item.key === 'entityType') + 1;
-    applySimpExcelListValidation(sheet, col, ref, 'Choose Entity Type from the dropdown.');
+    applySimpExcelListValidation(
+      sheet,
+      col,
+      extraLists.entityType,
+      lastRow,
+      'Choose Entity Type from the dropdown.',
+    );
   }
+  applyYmdTextColumn(sheet, columns, lastRow);
 }
 
 /**
@@ -584,7 +632,7 @@ export async function generateSimpImportDetailsExcelBuffer(records = []) {
     const qty = importRowQuantity(r);
     sheet.addRow({
       entityName: String(r.entityName || r.entity_name || r.name || '').trim(),
-      country: String(r.country || r.origin_country || '').trim(),
+      country: defaultSimpCountry(r.country || r.origin_country),
       address: String(r.address || r.supplier_address || '').trim(),
       contact: String(r.contact || r.phone || r.mobile || '').trim(),
       financialYear: normalizeFinancialYearKey(r.financialYear || r.financial_year || r.fy || ''),
@@ -594,7 +642,7 @@ export async function generateSimpImportDetailsExcelBuffer(records = []) {
     });
   }
 
-  applySimpPartBExcelDropdowns(workbook, sheet, SIMP_IMPORT_DETAILS_COLUMNS);
+  applySimpPartBExcelDropdowns(workbook, sheet, SIMP_IMPORT_DETAILS_COLUMNS, {}, records.length);
   return workbook.xlsx.writeBuffer();
 }
 
@@ -632,19 +680,20 @@ export async function generateSimpSupplyDetailsExcelBuffer(records = []) {
       entityType: String(r.entityType || r.entity_type || '').trim(),
       eprRegistrationNo: String(r.eprRegistrationNo || r.epr_registration_number || '').trim(),
       entityName: String(r.entityName || r.entity_name || r.name || '').trim(),
+      country: defaultSimpCountry(r.country || r.buyer_country),
       address: String(r.address || r.buyer_address || '').trim(),
       contact: String(r.contact || r.phone || r.mobile || '').trim(),
       financialYear: normalizeFinancialYearKey(r.financialYear || r.financial_year || r.fy || ''),
       plasticType: mapToSimpPlasticType(r.plasticType || r.plastic_type || r.resinType || ''),
       quantityTons: qty,
-      salesDate: formatSimpImportDate(r.salesDate || r.sales_date || r.invoice_date || ''),
+      salesDate: formatSimpImportDate(r.salesDate || r.sales_date || r.invoice_date || r.importDate || ''),
     });
   }
 
   applySimpPartBExcelDropdowns(workbook, sheet, SIMP_SUPPLY_DETAILS_COLUMNS, {
     registrationType: SIMP_SALES_EXCEL_REGISTRATION_TYPES,
     entityType: SIMP_SALES_ENTITY_TYPES,
-  });
+  }, records.length);
   return workbook.xlsx.writeBuffer();
 }
 
@@ -654,14 +703,17 @@ function excelCellText(cell) {
   if (value == null || value === '') return '';
   if (value instanceof Date && !Number.isNaN(value.getTime())) return formatSimpImportDate(value);
   if (typeof value === 'object') {
-    if (value.text) return String(value.text).trim();
-    if (value.richText) return value.richText.map((part) => part.text || '').join('').trim();
+    if (value.text) return formatSimpImportDate(value.text);
+    if (value.richText) return formatSimpImportDate(value.richText.map((part) => part.text || '').join(''));
     if (value.result != null) return String(value.result).trim();
     if (value.hyperlink) return String(value.text || value.hyperlink).trim();
   }
-  if (typeof value === 'number' && cell.numFmt && /yy/i.test(String(cell.numFmt))) {
-    const parsed = excelJsDateToIso(value);
-    if (parsed) return parsed;
+  if (typeof value === 'number') {
+    if (value > 20000 && value < 80000) {
+      const parsed = excelJsDateToIso(value);
+      if (parsed) return parsed;
+    }
+    return String(value).trim();
   }
   return String(value).trim();
 }
@@ -697,12 +749,13 @@ function mapSupplyHeaderToKey(header = '') {
   if (h === 'entitytype') return 'entityType';
   if (h.includes('epr') || h.includes('registrationno')) return 'eprRegistrationNo';
   if (h === 'name' || h === 'nameofentity' || h === 'entityname') return 'entityName';
+  if (h === 'country') return 'country';
   if (h === 'address') return 'address';
   if (h === 'contact' || h === 'mobile' || h === 'mobilenumber' || h === 'phone') return 'contact';
   if (h === 'financialyear' || h === 'fy') return 'financialYear';
   if (h.includes('typeofplastic') || h === 'plastictype' || h === 'resintype') return 'plasticType';
   if (h.includes('quantity')) return 'quantityTons';
-  if (h.includes('salesdate') || h === 'date') return 'salesDate';
+  if (h.includes('salesdate') || h.includes('importdate') || h === 'date') return 'salesDate';
   return '';
 }
 
@@ -765,6 +818,7 @@ export async function parseSimpSupplyDetailsExcelBuffer(buffer) {
     row.entityType = String(mapped.entityType || '').trim();
     row.eprRegistrationNo = String(mapped.eprRegistrationNo || '').trim();
     row.entityName = mapped.entityName || '';
+    row.country = defaultSimpCountry(mapped.country);
     row.address = mapped.address || '';
     row.contact = mapped.contact || '';
     row.financialYear = normalizeFinancialYearKey(mapped.financialYear || '');

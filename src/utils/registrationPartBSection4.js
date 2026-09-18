@@ -5,7 +5,7 @@ import {
   remapLegacyPartBSection4Years,
   syncPartBSection4Structure,
 } from '../../shared/partBSection4.js';
-import { resolveCompanyIdFromGstin } from './registrationPlasticConsumed.js';
+import { resolveCompanyIdFromGstin } from './resolveCompanyIdFromGstin.js';
 
 export async function fetchComputedPartBSection4({
   gstin = '',

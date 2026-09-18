@@ -20,7 +20,7 @@ import {
   parseSimpImportDetailsExcelBuffer,
   parseSimpSupplyDetailsExcelBuffer,
 } from '../../shared/simpRawMaterialPartB.js';
-import { resolveCompanyIdFromGstin } from '../utils/registrationPlasticConsumed.js';
+import { resolveCompanyIdFromGstin } from '../utils/resolveCompanyIdFromGstin.js';
 
 const inputClass =
   'w-full min-w-[7rem] px-2 py-1.5 border border-slate-300 rounded-md text-sm outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500 bg-white';
@@ -178,6 +178,9 @@ export default function RegistrationPartBSimpRawMaterial({
   const plasticSelect = (value, onValue) => (
     <select value={value || ''} onChange={(e) => onValue(e.target.value)} className={inputClass}>
       <option value="">Type</option>
+      {value && !SIMP_PLASTIC_TYPES.includes(value) ? (
+        <option value={value}>{value}</option>
+      ) : null}
       {SIMP_PLASTIC_TYPES.map((pt) => (
         <option key={pt} value={pt}>{pt}</option>
       ))}
@@ -285,6 +288,13 @@ export default function RegistrationPartBSimpRawMaterial({
       ),
     },
     {
+      header: 'Country',
+      key: 'country',
+      render: (row, onValue) => (
+        <input value={row.country || ''} onChange={(e) => onValue(e.target.value)} className={inputClass} />
+      ),
+    },
+    {
       header: 'Address',
       key: 'address',
       render: (row, onValue) => (
@@ -315,7 +325,7 @@ export default function RegistrationPartBSimpRawMaterial({
       ),
     },
     {
-      header: 'Sales Date (YYYY-MM-DD)',
+      header: 'Import Date (YYYY-MM-DD)',
       key: 'salesDate',
       render: (row, onValue) => (
         <input

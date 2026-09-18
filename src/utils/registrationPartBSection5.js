@@ -12,7 +12,7 @@ import {
   sec5bRowHasData,
   sec5dRowHasData,
 } from '../../shared/partBSection5.js';
-import { resolveCompanyIdFromGstin } from './registrationPlasticConsumed.js';
+import { resolveCompanyIdFromGstin } from './resolveCompanyIdFromGstin.js';
 
 export async function fetchComputedPartBSection5({
   gstin = '',

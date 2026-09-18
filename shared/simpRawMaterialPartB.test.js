@@ -16,6 +16,7 @@ import {
   validateSimpImportCoveringRequiredYears,
   buildSimpImportRowsFromPurchases,
   buildSimpSupplyRowsFromSales,
+  formatSimpImportDate,
   mapToSimpPlasticType,
 } from './simpRawMaterialPartB.js';
 
@@ -99,20 +100,19 @@ test('generateSimpImportDetailsExcelBuffer uses CPCB Importer Import Template he
   assert.equal(dataRow.getCell(5).value, '2024-25');
   assert.equal(dataRow.getCell(6).value, 'HDPE');
   assert.equal(dataRow.getCell(7).value, 125.5);
-  assert.equal(dataRow.getCell(8).value, '2025-02-05');
+  const dateCell = dataRow.getCell(8);
+  assert.equal(dateCell.value, '2025-02-05');
+  assert.ok(!(dateCell.value instanceof Date));
+  assert.equal(dateCell.numFmt, '@');
 
   const validations = sheet.dataValidations?.model || {};
   assert.equal(validations.E2?.type, 'list');
   assert.equal(validations.F2?.type, 'list');
-  assert.match(String(validations.E2.formulae?.[0] || ''), /Lookups!\$A\$2/);
-  assert.match(String(validations.F2.formulae?.[0] || ''), /Lookups!\$B\$2/);
-
-  const lookups = wb.getWorksheet('Lookups');
-  assert.ok(lookups);
-  assert.equal(lookups.getCell(2, 1).value, '2025-26');
-  assert.equal(lookups.getCell(3, 1).value, '2024-25');
-  assert.equal(lookups.getCell(2, 2).value, 'HDPE');
-  assert.equal(lookups.getCell(3, 2).value, 'PET');
+  assert.match(String(validations.F2.formulae?.[0] || ''), /HDPE/);
+  assert.match(String(validations.F2.formulae?.[0] || ''), /MLP/);
+  assert.doesNotMatch(String(validations.F2.formulae?.[0] || ''), /PVC/);
+  assert.equal(wb.worksheets.length, 1);
+  assert.equal(wb.getWorksheet('Lookups'), undefined);
 });
 
 test('generateSimpSupplyDetailsExcelBuffer generates valid workbook with registration types', async () => {
@@ -150,28 +150,30 @@ test('generateSimpSupplyDetailsExcelBuffer generates valid workbook with registr
   const row2 = sheet.getRow(2);
   assert.equal(row2.getCell(1).value, 'Registered');
   assert.equal(row2.getCell(4).value, 'Alpha Packaging Pvt Ltd');
-  assert.equal(row2.getCell(9).value, 80);
+  assert.equal(row2.getCell(5).value, 'India');
+  assert.equal(row2.getCell(10).value, 80);
 
   const row3 = sheet.getRow(3);
   assert.equal(row3.getCell(1).value, 'UnRegistered');
-  assert.equal(row3.getCell(9).value, 25);
+  assert.equal(row3.getCell(10).value, 25);
 
   const validations = sheet.dataValidations?.model || {};
   assert.equal(validations.A2?.type, 'list');
   assert.equal(validations.B2?.type, 'list');
-  assert.equal(validations.G2?.type, 'list');
   assert.equal(validations.H2?.type, 'list');
-  assert.match(String(validations.A2.formulae?.[0] || ''), /Lookups!\$C\$2/);
-  assert.match(String(validations.B2.formulae?.[0] || ''), /Lookups!\$D\$2/);
-  assert.match(String(validations.G2.formulae?.[0] || ''), /Lookups!\$A\$2/);
-  assert.match(String(validations.H2.formulae?.[0] || ''), /Lookups!\$B\$2/);
+  assert.equal(validations.I2?.type, 'list');
+  assert.match(String(validations.A2.formulae?.[0] || ''), /Registered/);
+  assert.match(String(validations.A2.formulae?.[0] || ''), /UnRegistered/);
+  assert.match(String(validations.B2.formulae?.[0] || ''), /Producer \(Small or Micro\)/);
+  assert.match(String(validations.I2.formulae?.[0] || ''), /LDPE/);
+  assert.ok(headers.includes('Country'));
+  assert.ok(headers.some((h) => /import date/i.test(String(h))));
+  assert.equal(wb.worksheets.length, 1);
+});
 
-  const lookups = wb.getWorksheet('Lookups');
-  assert.equal(lookups.getCell(2, 3).value, 'Registered');
-  assert.equal(lookups.getCell(3, 3).value, 'UnRegistered');
-  assert.equal(lookups.getCell(2, 4).value, 'Producer');
-  assert.equal(lookups.getCell(3, 4).value, 'Seller of raw material');
-  assert.equal(lookups.getCell(4, 4).value, 'Producer (Small or Micro)');
+test('formatSimpImportDate keeps yyyy-mm-dd and reads Excel dd-mm-yyyy', () => {
+  assert.equal(formatSimpImportDate('2025-04-14'), '2025-04-14');
+  assert.equal(formatSimpImportDate('01-05-2024'), '2024-05-01');
 });
 
 test('empty SIMP Part B rows include portal columns', () => {
@@ -183,6 +185,7 @@ test('empty SIMP Part B rows include portal columns', () => {
   assert.equal(sup.registrationType, 'Registered');
   assert.equal(sup.entityType, '');
   assert.equal(sup.eprRegistrationNo, '');
+  assert.equal(sup.country, 'India');
   assert.equal(sup.salesDate, '');
   assert.ok(imp.id);
   assert.ok(sup.id);
@@ -205,7 +208,7 @@ test('import Excel generate then parse roundtrips CPCB template rows', async () 
       address: 'xyz',
       contact: '8888888888',
       financialYear: '2024-25',
-      plasticType: 'PE',
+      plasticType: 'HDPE',
       quantityTons: 6,
       importDate: '2025-02-05',
     },
@@ -217,7 +220,7 @@ test('import Excel generate then parse roundtrips CPCB template rows', async () 
   assert.equal(parsed[0].country, 'India');
   assert.equal(parsed[0].contact, '8888888888');
   assert.equal(parsed[0].financialYear, '2024-25');
-  assert.equal(parsed[0].plasticType, 'PE');
+  assert.equal(parsed[0].plasticType, 'HDPE');
   assert.equal(String(parsed[0].quantityTons), '6');
   assert.equal(parsed[0].importDate, '2025-02-05');
 });
@@ -245,6 +248,7 @@ test('supply Excel generate then parse roundtrips rows', async () => {
   assert.equal(parsed[0].eprRegistrationNo, 'EPR-1');
   assert.equal(parsed[0].financialYear, '2025-26');
   assert.equal(parsed[0].entityName, 'Alpha');
+  assert.equal(parsed[0].country, 'India');
   assert.equal(parsed[0].contact, '9999999999');
   assert.equal(String(parsed[0].quantityTons), '12.5');
   assert.equal(parsed[0].salesDate, '2025-04-10');
@@ -297,7 +301,7 @@ test('buildSimpSupplyRowsFromSales uses quantity_sold_mt when line MT is missing
   assert.equal(rows[0].entityName, 'Buyer A');
   assert.equal(rows[0].entityType, 'Importer');
   assert.equal(rows[0].registrationType, 'Unregistered');
-  assert.equal(rows[0].plasticType, 'PVC');
+  assert.equal(rows[0].plasticType, 'Others');
   assert.equal(rows[0].quantityTons, 0.1);
   assert.equal(rows[0].financialYear, '2025-26');
 });
@@ -318,5 +322,6 @@ test('buildSimpImportRowsFromPurchases maps published purchase lines', () => {
   assert.equal(rows[0].entityName, 'xyz');
   assert.equal(rows[0].contact, '8888888888');
   assert.equal(rows[0].financialYear, '2024-25');
-  assert.equal(mapToSimpPlasticType('pe'), 'PE');
+  assert.equal(mapToSimpPlasticType('pe'), 'LDPE');
+  assert.equal(mapToSimpPlasticType('PVC'), 'Others');
 });
