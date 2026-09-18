@@ -52,7 +52,7 @@ export function resolveRegistrationData(docData = {}) {
   return { data, isDummy: false, source: 'partial' };
 }
 
-export function isRegistrationReadyWithFallback(docs = [], docData = {}) {
+export function isRegistrationReadyWithFallback(docs = [], docData = {}, typeOfBusiness = '') {
   if (hasCompleteRegistrationData(docData)) {
     return { ready: true, isDummy: false, missing: [] };
   }
@@ -60,7 +60,8 @@ export function isRegistrationReadyWithFallback(docs = [], docData = {}) {
   const types = new Set((docs || []).map((d) => d.doc_type));
   const gstDoc = (docs || []).find((d) => d.doc_type === 'gst');
   const gstin = gstDoc?.document_number || docData?.gstin || '';
-  const hasDerivedPan = types.has('company_pan') || Boolean(derivePanFromGstin(gstin));
+  const isProprietorOrPartner = String(typeOfBusiness).toLowerCase().includes('proprietorship') || String(typeOfBusiness).toLowerCase().includes('partnership');
+  const hasDerivedPan = types.has('company_pan') || Boolean(derivePanFromGstin(gstin)) || (isProprietorOrPartner && types.has('person_pan'));
 
   const missing = [];
   if (!types.has('gst')) missing.push('gst');

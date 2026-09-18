@@ -7,6 +7,8 @@ import {
   Upload,
   XCircle,
   AlertCircle,
+  ChevronUp,
+  ChevronDown
 } from 'lucide-react';
 
 import {
@@ -169,6 +171,123 @@ function ProgressPanel({ progress }) {
   );
 }
 
+const REQUIRED_DOCS = [
+  { id: 'company_pan', label: '01. Company PAN *' },
+  { id: 'unit_gst', label: '02. GST registration certificate of Plant/Unit *' },
+  { id: 'cin', label: '03. CIN (Number or Upload)' },
+  { id: 'gst', label: '04. GST certificate of Company/Business *' },
+  { id: 'iec', label: '05. IEC *' },
+  { id: 'person_pan', label: '06. Authorized person PAN *' },
+  { id: 'operations_details', label: '07. Details (Type & Quantity) of products produced/marketed *' },
+  { id: 'plastic_packaging_picture', label: '08. Representative picture of Plastic Packaging *' },
+  { id: 'covering_letter', label: '09. Covering Letter *' },
+  { id: 'signature', label: '10. Signature *' },
+  { id: 'self_declaration', label: '11. Any Other Information & Self declaration' },
+];
+
+function DocumentTracker({ docList, generalInfo = {}, autoData = {} }) {
+  const [isExpanded, setIsExpanded] = useState(true);
+  const uploadedTypes = new Set(docList.filter(d => d.status === 'done').map(d => d.docType));
+  
+  if (generalInfo.partCCoveringLetter) uploadedTypes.add('covering_letter');
+  if (generalInfo.partCAuditedStatement) uploadedTypes.add('self_declaration');
+  if (generalInfo.partCSignature) uploadedTypes.add('signature');
+  if (autoData.detailsOfProductsPath) uploadedTypes.add('operations_details');
+  if (autoData.representativePicturePath) uploadedTypes.add('plastic_packaging_picture');
+  if (autoData.typeOfCompanyDoc) uploadedTypes.add('supporting_category_doc');
+
+  const isPropOrPartner = String(generalInfo.typeOfBusiness).toLowerCase().includes('proprietorship') || String(generalInfo.typeOfBusiness).toLowerCase().includes('partnership');
+  if (isPropOrPartner && uploadedTypes.has('person_pan')) {
+    uploadedTypes.add('company_pan');
+  }
+
+  const dynamicRequiredDocs = [...REQUIRED_DOCS];
+  const typeOfCompany = String(generalInfo.typeOfCompany || '').trim();
+  if (typeOfCompany.toLowerCase() === 'large') {
+    dynamicRequiredDocs.splice(9, 0, { id: 'supporting_category_doc', label: 'Declaration of Large Entity *' });
+  } else if (['Micro', 'Small', 'Medium'].includes(typeOfCompany)) {
+    dynamicRequiredDocs.splice(9, 0, { id: 'supporting_category_doc', label: 'MSME Certificate *' });
+  }
+
+  const uploadedCount = dynamicRequiredDocs.filter(d => uploadedTypes.has(d.id)).length;
+  
+  return (
+    <div className="mb-6 mt-4 bg-slate-50/50 rounded-2xl border border-slate-100 p-5 shadow-[inset_0_1px_4px_rgba(0,0,0,0.02)] overflow-hidden">
+      <div className="flex items-center justify-between mb-2">
+        <div className="flex items-center gap-4">
+          <h4 className="text-sm font-bold text-slate-800 tracking-tight flex items-center gap-2">
+            <div className="w-1.5 h-4 bg-emerald-500 rounded-full"></div>
+            <FileText size={18} className="text-emerald-600 hidden" /> Upload Timeline
+          </h4>
+          <span className="text-xs text-slate-500 hidden md:inline-block">Keep uploading documents to complete all steps</span>
+        </div>
+        <div className="flex items-center gap-3">
+          <span className="text-[11px] font-bold bg-emerald-50 text-emerald-700 px-3 py-1.5 rounded-full">
+            {uploadedCount} / {dynamicRequiredDocs.length} Uploaded
+          </span>
+          <button 
+            type="button" 
+            onClick={() => setIsExpanded(!isExpanded)}
+            className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full shadow-sm transition-colors flex items-center gap-1"
+          >
+            {isExpanded ? (
+              <><span className="hidden md:inline">Collapse</span> <ChevronUp size={14} className="opacity-70" /></>
+            ) : (
+              <><span className="hidden md:inline">View Details</span> <ChevronDown size={14} className="opacity-70" /></>
+            )}
+          </button>
+        </div>
+      </div>
+      
+      {isExpanded && (
+        <div className="w-full pb-2 overflow-x-auto mt-6 animate-in slide-in-from-top-2 fade-in">
+        <div className="flex items-start w-full px-2 min-w-max">
+          {dynamicRequiredDocs.map((doc, idx) => {
+            const isUploaded = uploadedTypes.has(doc.id);
+            const isLast = idx === dynamicRequiredDocs.length - 1;
+            
+            return (
+              <div key={doc.id} className="flex flex-col items-center relative flex-1 group">
+                {/* Connecting Line */}
+                {!isLast && (
+                  <div 
+                    className={`absolute top-[15px] left-[50%] w-full h-[3px] transition-all duration-500 ease-in-out ${
+                      isUploaded ? 'bg-emerald-400 shadow-[0_0_8px_rgba(52,211,153,0.4)]' : 'bg-slate-200'
+                    }`} 
+                  />
+                )}
+                
+                {/* Dot */}
+                <div className={`relative z-10 w-[32px] h-[32px] rounded-full flex items-center justify-center transition-all duration-500 ease-in-out ${
+                  isUploaded 
+                    ? 'bg-emerald-500 border-4 border-emerald-100 text-white shadow-lg shadow-emerald-500/30 scale-110' 
+                    : 'bg-white border-[3px] border-slate-200 text-slate-400 group-hover:border-slate-300'
+                }`}>
+                  {isUploaded ? (
+                    <CheckCircle2 size={16} className="text-white" strokeWidth={3} />
+                  ) : (
+                    <span className="text-[11px] font-bold">{idx + 1}</span>
+                  )}
+                </div>
+                
+                {/* Text */}
+                <div className="mt-3 text-center px-0.5 w-full">
+                  <span className={`text-[9px] sm:text-[10px] font-semibold leading-tight line-clamp-4 transition-colors duration-300 ${
+                    isUploaded ? 'text-slate-800' : 'text-slate-400 group-hover:text-slate-500'
+                  }`} title={doc.label}>
+                    {doc.label.replace(/^\d+\.\s*/, '')}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+      )}
+    </div>
+  );
+}
+
 function DocListRow({ item, onRemove, removing }) {
   const storedPath = item.filePath || '';
   const storedName = storedPath.split(/[/\\]/).pop() || item.fileName || '';
@@ -215,7 +334,7 @@ function DocListRow({ item, onRemove, removing }) {
       </div>
       <div className="min-w-0 flex-1">
         <div className="flex items-center gap-2 flex-wrap">
-          <p className="truncate text-sm font-medium text-slate-800">{item.fileName}</p>
+          <p className="truncate text-sm font-medium text-slate-800">{item.originalFileName || item.fileName}</p>
           {item.docType && (
             <span className="text-[10px] font-semibold uppercase tracking-wide px-1.5 py-0.5 rounded bg-slate-100 text-slate-600">
               {DOC_TYPE_LABELS[item.docType] || item.docType}
@@ -305,7 +424,7 @@ function dedupeDocList(list) {
   return out;
 }
 
-export default function RegistrationDocUpload({ onExtracted, showToast }) {
+export default function RegistrationDocUpload({ onExtracted, showToast, generalInfo = {}, autoData = {} }) {
   const inputRef = useRef(null);
   const unsubRef = useRef(null);
   const dbIdsByType = useRef({});
@@ -518,6 +637,7 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         }
 
         const data = { ...(r.data || {}) };
+        data.original_name = fileName;
         const docType = normalizeDocType(data, fileName, { companyGstNumber, hasCompanyGst });
 
         if (data.doc_type === 'gst' && data.document_number) {
@@ -740,64 +860,54 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         onClose={() => setShowGuidelines(false)} 
       />
 
-      <div className="flex items-center justify-between">
-        <div>
-          <div className="flex items-center gap-2">
-            <h3 className="text-md font-medium text-slate-800">Registration Documents</h3>
-            <button 
-              onClick={() => setShowGuidelines(true)}
-              className="p-1 rounded-full text-slate-400 hover:text-blue-600 hover:bg-blue-50 transition-colors"
-              title="View Readiness Guidelines"
-            >
-              <AlertCircle size={16} />
-            </button>
-          </div>
-          <p className="text-sm text-slate-500 mt-0.5">
-            Upload GST, Person PAN, &amp; Company PAN together — type is detected automatically.
-            The CPCB portal accepts simple file names (for example <strong>person_pan.pdf</strong>). Avoid spaces and brackets.
-          </p>
-        </div>
-        <span className="text-xs font-medium text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full">
-          {countLabel}
-        </span>
-      </div>
-
       <div
         onDragOver={(e) => e.preventDefault()}
         onDrop={handleDrop}
-        className={`rounded-xl border-2 border-dashed transition-colors px-5 py-8 ${
+        className={`relative overflow-hidden rounded-xl transition-all border-2 border-dashed px-5 py-6 mt-2 ${
           processing || resolving
-            ? 'border-slate-200 bg-slate-50 opacity-60 pointer-events-none'
-            : 'border-slate-300 bg-slate-50/80 hover:border-green-400 hover:bg-green-50/30'
+            ? 'border-emerald-200 bg-emerald-50 opacity-60 pointer-events-none'
+            : 'border-emerald-200 bg-gradient-to-r from-emerald-50/60 to-green-50/80 hover:border-emerald-400 hover:from-emerald-50 hover:to-green-100 shadow-[inset_0_0_20px_rgba(167,243,208,0.1)]'
         }`}
       >
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-5">
+        <div className="absolute -right-8 -top-12 opacity-10 pointer-events-none text-emerald-800 transform rotate-12">
+          <svg width="200" height="200" viewBox="0 0 24 24" fill="currentColor" stroke="none">
+            <path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8zm-1-13h2v6h-2zm0 8h2v2h-2z" />
+          </svg>
+        </div>
+
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 relative z-10">
           <div className="flex items-center gap-4 min-w-0">
-            <div className="flex h-12 w-12 items-center justify-center rounded-full bg-green-100 text-green-700 flex-shrink-0">
+            <div className="flex h-[42px] w-[42px] items-center justify-center rounded-full bg-white text-emerald-600 border border-emerald-100 flex-shrink-0 shadow-sm">
               {processing || resolving ? (
-                <Loader2 size={22} className="animate-spin" />
+                <Loader2 size={20} className="animate-spin" />
               ) : (
-                <Upload size={22} />
+                <Upload size={20} />
               )}
             </div>
             <div className="min-w-0">
-              <p className="text-sm font-semibold text-slate-800">
+              <p className="text-[15px] font-bold text-slate-800 tracking-tight">
                 Drag &amp; drop all registration documents here
               </p>
-              <p className="text-xs text-slate-500 mt-1">
+              <p className="text-xs text-slate-500 mt-1 font-medium">
                 GST · Person PAN · Company PAN · CTO (+ CIN/Udyam if available) · PDF or images
               </p>
             </div>
           </div>
-          <button
-            type="button"
-            disabled={processing || resolving}
-            onClick={handleBrowse}
-            className="inline-flex items-center gap-2 rounded-lg bg-green-600 hover:bg-green-700 text-white text-sm font-medium px-4 py-2.5 disabled:opacity-60 flex-shrink-0"
-          >
-            <Upload size={15} />
-            Browse files
-          </button>
+          <div className="flex items-center gap-3 flex-shrink-0">
+            <button
+              type="button"
+              disabled={processing || resolving}
+              onClick={handleBrowse}
+              className="inline-flex items-center gap-2 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white text-[13px] font-bold px-4 py-2.5 disabled:opacity-60 shadow-sm transition-colors"
+            >
+              <Upload size={15} />
+              Browse Files
+            </button>
+            <span className="inline-flex items-center gap-1.5 text-xs font-bold text-emerald-700 bg-white border border-emerald-100 px-3 py-2.5 rounded-lg shadow-sm">
+              <FileText size={14} className="text-emerald-500" />
+              {countLabel.replace(' uploaded', '')} uploaded
+            </span>
+          </div>
         </div>
           <input
             ref={inputRef}
@@ -831,23 +941,9 @@ export default function RegistrationDocUpload({ onExtracted, showToast }) {
         </div>
       )}
 
-      {docList.length > 0 && (
-        <div className="space-y-2">
-          <p className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-            Documents · {docList.length}
-          </p>
-          <div className="max-h-[40vh] overflow-y-auto space-y-2 pr-1">
-            {docList.map((item) => (
-              <DocListRow
-                key={item.id}
-                item={item}
-                onRemove={handleRemove}
-                removing={removingId === item.id}
-              />
-            ))}
-          </div>
-        </div>
-      )}
+      <DocumentTracker docList={docList} generalInfo={generalInfo} autoData={autoData} />
+
+
 
       {docList.length === 0 && !processing && (
         <div className="flex items-center gap-2 text-xs text-slate-400 px-1">

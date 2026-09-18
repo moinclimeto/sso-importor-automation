@@ -8,10 +8,18 @@ export const PURCHASE_EXCEL_HEADERS = [
   'Registration Type',
   'Entity Type',
   'GST Number',
-  'Name Of The Entity',
+  'Company Name',
+  'Legal Name',
+  'Trade Name',
   'Country',
   'Address',
   'Mobile Number',
+  'Item Description',
+  'HSN/SAC',
+  'UOM',
+  'Quantity',
+  'Rate',
+  'Taxable Amount',
   'Plastic Material Type',
   'Category Of Plastic',
   'Financial Year',
@@ -25,10 +33,18 @@ export const PURCHASE_TABLE_COLUMNS = [
   { key: 'registration_type', label: 'Registration Type' },
   { key: 'entity_type', label: 'Entity Type' },
   { key: 'supplier_gst_number', label: 'GST Number' },
-  { key: 'supplier_name', label: 'Name Of The Entity' },
+  { key: 'supplier_name', label: 'Company Name' },
+  { key: 'legal_name', label: 'Legal Name' },
+  { key: 'trade_name', label: 'Trade Name' },
   { key: 'country', label: 'Country' },
   { key: 'address_line_1', label: 'Address' },
   { key: 'supplier_mobile_number', label: 'Mobile Number' },
+  { key: 'item_name', label: 'Item Description' },
+  { key: 'hsn', label: 'HSN/SAC' },
+  { key: 'unit', label: 'UOM' },
+  { key: 'invoice_quantity', label: 'Quantity' },
+  { key: 'rate', label: 'Rate' },
+  { key: 'total_amount', label: 'Taxable Amount' },
   { key: 'plastic_type', label: 'Plastic Material Type' },
   { key: 'category_of_plastic', label: 'Category Of Plastic' },
   { key: 'financial_year', label: 'Financial Year' },
@@ -42,10 +58,20 @@ const PURCHASE_HEADER_TO_KEY = {
   registration_type: 'registration_type',
   entity_type: 'entity_type',
   gst_number: 'supplier_gst_number',
+  company_name: 'supplier_name',
   name_of_the_entity: 'supplier_name',
+  legal_name: 'legal_name',
+  trade_name: 'trade_name',
   country: 'country',
   address: 'address_line_1',
   mobile_number: 'supplier_mobile_number',
+  item_description: 'item_name',
+  hsn_sac: 'hsn',
+  hsn: 'hsn',
+  uom: 'unit',
+  quantity: 'invoice_quantity',
+  rate: 'rate',
+  taxable_amount: 'total_amount',
   plastic_material_type: 'plastic_type',
   category_of_plastic: 'category_of_plastic',
   financial_year: 'financial_year',
@@ -59,8 +85,16 @@ const PURCHASE_HEADER_TO_KEY = {
 export const SALE_EXCEL_HEADERS = [
   'Category of Plastic',
   'Product Type',
+  'Item Description',
+  'HSN/SAC',
+  'UOM',
+  'Quantity',
+  'Rate',
+  'Amount',
   'Quantity Sold (MT)',
-  'Name of the Entity',
+  'Company Name',
+  'Legal Name',
+  'Trade Name',
   'Address',
   'State',
   'District',
@@ -74,8 +108,16 @@ export const SALE_EXCEL_HEADERS = [
 
 export const SALE_TABLE_COLUMNS = [
   { key: 'category_of_plastic', label: 'Category of Plastic' },
+  { key: 'item_name', label: 'Item Description' },
+  { key: 'hsn', label: 'HSN/SAC' },
+  { key: 'unit', label: 'UOM' },
+  { key: 'invoice_quantity', label: 'Quantity' },
+  { key: 'rate', label: 'Rate' },
+  { key: 'total_amount', label: 'Amount' },
   { key: 'quantity_sold_mt', label: 'Quantity Sold (MT)' },
-  { key: 'entity_name', label: 'Name of the Entity' },
+  { key: 'entity_name', label: 'Company Name' },
+  { key: 'legal_name', label: 'Legal Name' },
+  { key: 'trade_name', label: 'Trade Name' },
   { key: 'address', label: 'Address' },
   { key: 'state', label: 'State' },
   { key: 'district', label: 'District' },
@@ -104,8 +146,11 @@ const SALE_HEADER_TO_KEY = {
   quantity_sold_mt: 'quantity_sold_mt',
   quantity_sold: 'quantity_sold_mt',
   registration_type: 'registration_type',
+  company_name: 'entity_name',
   name_of_the_entity: 'entity_name',
   entity_name: 'entity_name',
+  legal_name: 'legal_name',
+  trade_name: 'trade_name',
   address: 'address',
   state: 'state',
   district: 'district',
@@ -116,16 +161,31 @@ const SALE_HEADER_TO_KEY = {
   invoice_file_name_shall_exactly_match_the_name_of_pdf_uploaded_in_zip_folder: 'invoice_file_name',
   application_number: 'application_number',
   invoice_date: 'invoice_date',
+  item_description: 'item_name',
+  hsn_sac: 'hsn',
+  hsn: 'hsn',
+  uom: 'unit',
+  quantity: 'invoice_quantity',
+  rate: 'rate',
+  amount: 'total_amount',
 };
 
 const PURCHASE_SAMPLE = {
   'Registration Type': 'Producer',
   'Entity Type': 'Brand',
   'GST Number': '06AABCG1111H1Z8',
-  'Name Of The Entity': 'Green Plastics India',
+  'Company Name': 'Green Plastics India',
+  'Legal Name': 'Green Plastics India Pvt Ltd',
+  'Trade Name': 'Green Plastics',
   'Country': 'India',
   'Address': 'Plot 12, MIDC, Gurugram, Haryana',
   'Mobile Number': '9876543210',
+  'Item Description': 'Plastic Scrap',
+  'HSN/SAC': '3915',
+  'UOM': 'MT',
+  'Quantity': 12,
+  'Rate': 25000,
+  'Taxable Amount': 300000,
   'Plastic Material Type': 'HDPE',
   'Category Of Plastic': 'Cat-I',
   'Financial Year': '2024-25',
@@ -138,8 +198,16 @@ const PURCHASE_SAMPLE = {
 const SALE_SAMPLE = {
   'Category of Plastic': 'Cat-I',
   'Product Type': 'Granules',
+  'Item Description': 'HDPE Granules Recycled',
+  'HSN/SAC': '3901',
+  'UOM': 'MT',
+  'Quantity': 5,
+  'Rate': 45000,
+  'Amount': 225000,
   'Quantity Sold (MT)': 5,
-  'Name of the Entity': 'Eco Packaging Co',
+  'Company Name': 'Eco Packaging Co',
+  'Legal Name': 'Eco Packaging Private Limited',
+  'Trade Name': 'Eco Packaging',
   'Address': '12 Industrial Area',
   'State': 'Maharashtra',
   'District': 'Pune',
@@ -349,9 +417,7 @@ export function downloadExcelTemplate(type) {
   lookupWs['!cols'] = [{ wch: 32 }];
 
   if (isPurchase) {
-    const ws = XLSX.utils.json_to_sheet([PURCHASE_SAMPLE], {
-      header: PURCHASE_EXCEL_HEADERS,
-    });
+    const ws = XLSX.utils.aoa_to_sheet([PURCHASE_EXCEL_HEADERS]);
     ws['!cols'] = PURCHASE_EXCEL_HEADERS.map((h) => ({
       wch: Math.min(40, Math.max(16, h.length + 2)),
     }));
@@ -361,7 +427,7 @@ export function downloadExcelTemplate(type) {
     return;
   }
 
-  const ws = XLSX.utils.json_to_sheet([SALE_SAMPLE], { header: SALE_EXCEL_HEADERS });
+  const ws = XLSX.utils.aoa_to_sheet([SALE_EXCEL_HEADERS]);
   ws['!cols'] = SALE_EXCEL_HEADERS.map((h) => ({
     wch: Math.min(36, Math.max(16, h.length + 2)),
   }));
@@ -427,15 +493,38 @@ export async function importExcelRows(type, rows) {
     throw new Error('Excel import needs the Electron app. Run with npm run electron:dev');
   }
   let saved = 0;
+  let updated = 0;
   let duplicates = 0;
+
+  const isSale = type === 'sale';
+  const api = isSale ? window.pwp.sales : window.pwp.purchases;
+  
+  // Fetch existing records for matching
+  const existingRecords = await api.getAll();
+
   for (const row of rows) {
     try {
-      if (type === 'sale') {
-        await window.pwp.sales.add(row);
+      let match = null;
+
+      if (isSale) {
+        match = existingRecords.find(r => 
+          (row.invoice_file_name && (r.invoice_file_name === row.invoice_file_name || r.invoice_no === row.invoice_file_name)) ||
+          (row.application_number && r.application_number === row.application_number)
+        );
       } else {
-        await window.pwp.purchases.add(row);
+        match = existingRecords.find(r => 
+          (row.invoice_filename && (r.invoice_filename === row.invoice_filename || r.invoice_no === row.invoice_filename)) ||
+          (row.supplier_gst_number && row.invoice_number && (r.supplier_gst_number === row.supplier_gst_number || r.vendor_gstin === row.supplier_gst_number) && r.invoice_no === row.invoice_number)
+        );
       }
-      saved += 1;
+
+      if (match) {
+        await api.update({ ...row, id: match.id });
+        updated += 1;
+      } else {
+        await api.add(row);
+        saved += 1;
+      }
     } catch (err) {
       if (/duplicate invoice/i.test(err?.message || '')) {
         duplicates += 1;
@@ -444,22 +533,33 @@ export async function importExcelRows(type, rows) {
       }
     }
   }
-  return { saved, duplicates };
+  return { saved, updated, duplicates };
 }
 
 export async function exportExcelData(type, rows) {
   const isPurchase = type !== 'sale';
   const wb = XLSX.utils.book_new();
 
-  const sheetData = rows.map(r => {
-    const mapped = {};
-    const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
+  const sheetData = rows.flatMap(r => {
     const docType = isPurchase ? 'purchase' : 'sale';
     const resolvedMt = resolveRecordTotalMt(r, docType);
-    for (const col of columns) {
-      if (col.key === 'category_of_plastic') {
-        mapped[col.label] = 'Cat-II';
-      } else if (col.key === 'product_type') {
+    let parsedLines = [];
+    try {
+      const raw = r.line_items || r.lineItems;
+      parsedLines = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+    } catch(e) {}
+    
+    // Flatten line items
+    const items = parsedLines.length > 0 ? parsedLines : [r];
+      
+    return items.map(item => {
+      const mapped = {};
+      const columns = isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS;
+      
+      for (const col of columns) {
+        if (col.key === 'category_of_plastic') {
+          mapped[col.label] = item.category_of_plastic || item.plasticCategory || r.category_of_plastic || 'Cat-II';
+        } else if (col.key === 'product_type') {
         const hsn = String(r.hsn_code || r.hsn || '').trim();
         mapped[col.label] = hsn === '25231000' ? 'Clinker' : 'Cement';
       } else if (col.key === 'quantity_mt') {
@@ -474,6 +574,12 @@ export async function exportExcelData(type, rows) {
         mapped[col.label] = r.customer_name;
       } else if (col.key === 'supplier_name' && !r[col.key] && r.vendor_name) {
         mapped[col.label] = r.vendor_name;
+      } else if (col.key === 'legal_name') {
+        const ext = r.extraction && typeof r.extraction === 'object' ? r.extraction : (typeof r.extraction === 'string' ? JSON.parse(r.extraction || '{}') : {});
+        mapped[col.label] = r.legal_name || ext.legal_name || ext.legalName || '';
+      } else if (col.key === 'trade_name') {
+        const ext = r.extraction && typeof r.extraction === 'object' ? r.extraction : (typeof r.extraction === 'string' ? JSON.parse(r.extraction || '{}') : {});
+        mapped[col.label] = r.trade_name || ext.trade_name || ext.tradeName || '';
       } else if (col.key === 'invoice_number' && !r[col.key] && r.invoice_no) {
         mapped[col.label] = r.invoice_no;
       } else if (col.key === 'procurement_date' && !r[col.key] && r.invoice_date) {
@@ -482,11 +588,24 @@ export async function exportExcelData(type, rows) {
         mapped[col.label] = r.vendor_gstin;
       } else if (col.key === 'supplier_gst_number' && !r[col.key] && r.supplier_gst) {
         mapped[col.label] = r.supplier_gst;
-      } else {
-        mapped[col.label] = r[col.key];
+        } else if (col.key === 'hsn') {
+          mapped[col.label] = item.hsn || item.hsn_code || r.hsn || r.hsn_code || '';
+        } else if (col.key === 'rate') {
+          mapped[col.label] = item.rate || item.price || r.rate || r.price || '';
+        } else if (col.key === 'invoice_quantity') {
+          mapped[col.label] = item.quantity || r.invoice_quantity || r.quantity || '';
+        } else if (col.key === 'unit') {
+          mapped[col.label] = item.unit || item.uom || r.unit || '';
+        } else if (col.key === 'item_name') {
+          mapped[col.label] = item.productDescription || item.product || item.item_name || r.item_name || '';
+        } else if (col.key === 'total_amount') {
+          mapped[col.label] = item.amount || item.total_amount || r.total_amount || r.taxable_amount || '';
+        } else {
+          mapped[col.label] = item[col.key] ?? r[col.key] ?? '';
+        }
       }
-    }
-    return mapped;
+      return mapped;
+    });
   });
 
   const headers = isPurchase ? PURCHASE_EXCEL_HEADERS : SALE_EXCEL_HEADERS;

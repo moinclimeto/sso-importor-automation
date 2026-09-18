@@ -174,8 +174,7 @@ export function prepareDummyProcurementBulk(options = {}) {
     'HSN Code': '3915',
     'Invoice No./GST E-Invoice Number': 'PO-DUMMY-001',
     'IRN No.': '',
-    'Qty. of Waste Plastic (MT)': 1,
-    'Qty. of Waste Plastic (Kg)': 1000,
+    'Quantity (MT)': 1,
     'Date of Entry (YYYY-MM-DD)': toDate,
     'Procurement date (YYYY-MM-DD)': fromDate,
     'Invoice Filename': invoiceFilename,
@@ -231,7 +230,7 @@ export async function setBulkDate(page, labelText, isoDate) {
     }, isoDate);
   }
 
-  await masked.click({ force: true }).catch(() => {});
+  await masked.click({ force: true }).catch(() => { });
   await masked.fill('');
   await masked.pressSequentially(display, { delay: 40 });
   await masked.evaluate((el) => {
@@ -305,7 +304,7 @@ export async function ensureUnitSelected(page, { onLog, unitId, unitName, force 
     .first();
 
   await selectBtn.waitFor({ state: 'visible', timeout: 45000 });
-  await selectBtn.scrollIntoViewIfNeeded().catch(() => {});
+  await selectBtn.scrollIntoViewIfNeeded().catch(() => { });
   await selectBtn.click({ force: true });
   log('Clicked Select Unit button', 'success');
 
@@ -332,7 +331,7 @@ export async function ensureUnitSelected(page, { onLog, unitId, unitName, force 
     .locator('.common-modal-panel')
     .first()
     .waitFor({ state: 'hidden', timeout: 25000 })
-    .catch(() => {});
+    .catch(() => { });
 
   await sleep(2000);
 
@@ -340,7 +339,7 @@ export async function ensureUnitSelected(page, { onLog, unitId, unitName, force 
   if (!(await hasUnitIdInHeader(page))) {
     log('Unit ID not in header yet — retrying Select Unit…', 'info');
     if ((await selectBtn.count()) > 0 && (await selectBtn.isVisible().catch(() => false))) {
-      await selectBtn.click({ force: true }).catch(() => {});
+      await selectBtn.click({ force: true }).catch(() => { });
       await page.locator('button.unit-card').first().waitFor({ state: 'visible', timeout: 15000 });
       await page.locator('button.unit-card').first().click({ force: true });
       await sleep(2000);
@@ -441,13 +440,13 @@ export async function openModuleViaOperationsView(page, moduleLabel, { onLog } =
   for (const sel of bulkSelectors) {
     const el = page.locator(sel).first();
     if ((await el.count()) > 0) {
-      await el.scrollIntoViewIfNeeded().catch(() => {});
+      await el.scrollIntoViewIfNeeded().catch(() => { });
       // Try regular click first
       await el.click().catch(async () => {
         // Fallback to force click if obscured
-        await el.click({ force: true }).catch(() => {});
+        await el.click({ force: true }).catch(() => { });
       });
-      
+
       log(`Clicked Bulk Entry via ${sel.split(':')[0]}`, 'info');
       // Wait to see if URL changes to bulk-entry
       try {
@@ -463,11 +462,11 @@ export async function openModuleViaOperationsView(page, moduleLabel, { onLog } =
 
   if (!bulkNavigated) {
     const fb = page.locator('button:has-text("Bulk Entry"), a:has-text("Bulk Entry")').first();
-    await fb.waitFor({ state: 'attached', timeout: 5000 }).catch(() => {});
-    await fb.click({ force: true }).catch(() => {});
+    await fb.waitFor({ state: 'attached', timeout: 5000 }).catch(() => { });
+    await fb.click({ force: true }).catch(() => { });
     log('Clicked Bulk Entry (fallback)', 'info');
   }
-  
+
   await sleep(2500);
 
   // Wait for the bulk entry elements to be visible

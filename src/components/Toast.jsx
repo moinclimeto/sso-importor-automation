@@ -52,7 +52,7 @@ export function Toast({ toast, onClose }) {
           : 'text-green-600';
 
   return (
-    <div className="fixed top-5 right-5 z-[100] animate-[fadeIn_0.2s_ease-out]">
+    <div className="fixed top-5 right-5 z-[150] animate-[fadeIn_0.2s_ease-out]">
       <div
         className={`flex items-start gap-3 min-w-[280px] max-w-md rounded-xl border bg-white px-4 py-3 shadow-lg text-slate-800 ${styles}`}
       >

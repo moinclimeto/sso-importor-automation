@@ -2,6 +2,13 @@ import { getLocalFilePath } from './partCLetterValues.js';
 
 export async function storeCompressedUpload(file, options = {}) {
   const sourcePath = getLocalFilePath(file) || file?.path || '';
+
+  // Browser fallback: if no Electron file path is available, use a blob URL
+  if (!sourcePath && file instanceof File) {
+    const blobUrl = URL.createObjectURL(file);
+    return { success: true, filePath: blobUrl, compressed: false, fileName: options.fileName || file.name };
+  }
+
   if (!sourcePath) {
     return { success: false, message: 'Could not read the file path. Please upload from the desktop app.' };
   }

@@ -335,7 +335,7 @@ async function uploadNearLabel(page, labelPattern, filePath, onLog, retries = 3)
 
 function partASection2StateField(page) {
   return page.locator('app-form-field-renderer').filter({
-    hasText: /2\s*a\)\s*Select States\/UTs in which the Importer is Operating/i,
+    hasText: /Select States\/UTs in which the .* is Operating/i,
   }).first();
 }
 

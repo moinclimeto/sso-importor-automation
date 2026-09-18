@@ -1,6 +1,8 @@
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Package, ArrowRight, Folder, CheckCircle, BarChart3 } from 'lucide-react';
+import { Package, ArrowRight, Folder, CheckCircle, BarChart3, Download, FileSpreadsheet, Loader2, Info } from 'lucide-react';
+import { useToast } from '../components/Toast';
+import { downloadExcelTemplate, parseExcelFile, importExcelRows } from '../utils/excelImport';
 
 const categories = [
   {
@@ -37,7 +39,48 @@ const categories = [
 
 export default function DocProcessor() {
   const navigate = useNavigate();
+  const { showToast } = useToast();
   const [counts, setCounts] = useState({ purchase: 0, sale: 0, production: 0 });
+  const [importingType, setImportingType] = useState(null);
+
+  const handleImportClick = (type) => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.xlsx,.csv,.xls';
+    input.onchange = async (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      try {
+        setImportingType(type);
+        const { rows: parsed } = await parseExcelFile(file, type);
+        const { saved, updated, duplicates } = await importExcelRows(type, parsed);
+        
+        let msg = `Imported ${saved} new record(s)`;
+        if (updated > 0) msg += `, updated ${updated} existing`;
+        msg += ` from Excel.`;
+        if (duplicates) msg += ` Skipped ${duplicates} duplicates.`;
+        
+        showToast(msg, 'success');
+        
+        // Refresh counts
+        const [purchases, sales, productions] = await Promise.all([
+          window.pwp.purchases.getAll(),
+          window.pwp.sales.getAll(),
+          window.pwp.localProduction ? window.pwp.localProduction.getAll() : Promise.resolve([]),
+        ]);
+        setCounts({
+          purchase: purchases?.length || 0,
+          sale: sales?.length || 0,
+          production: productions?.length || 0,
+        });
+      } catch (err) {
+        showToast('Import failed: ' + err.message, 'error');
+      } finally {
+        setImportingType(null);
+      }
+    };
+    input.click();
+  };
 
   useEffect(() => {
     const load = async () => {
@@ -79,6 +122,18 @@ export default function DocProcessor() {
         </div>
       </div>
 
+      <div className="rounded-xl border border-blue-100 bg-blue-50/50 p-4 mb-2">
+        <div className="flex gap-3">
+          <Info size={18} className="text-blue-500 flex-shrink-0 mt-0.5" />
+          <div>
+            <h3 className="text-sm font-semibold text-blue-900">How to prepare your data</h3>
+            <p className="mt-1 text-sm text-blue-700/80 leading-relaxed">
+              You can populate the records below in two ways: either use the green <strong>Upload</strong> button (top right) to extract data directly from your raw PDF invoices, or use the <strong>Download Template</strong> and <strong>Upload Excel</strong> buttons below to manually prepare and import your data.
+            </p>
+          </div>
+        </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {categories.map((cat) => {
           const count = counts[cat.type] || 0;
@@ -104,6 +159,36 @@ export default function DocProcessor() {
                     <p className="text-sm text-slate-500 mt-1 leading-relaxed">{cat.description}</p>
                   </div>
                 </div>
+              </div>
+
+              <div className="mt-5 flex flex-wrap gap-2">
+                <button
+                  type="button"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    downloadExcelTemplate(cat.type);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900"
+                >
+                  <Download size={14} className="text-slate-400" />
+                  Template
+                </button>
+                <button
+                  type="button"
+                  disabled={importingType === cat.type}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handleImportClick(cat.type);
+                  }}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-white px-3 py-1.5 text-xs font-medium text-slate-700 shadow-sm transition-colors hover:bg-slate-50 hover:text-slate-900 disabled:opacity-60"
+                >
+                  {importingType === cat.type ? (
+                    <Loader2 size={14} className="animate-spin text-slate-400" />
+                  ) : (
+                    <FileSpreadsheet size={14} className="text-slate-400" />
+                  )}
+                  {importingType === cat.type ? 'Importing...' : 'Upload Excel'}
+                </button>
               </div>
 
               <div className="mt-8 flex items-center justify-between border-t border-slate-100 pt-5">

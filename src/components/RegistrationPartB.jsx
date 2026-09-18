@@ -41,6 +41,7 @@ export default function RegistrationPartB({
   generalInfo,
   setGeneralInfo,
   gstin = '',
+  isPreview = false,
 }) {
   const [activeModal, setActiveModal] = useState(null);
   const [modalData, setModalData] = useState({});
@@ -78,6 +79,7 @@ export default function RegistrationPartB({
         const result = await fetchComputedPartBSection4({
           gstin,
           operatingStates,
+          docStatus: 'all',
         });
         if (cancelled || !result) return;
 
@@ -105,7 +107,10 @@ export default function RegistrationPartB({
     let cancelled = false;
     (async () => {
       try {
-        const result = await fetchComputedPartBSection5({ gstin });
+        const result = await fetchComputedPartBSection5({ 
+          gstin,
+          docStatus: 'all',
+        });
         if (cancelled || !result) return;
 
         setGeneralInfo((prev) => {
@@ -411,29 +416,31 @@ export default function RegistrationPartB({
   const renderSec5bTable = () => {
     const rows = (generalInfo.partBTransactions?.sec5b || []).map(normalizeSec5bRowForPortal);
     return (
-      <div className="mb-6 border rounded-lg overflow-hidden bg-white">
-        <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
+      <div className="mb-4 border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <div className="bg-[#f8fafc] px-4 py-3 border-b border-slate-200/80 flex justify-between items-center text-slate-800">
           <div>
-            <h4 className="font-semibold text-sm">5 b) Details of Plastic Raw Material/Packaging Procured from Non-Registered Entity</h4>
-            <p className="text-[11px] text-white/80 mt-1">Prefilled from published Unregistered procurement invoices — review, edit, then upload via automation.</p>
+            <h4 className="font-bold text-[13px]">5 b) Details of Plastic Raw Material/Packaging Procured from Non-Registered Entity</h4>
+            <p className="text-[11px] font-medium text-slate-500 mt-1">Prefilled from published Unregistered procurement invoices — review, edit, then upload via automation.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => openModal('sec5b', 'Add Section 5b Entry')}
-            className="flex items-center justify-center bg-white/20 hover:bg-white/30 rounded-full w-6 h-6"
-            title="Add manually"
-          >
-            <Plus size={16} />
-          </button>
+          {!isPreview && (
+            <button
+              type="button"
+              onClick={() => openModal('sec5b', 'Add Section 5b Entry')}
+              className="flex items-center justify-center bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded-lg px-2.5 py-1.5 gap-1.5 text-xs font-semibold transition-colors"
+              title="Add manually"
+            >
+              <Plus size={14} /> Add
+            </button>
+          )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           {rows.length === 0 ? (
             <div className="text-center text-sm text-slate-500 py-8 bg-slate-50 italic">
               No Unregistered procurement records found. Publish procurement documents with Registration Type = Unregistered.
             </div>
           ) : (
             <table className="w-full text-sm text-left min-w-[960px]">
-              <thead className="bg-[#0b6c7a] text-white">
+              <thead className="bg-[#0b6c7a] text-white sticky top-0 z-10">
                 <tr>
                   <th className="px-3 py-2 font-medium">Sr.</th>
                   <th className="px-3 py-2 font-medium">Entity Name</th>
@@ -443,7 +450,7 @@ export default function RegistrationPartB({
                   <th className="px-3 py-2 font-medium">Category</th>
                   <th className="px-3 py-2 font-medium">Financial Year</th>
                   <th className="px-3 py-2 font-medium">Invoice PDF</th>
-                  <th className="px-3 py-2 font-medium text-center">Action</th>
+                  {!isPreview && <th className="px-3 py-2 font-medium text-center">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -463,33 +470,35 @@ export default function RegistrationPartB({
                         '—'
                       )}
                     </td>
-                    <td className="px-3 py-2 text-center">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openModal('sec5b', 'Edit Section 5b Entry', row, i)}
-                          className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setGeneralInfo((prev) => ({
-                              ...prev,
-                              partBTransactions: {
-                                ...prev.partBTransactions,
-                                sec5b: prev.partBTransactions.sec5b.filter((_, idx) => idx !== i),
-                              },
-                            }));
-                          }}
-                          className="text-red-500 hover:text-red-700 p-1"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
+                    {!isPreview && (
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openModal('sec5b', 'Edit Section 5b Entry', row, i)}
+                            className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGeneralInfo((prev) => ({
+                                ...prev,
+                                partBTransactions: {
+                                  ...prev.partBTransactions,
+                                  sec5b: prev.partBTransactions.sec5b.filter((_, idx) => idx !== i),
+                                },
+                              }));
+                            }}
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Delete"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -503,29 +512,31 @@ export default function RegistrationPartB({
   const renderSec5dTable = () => {
     const rows = (generalInfo.partBTransactions?.sec5d || []).map(normalizeSec5dRowForPortal);
     return (
-      <div className="mb-6 border rounded-lg overflow-hidden bg-white">
-        <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
+      <div className="mb-4 border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <div className="bg-[#f8fafc] px-4 py-3 border-b border-slate-200/80 flex justify-between items-center text-slate-800">
           <div>
-            <h4 className="font-semibold text-sm">5 d) Details of Plastic Raw Material/Packaging Sold to UnRegistered PIBOs</h4>
-            <p className="text-[11px] text-white/80 mt-1">Prefilled from published Unregistered sales invoices — review, edit, then upload via automation.</p>
+            <h4 className="font-bold text-[13px]">5 d) Details of Plastic Raw Material/Packaging Sold to UnRegistered PIBOs</h4>
+            <p className="text-[11px] font-medium text-slate-500 mt-1">Prefilled from published Unregistered sales invoices — review, edit, then upload via automation.</p>
           </div>
-          <button
-            type="button"
-            onClick={() => openModal('sec5d', 'Add Section 5d Entry')}
-            className="flex items-center justify-center bg-white/20 hover:bg-white/30 rounded-full w-6 h-6"
-            title="Add manually"
-          >
-            <Plus size={16} />
-          </button>
+          {!isPreview && (
+            <button
+              type="button"
+              onClick={() => openModal('sec5d', 'Add Section 5d Entry')}
+              className="flex items-center justify-center bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded-lg px-2.5 py-1.5 gap-1.5 text-xs font-semibold transition-colors"
+              title="Add manually"
+            >
+              <Plus size={14} /> Add
+            </button>
+          )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           {rows.length === 0 ? (
             <div className="text-center text-sm text-slate-500 py-8 bg-slate-50 italic">
               No Unregistered sales records found. Publish sales documents with Registration Type = Unregistered.
             </div>
           ) : (
             <table className="w-full text-sm text-left min-w-[1100px]">
-              <thead className="bg-[#0b6c7a] text-white">
+              <thead className="bg-[#0b6c7a] text-white sticky top-0 z-10">
                 <tr>
                   <th className="px-3 py-2 font-medium">Sr.</th>
                   <th className="px-3 py-2 font-medium">Entity Name</th>
@@ -536,7 +547,8 @@ export default function RegistrationPartB({
                   <th className="px-3 py-2 font-medium">Financial Year</th>
                   <th className="px-3 py-2 font-medium">GST</th>
                   <th className="px-3 py-2 font-medium">E-Invoice No.</th>
-                  <th className="px-3 py-2 font-medium text-center">Action</th>
+                  <th className="px-3 py-2 font-medium">Invoice PDF</th>
+                  {!isPreview && <th className="px-3 py-2 font-medium text-center">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -551,33 +563,42 @@ export default function RegistrationPartB({
                     <td className="px-3 py-2">{row.financialYear || '—'}</td>
                     <td className="px-3 py-2 text-xs">{row.gst || '—'}</td>
                     <td className="px-3 py-2 text-xs">{row.invoiceNo || '—'}</td>
-                    <td className="px-3 py-2 text-center">
-                      <div className="flex justify-center gap-2">
-                        <button
-                          type="button"
-                          onClick={() => openModal('sec5d', 'Edit Section 5d Entry', row, i)}
-                          className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            setGeneralInfo((prev) => ({
-                              ...prev,
-                              partBTransactions: {
-                                ...prev.partBTransactions,
-                                sec5d: prev.partBTransactions.sec5d.filter((_, idx) => idx !== i),
-                              },
-                            }));
-                          }}
-                          className="text-red-500 hover:text-red-700 p-1"
-                          title="Delete"
-                        >
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
+                    <td className="px-3 py-2 text-xs text-emerald-700">
+                      {row.invoiceDoc ? (
+                        <UploadedFilePreview filePath={row.invoiceDoc} className="mt-0" />
+                      ) : (
+                        '—'
+                      )}
                     </td>
+                    {!isPreview && (
+                      <td className="px-3 py-2 text-center">
+                        <div className="flex justify-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => openModal('sec5d', 'Edit Section 5d Entry', row, i)}
+                            className="text-blue-600 hover:text-blue-800 p-1 text-xs font-medium"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setGeneralInfo((prev) => ({
+                                ...prev,
+                                partBTransactions: {
+                                  ...prev.partBTransactions,
+                                  sec5d: prev.partBTransactions.sec5d.filter((_, idx) => idx !== i),
+                                },
+                              }));
+                            }}
+                            className="text-red-500 hover:text-red-700 p-1"
+                            title="Delete"
+                          >
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -591,31 +612,33 @@ export default function RegistrationPartB({
   const renderTransactionTable = (title, secKey) => {
     const rows = generalInfo.partBTransactions?.[secKey] || [];
     return (
-      <div className="mb-6 border rounded-lg overflow-hidden bg-white">
-        <div className="bg-[#0b6c7a] px-4 py-3 border-b flex justify-between items-center text-white">
-          <h4 className="font-semibold text-sm">{title}</h4>
-          <button 
-            type="button"
-            onClick={() => openModal(secKey, title)}
-            className="flex items-center justify-center bg-white/20 hover:bg-white/30 rounded-full w-6 h-6"
-            title="Add New"
-          >
-            <Plus size={16} />
-          </button>
+      <div className="mb-4 border border-slate-200/80 rounded-xl overflow-hidden bg-white shadow-[0_1px_2px_rgba(0,0,0,0.02)]">
+        <div className="bg-[#f8fafc] px-4 py-3 border-b border-slate-200/80 flex justify-between items-center text-slate-800">
+          <h4 className="font-bold text-[13px]">{title}</h4>
+          {!isPreview && (
+            <button 
+              type="button"
+              onClick={() => openModal(secKey, title)}
+              className="flex items-center justify-center bg-emerald-50 text-emerald-600 hover:bg-emerald-100 border border-emerald-100 rounded-lg px-2.5 py-1.5 gap-1.5 text-xs font-semibold transition-colors"
+              title="Add New"
+            >
+              <Plus size={14} /> Add
+            </button>
+          )}
         </div>
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto max-h-[400px] overflow-y-auto">
           {rows.length === 0 ? (
             <div className="text-center text-sm text-slate-500 py-8 bg-slate-50 italic">No data available</div>
           ) : (
             <table className="w-full text-sm text-left">
-              <thead className="bg-[#0b6c7a] text-white">
+              <thead className="bg-[#0b6c7a] text-white sticky top-0 z-10">
                 <tr>
                   <th className="px-4 py-3 font-medium">Sr. No</th>
                   <th className="px-4 py-3 font-medium">Quantity (Ton)</th>
                   <th className="px-4 py-3 font-medium">Recycled %</th>
                   <th className="px-4 py-3 font-medium">Plastic Category</th>
                   <th className="px-4 py-3 font-medium">Financial Year</th>
-                  <th className="px-4 py-3 font-medium text-center">Action</th>
+                  {!isPreview && <th className="px-4 py-3 font-medium text-center">Action</th>}
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
@@ -626,21 +649,23 @@ export default function RegistrationPartB({
                     <td className="px-4 py-3">{r.recycledPercent || '-'}</td>
                     <td className="px-4 py-3">{r.category || '-'}</td>
                     <td className="px-4 py-3">{r.financialYear || '-'}</td>
-                    <td className="px-4 py-3 text-center">
-                      <div className="flex justify-center gap-2">
-                        <button type="button" onClick={() => openModal(secKey, title, r)} className="text-blue-600 hover:text-blue-800 p-1" title="View">
-                          <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
-                        </button>
-                        <button type="button" onClick={() => {
-                          setGeneralInfo(prev => {
-                            const newRows = prev.partBTransactions[secKey].filter((_, idx) => idx !== i);
-                            return { ...prev, partBTransactions: { ...prev.partBTransactions, [secKey]: newRows } };
-                          });
-                        }} className="text-red-500 hover:text-red-700 p-1" title="Delete">
-                          <Trash2 size={16} />
-                        </button>
-                      </div>
-                    </td>
+                    {!isPreview && (
+                      <td className="px-4 py-3 text-center">
+                        <div className="flex justify-center gap-2">
+                          <button type="button" onClick={() => openModal(secKey, title, r)} className="text-blue-600 hover:text-blue-800 p-1" title="View">
+                            <svg xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M2 12s3-7 10-7 10 7 10 7-3 7-10 7-10-7-10-7Z"/><circle cx="12" cy="12" r="3"/></svg>
+                          </button>
+                          <button type="button" onClick={() => {
+                            setGeneralInfo(prev => {
+                              const newRows = prev.partBTransactions[secKey].filter((_, idx) => idx !== i);
+                              return { ...prev, partBTransactions: { ...prev.partBTransactions, [secKey]: newRows } };
+                            });
+                          }} className="text-red-500 hover:text-red-700 p-1" title="Delete">
+                            <Trash2 size={16} />
+                          </button>
+                        </div>
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>
@@ -651,24 +676,44 @@ export default function RegistrationPartB({
     );
   };
 
+  const sec4Data = generalInfo.partBSection4 || [];
+  const uniqueStatesSec4 = [...new Set(sec4Data.map(g => g.state))];
+  const stateSpansSec4 = {};
+  let totalPreSec4 = 0, totalPostSec4 = 0, totalExportSec4 = 0;
+  sec4Data.forEach(g => {
+    stateSpansSec4[g.state] = (stateSpansSec4[g.state] || 0) + (g.categories?.length || 0);
+    (g.categories || []).forEach(c => {
+      totalPreSec4 += Number(c.preConsumer) || 0;
+      totalPostSec4 += Number(c.postConsumer) || 0;
+      totalExportSec4 += Number(c.exportQuantity) || 0;
+    });
+  });
+
   return (
-    <div className="space-y-8 mt-8 border-t pt-8 relative">
-      <div>
-        <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part B: Pertaining to Liquid Effluent and Gaseous Emissions</h3>
+    <div className="space-y-6 mt-6">
+      <div className="bg-white rounded-2xl p-6 shadow-[0_2px_10px_rgba(0,0,0,0.04)] border border-slate-100">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-600 flex items-center justify-center shrink-0">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M14.5 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V7.5L14.5 2z"/><polyline points="14 2 14 8 20 8"/><path d="m9 15 2 2 4-4"/></svg>
+          </div>
+          <h2 className="text-[15px] font-bold text-slate-800 flex items-center gap-2">
+            Part B: Pertaining to Liquid Effluent and Gaseous Emissions
+          </h2>
+        </div>
 
         {!showHistoricalSections ? (
-          <div className="text-sm text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3 mb-6">
+          <div className="text-[11px] font-medium text-teal-800 bg-teal-50 border border-teal-100 rounded-lg px-4 py-3 mb-4">
             {CURRENT_FY_COMMENCEMENT_HINT}
           </div>
         ) : null}
         
         {showHistoricalSections ? (
-        <div className="bg-white border rounded-xl shadow-sm p-5 mb-6">
+        <div className="ml-11 mb-6">
           <div className="mb-3">
-            <h4 className="font-semibold text-slate-700 text-sm">
+            <h4 className="font-bold text-[13px] text-slate-800">
               4. State-wise, Category-wise Quantity of PW generated (TPA)
             </h4>
-            <p className="text-xs text-slate-500 mt-1">
+            <p className="text-[11px] font-medium text-slate-500 mt-1">
               Rows are created from Part A <strong>Operating States</strong>. Post-consumer values come from published sales MT by state; pre-consumer from procurement MT. Edit before upload if needed.
             </p>
             {!generalInfo.operatingStates?.length ? (
@@ -725,48 +770,70 @@ export default function RegistrationPartB({
                         )}
                         <td className="px-3 py-2 border-r">{cat.category}</td>
                         <td className="px-3 py-2 border-r">
-                          <input
-                            type="number"
-                            min="0"
-                            step="any"
-                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
-                            value={cat.preConsumer ?? '0'}
-                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'preConsumer', e.target.value)}
-                          />
+                          {isPreview ? (
+                            <span className="text-slate-800 tabular-nums px-1 block">{cat.preConsumer ?? '0'}</span>
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                              value={cat.preConsumer ?? '0'}
+                              onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'preConsumer', e.target.value)}
+                            />
+                          )}
                         </td>
                         <td className="px-3 py-2 border-r">
-                          <input
-                            type="number"
-                            min="0"
-                            step="any"
-                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
-                            value={cat.postConsumer ?? '0'}
-                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'postConsumer', e.target.value)}
-                          />
+                          {isPreview ? (
+                            <span className="text-slate-800 tabular-nums px-1 block">{cat.postConsumer ?? '0'}</span>
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                              value={cat.postConsumer ?? '0'}
+                              onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'postConsumer', e.target.value)}
+                            />
+                          )}
                         </td>
                         <td className="px-3 py-2">
-                          <input
-                            type="number"
-                            min="0"
-                            step="any"
-                            className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
-                            value={cat.exportQuantity ?? '0'}
-                            onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'exportQuantity', e.target.value)}
-                          />
+                          {isPreview ? (
+                            <span className="text-slate-800 tabular-nums px-1 block">{cat.exportQuantity ?? '0'}</span>
+                          ) : (
+                            <input
+                              type="number"
+                              min="0"
+                              step="any"
+                              className="w-full px-2 py-1 border border-slate-300 rounded text-slate-800 outline-none focus:ring-1 focus:ring-teal-500 tabular-nums"
+                              value={cat.exportQuantity ?? '0'}
+                              onChange={(e) => updateSection4Cell(groupIndex, catIndex, 'exportQuantity', e.target.value)}
+                            />
+                          )}
                         </td>
                       </tr>
                     ))
                   ))
                 )}
               </tbody>
+              {sec4Data.length > 0 && (
+                <tfoot className="bg-slate-100 text-slate-800 font-semibold sticky bottom-0 z-10 shadow-[0_-1px_2px_rgba(0,0,0,0.1)]">
+                  <tr>
+                    <td colSpan={4} className="px-4 py-3 border-r text-center">Total</td>
+                    <td className="px-3 py-2 border-r text-center">{totalPreSec4}</td>
+                    <td className="px-3 py-2 border-r text-center">{totalPostSec4}</td>
+                    <td className="px-3 py-2 text-center">{totalExportSec4}</td>
+                  </tr>
+                </tfoot>
+              )}
             </table>
           </div>
         </div>
         ) : null}
 
         {showHistoricalSections ? (
-        <div className="bg-white border rounded-xl shadow-sm p-5">
-          <h4 className="font-semibold text-slate-800 text-base mb-4 border-b pb-2">5. Details of Plastic Raw Material/Packaging</h4>
+        <div className="ml-11">
+          <h4 className="font-bold text-[13px] text-slate-800 mb-4">5. Details of Plastic Raw Material/Packaging</h4>
           
           {renderTransactionTable('Details of Plastic Raw Material/Packaging Procured from Registered Entity', 'sec5a')}
           {renderSec5bTable()}

@@ -6,6 +6,7 @@ import { useToast, Toast } from '../components/Toast.jsx';
 import RegistrationDocUpload from '../components/RegistrationDocUpload.jsx';
 import RegistrationPartB from '../components/RegistrationPartB.jsx';
 import RegistrationPartC from '../components/RegistrationPartC.jsx';
+import RegistrationPreviewModal from '../components/RegistrationPreviewModal.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
   AUTO_FILLED_FIELDS,
@@ -35,8 +36,9 @@ import {
 } from '../utils/registrationFormPersistence.js';
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
-import { getStartRegistrationBlockers } from '../utils/registrationStartReadiness.js';
+import { getStartRegistrationBlockers, getRegistrationChecklist } from '../utils/registrationStartReadiness.js';
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
+import { downloadExcelTemplate, parseExcelFile, importExcelRows } from '../utils/excelImport.js';
 import { showRegistrationAutomationError } from '../utils/registrationAutomationErrors.js';
 import { useCpcbPortalToasts } from '../hooks/useCpcbPortalToasts.js';
 import RegistrationAutomationModal, {
@@ -44,9 +46,11 @@ import RegistrationAutomationModal, {
   applyAutomationLogUpdate,
 } from '../components/RegistrationAutomationModal.jsx';
 import CpcbPortalToastFeed from '../components/CpcbPortalToastFeed.jsx';
+import LocalFilePreview from '../components/LocalFilePreview.jsx';
 import OperatingStatesMultiSelect from '../components/OperatingStatesMultiSelect.jsx';
 import RegistrationPartACompanyProfile from '../components/RegistrationPartACompanyProfile.jsx';
 import ImporterEprPreparedReview from '../components/importerEpr/ImporterEprPreparedReview.jsx';
+import RegistrationPreviewSummary from '../components/RegistrationPreviewSummary.jsx';
 import {
   fetchComputedPlasticConsumed3c,
   shouldHydratePlasticConsumed,
@@ -57,11 +61,25 @@ import {
   validateSection4AgainstPlasticConsumed,
   formatSection4PartAIssue,
 } from '../utils/registrationPartBSection4.js';
-import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, AlertCircle, Terminal, ChevronLeft, ChevronRight } from 'lucide-react';
+import LetterStudioModal from '../components/LetterStudioModal.jsx';
+import {
+  getApplicableLetters,
+  loadLetterSourceRecords,
+  missingLetterFields,
+  buildLetterValues,
+  resolveIecNumber,
+} from '../utils/partCLetterValues.js';
+import { Loader2, X, Sparkles, Mail, Phone, FlaskConical, Building2, Eye, EyeOff, RefreshCw, FilePlus, CheckCircle2, AlertCircle, Terminal, ChevronLeft, ChevronRight, ChevronUp, ChevronDown, Lock, IdCard, User, Calendar, Upload, Image as ImageIcon, FileText, PenTool, Briefcase, MapPin, Download, FileSpreadsheet } from 'lucide-react';
 
 const inputClass =
-  'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
+  'w-full px-4 py-2.5 bg-slate-50/60 border border-slate-200/80 text-slate-800 rounded-xl focus:bg-white focus:ring-[3px] focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all duration-300 placeholder:text-slate-400 font-medium shadow-[inset_0px_2px_4px_rgba(0,0,0,0.01)] hover:border-slate-300 hover:bg-slate-50';
 const selectClass = inputClass;
+
+const modernInputClass =
+  'w-full pl-10 pr-4 py-2.5 bg-slate-50/60 border border-slate-200/80 text-slate-800 rounded-xl focus:bg-white focus:ring-[3px] focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all duration-300 placeholder:text-slate-400 font-medium shadow-[inset_0px_2px_4px_rgba(0,0,0,0.01)] hover:border-slate-300 hover:bg-slate-50';
+const modernLockedInputClass = `${modernInputClass} opacity-80 bg-slate-100/50 cursor-not-allowed hover:border-slate-200/80 hover:bg-slate-100/50`;
+const modernSelectClass = modernInputClass;
+const modernLockedSelectClass = modernLockedInputClass;
 
 const EMPTY_AUTO = {
   gstin: '',
@@ -113,6 +131,8 @@ function AutoFilledPreview({ data, isDummy }) {
     </div>
   );
 }
+
+const getFileName = (path) => path ? String(path).split(/[/\\]/).pop() : '';
 
 export default function CpcbRegistrationPage() {
   const { setPageHeader } = usePageHeader();
@@ -174,13 +194,138 @@ export default function CpcbRegistrationPage() {
   const [automationFlow, setAutomationFlow] = useState('registration');
   const [otpInputError, setOtpInputError] = useState('');
   const [registrationBlocker, setRegistrationBlocker] = useState('');
-  const [wizardStep, setWizardStep] = useState('account');
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [showPaymentBypassModal, setShowPaymentBypassModal] = useState(false);
   const [paymentBypassTxnId, setPaymentBypassTxnId] = useState('');
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
+  const [isGeneralInfoExpanded, setIsGeneralInfoExpanded] = useState(true);
+  const [isBusinessDetailsExpanded, setIsBusinessDetailsExpanded] = useState(true);
+  const [isDirectorsDetailsExpanded, setIsDirectorsDetailsExpanded] = useState(true);
+  const [isOperationsDetailsExpanded, setIsOperationsDetailsExpanded] = useState(true);
+  const [isReqDocsExpanded, setIsReqDocsExpanded] = useState(true);
+
+  const [isUploadingExcel, setIsUploadingExcel] = useState(false);
+
+  const handleExcelUpload = async (e, type) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setIsUploadingExcel(true);
+    try {
+      const { rows } = await parseExcelFile(file, type);
+      const res = await importExcelRows(type, rows);
+      showToast(`Successfully uploaded ${res.saved} new ${type} records, updated ${res.updated}.`, 'success');
+    } catch (err) {
+      showToast(err.message || 'Error uploading excel', 'error');
+    } finally {
+      setIsUploadingExcel(false);
+      e.target.value = '';
+    }
+  };
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
   const [uploadingPdfField, setUploadingPdfField] = useState('');
   const automationBusyRef = useRef(false);
+  const simpleFileInputRef = useRef(null);
+  const [simpleUploadTarget, setSimpleUploadTarget] = useState(null);
+
+  const handleSimpleFileSelected = useCallback(async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = '';
+    if (!file || !simpleUploadTarget) return;
+
+    if (!/\.pdf$/i.test(file.name)) {
+      showToast?.('Please upload a PDF file.', 'error');
+      setSimpleUploadTarget(null);
+      return;
+    }
+    const ext = file.name.match(/\.[^.]+$/i)?.[0] || '.pdf';
+
+    const PART_C_DOC_BASE = {
+      partCCoveringLetter: 'covering_letter',
+      partCAuditedStatement: 'self_declaration',
+      partCSignature: 'signature',
+      detailsOfProductsPath: 'operations_details',
+      representativePicturePath: 'plastic_packaging_picture',
+    };
+    const { field, store } = simpleUploadTarget;
+    const docBase = PART_C_DOC_BASE[field] || 'document';
+    const portalFileName = registrationDocFileName(docBase, ext);
+
+    const stored = await storeCompressedUpload(file, {
+      destSubdir: 'processed_part_c',
+      fileName: portalFileName,
+    });
+
+    if (!stored || !stored.success || !stored.filePath) {
+      showToast?.(stored?.message || 'Could not save PDF.', 'error');
+      setSimpleUploadTarget(null);
+      return;
+    }
+
+    if (store === 'autoData') {
+      setAutoData((prev) => ({ ...prev, [field]: stored.filePath }));
+    } else {
+      setGeneralInfo((prev) => ({ ...prev, [field]: stored.filePath }));
+    }
+    showToast?.('Document uploaded successfully', 'success');
+    setSimpleUploadTarget(null);
+  }, [simpleUploadTarget, showToast]);
+
+  const triggerSimpleUpload = useCallback((field, store) => {
+    setSimpleUploadTarget({ field, store });
+    simpleFileInputRef.current?.click();
+  }, []);
+
+  const [studioOpen, setStudioOpen] = useState(false);
+  const [studioLetterId, setStudioLetterId] = useState(null);
+  const [studioDocs, setStudioDocs] = useState([]);
+  const [studioCompanies, setStudioCompanies] = useState([]);
+  const [studioIec, setStudioIec] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    if (studioOpen) {
+      Promise.all([
+        resolveIecNumber(),
+        loadLetterSourceRecords(),
+      ]).then(([iecValue, sources]) => {
+        if (!alive) return;
+        setStudioIec(iecValue);
+        setStudioDocs(sources.docs || []);
+        setStudioCompanies(sources.companies || []);
+      });
+    }
+    return () => {
+      alive = false;
+    };
+  }, [studioOpen]);
+
+  const sourceRecords = useMemo(
+    () => ({ generalInfo, autoData, iec: studioIec, docs: studioDocs, companies: studioCompanies }),
+    [generalInfo, autoData, studioIec, studioDocs, studioCompanies]
+  );
+  const applicableLetters = useMemo(
+    () => getApplicableLetters(generalInfo.typeOfCompany),
+    [generalInfo.typeOfCompany]
+  );
+  const missingFields = useMemo(
+    () => missingLetterFields(sourceRecords, applicableLetters),
+    [sourceRecords, applicableLetters]
+  );
+
+  const handleAttachFromStudio = useCallback((letter, filePath) => {
+    if (!filePath) return;
+    if (letter.store === 'autoData') {
+      setAutoData((prev) => ({ ...prev, [letter.field]: filePath }));
+    } else {
+      setGeneralInfo((prev) => ({ ...prev, [letter.field]: filePath }));
+    }
+    showToast?.('Document attached successfully', 'success');
+  }, [showToast]);
+
+  const handlePrepareLetter = useCallback((letterId) => {
+    setStudioLetterId(letterId);
+    setStudioOpen(true);
+  }, []);
 
   const formatTimer = useCallback(
     (time) => `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`,
@@ -244,11 +389,9 @@ export default function CpcbRegistrationPage() {
   const loginOtpActive = showLoginOtpModal || (showAutomationModal && automationPhase === 'login_otp');
 
   const lockedInputClass = registrationComplete
-    ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
+    ? `${inputClass} !bg-slate-100 !border-slate-200/60 !text-slate-500 cursor-not-allowed shadow-none`
     : inputClass;
-  const lockedSelectClass = registrationComplete
-    ? `${selectClass} bg-slate-50 text-slate-700 cursor-not-allowed`
-    : selectClass;
+  const lockedSelectClass = lockedInputClass;
 
   const applySavedRegistration = useCallback(async (saved) => {
     if (!saved) return;
@@ -263,7 +406,6 @@ export default function CpcbRegistrationPage() {
     if (saved.cepr_id) {
       setRegistrationComplete(true);
       setSavedCeprId(saved.cepr_id);
-      setWizardStep('partA');
     }
 
     if (form.autoData && typeof form.autoData === 'object') {
@@ -286,7 +428,7 @@ export default function CpcbRegistrationPage() {
         password: loginCreds.password,
         confirmPassword: loginCreds.password,
       }));
-    } 
+    }
 
     setEmail(loginCreds.email);
     setMobile(loginCreds.mobile);
@@ -383,20 +525,31 @@ export default function CpcbRegistrationPage() {
     });
   }, [showToast]);
 
-  const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null } = {}) => {
+  const applyRegistrationData = useCallback(async (docData = {}, { savedForm = null, overwrite = false } = {}) => {
     const { data } = resolveRegistrationData(docData);
 
-    setAutoData((prev) => mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || prev));
+    setAutoData((prev) => {
+      if (overwrite) {
+        // We do not use pickNonEmpty on data so that if a field is empty in the new document, 
+        // it correctly overwrites the old value in prev.
+        return { ...EMPTY_AUTO, ...prev, ...data };
+      }
+      return mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || prev);
+    });
+    let mergedGeneralInfo = {};
+
     setGeneralInfo((prev) => {
-      const merged = mergeGeneralInfoFromSources(data, savedForm?.generalInfo || prev);
+      mergedGeneralInfo = overwrite
+        ? { ...GENERAL_INFO_EMPTY, ...prev, ...mergeGeneralInfoFromSources(data, {}) }
+        : mergeGeneralInfoFromSources(data, savedForm?.generalInfo || prev);
       return {
-        ...merged,
-        password: savedForm?.generalInfo?.password || prev.password || merged.password || '',
+        ...mergedGeneralInfo,
+        password: savedForm?.generalInfo?.password || prev.password || mergedGeneralInfo.password || '',
         confirmPassword:
           savedForm?.generalInfo?.confirmPassword ||
           savedForm?.generalInfo?.password ||
           prev.confirmPassword ||
-          merged.confirmPassword ||
+          mergedGeneralInfo.confirmPassword ||
           '',
       };
     });
@@ -405,14 +558,14 @@ export default function CpcbRegistrationPage() {
     if (window.pwp?.documents?.getAll) {
       docs = await window.pwp.documents.getAll();
     }
-    const { ready, missing } = isRegistrationReadyWithFallback(docs, data);
+    const { ready, missing } = isRegistrationReadyWithFallback(docs, data, mergedGeneralInfo?.typeOfBusiness);
     setDocReady(ready);
     setMissingDocs(missing);
     setFileNameIssues(
       collectRegistrationUploadFileIssues({
         docs,
         autoData: mergeAutoData(EMPTY_AUTO, data, savedForm?.autoData || {}),
-        generalInfo: mergeGeneralInfoFromSources(data, savedForm?.generalInfo || {}),
+        generalInfo: mergedGeneralInfo,
       })
     );
   }, []);
@@ -499,7 +652,7 @@ export default function CpcbRegistrationPage() {
   );
 
   useEffect(() => {
-    if (loadingSavedRegistration) return undefined;
+    if (loadingSavedRegistration || !showHistoricalEprSections) return undefined;
 
     let cancelled = false;
     (async () => {
@@ -507,6 +660,7 @@ export default function CpcbRegistrationPage() {
         const result = await fetchComputedPlasticConsumed3c({
           gstin: autoData.gstin,
           savedImporter3a: autoData.importer3a,
+          docStatus: 'all',
         });
         if (cancelled || !result?.hasData) return;
 
@@ -521,14 +675,14 @@ export default function CpcbRegistrationPage() {
     })();
 
     return () => { cancelled = true; };
-  }, [loadingSavedRegistration, autoData.gstin, autoData.importer3a]);
+  }, [loadingSavedRegistration, showHistoricalEprSections, autoData.gstin, autoData.importer3a]);
 
   const handlePlasticConsumedChange = useCallback((nextPlasticConsumed) => {
     setGeneralInfo((prev) => ({ ...prev, plasticConsumed: nextPlasticConsumed }));
   }, []);
 
   const handleDocExtracted = useCallback(async (data) => {
-    await applyRegistrationData(data);
+    await applyRegistrationData(data, { overwrite: true });
   }, [applyRegistrationData]);
 
   useEffect(() => {
@@ -536,6 +690,20 @@ export default function CpcbRegistrationPage() {
     (async () => {
       const normalized = await normalizeRegistrationPaths({ autoData, generalInfo });
       if (cancelled) return;
+
+      const isPropOrPartner = String(normalized.generalInfo?.typeOfBusiness).toLowerCase().includes('proprietorship') || String(normalized.generalInfo?.typeOfBusiness).toLowerCase().includes('partnership');
+      if (isPropOrPartner) {
+        if (!normalized.autoData.companyPan && normalized.autoData.authPan) {
+          normalized.autoData.companyPan = normalized.autoData.authPan;
+          normalized.changed = true;
+        }
+        if (!normalized.autoData.companyPanDocumentPath && normalized.autoData.personPanDocumentPath) {
+          normalized.autoData.companyPanDocumentPath = normalized.autoData.personPanDocumentPath;
+          normalized.autoData.companyPanOriginalName = normalized.autoData.personPanOriginalName;
+          normalized.changed = true;
+        }
+      }
+
       if (normalized.changed) {
         setAutoData(normalized.autoData);
         setGeneralInfo(normalized.generalInfo);
@@ -547,7 +715,7 @@ export default function CpcbRegistrationPage() {
         docs = await window.pwp.documents.getAll();
       }
       if (cancelled) return;
-      const { ready, missing } = isRegistrationReadyWithFallback(docs, normalized.autoData);
+      const { ready, missing } = isRegistrationReadyWithFallback(docs, normalized.autoData, normalized.generalInfo?.typeOfBusiness);
       setDocReady(ready);
       setMissingDocs(missing);
       setFileNameIssues(
@@ -634,38 +802,41 @@ export default function CpcbRegistrationPage() {
     }
   };
 
-  const handleSaveAndNext = async () => {
-    if (wizardStep === 'partA') {
-      if (!generalInfo.operatingStates?.length) {
-        showToast('Select at least one operating state.', 'error');
-        return;
-      }
-      if (generalInfo.operatingStates.length === 2) {
-        showToast('Cannot select exactly 2 states. Select 1, or 3 or more.', 'error');
-        return;
-      }
-      if (!generalInfo.yearOfCommencement && !generalInfo.yearOfCommencement) {
-        showToast('Year of Commencement is required.', 'error');
-        return;
-      }
-      if (!generalInfo.complianceStatus && !generalInfo.complianceStatus) {
-        showToast('Compliance Status (3d) is required.', 'error');
-        return;
-      }
-      if (!String(generalInfo.thicknessOfPlastic || generalInfo.thicknessOfPlastic || '').trim()) {
-        showToast('Thickness of Plastic (3e) is required.', 'error');
-        return;
-      }
-      await persistRegistrationForm();
-      showToast('Part A saved.', 'success');
-      setWizardStep('partB');
+  const handlePreviewRegistration = () => {
+    if (!generalInfo.operatingStates?.length) {
+      showToast('Select at least one operating state.', 'error');
       return;
     }
-    if (wizardStep === 'partB') {
-      await persistRegistrationForm();
-      showToast('Part B saved.', 'success');
-      setWizardStep('partC');
+    if (generalInfo.operatingStates.length === 2) {
+      showToast('Cannot select exactly 2 states. Select 1, or 3 or more.', 'error');
+      return;
     }
+    if (!generalInfo.yearOfCommencement) {
+      showToast('Year of Commencement is required.', 'error');
+      return;
+    }
+    if (!generalInfo.complianceStatus) {
+      showToast('Compliance Status (3d) is required.', 'error');
+      return;
+    }
+    if (!String(generalInfo.thicknessOfPlastic || '').trim()) {
+      showToast('Thickness of Plastic (3e) is required.', 'error');
+      return;
+    }
+
+    // if (!registrationComplete) {
+    //   const blockers = getStartRegistrationBlockers({
+    //     docReady, missingDocs, fileNameIssues, autoData, email, mobile, generalInfo,
+    //   });
+    //   if (blockers.length > 0) {
+    //     const msg = blockers.map((item) => item.label).join(', ');
+    //     showToast(`Complete pending items: ${msg}`, 'error', { duration: 12000 });
+    //     return;
+    //   }
+    // }
+
+    setIsPreviewMode(true);
+    window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
   const handleStartRegistration = async () => {
@@ -874,6 +1045,7 @@ export default function CpcbRegistrationPage() {
     setOtpSubmitting(true);
     setOtpInputError('');
     setCurrentAutomationStep('Verifying mobile OTP…');
+    let passedOtp = false;
     try {
       const verifyRes = await window.pwp.scraper.submitMobileOtp({
         mobile,
@@ -889,6 +1061,7 @@ export default function CpcbRegistrationPage() {
         return;
       }
 
+      passedOtp = true;
       setOtpSubmitting(false);
       appendAutomationLog(setAutomationLogs, 'Mobile OTP verified', 'success');
       setAutomationPhase('running');
@@ -998,6 +1171,9 @@ export default function CpcbRegistrationPage() {
         ) {
           failAutomationModal(errText);
           showToast(errText, 'error', { duration: 15000 });
+        } else if (res.step === 'MOBILE_OTP_VERIFIED' || res.step === 'WAITING_CAPTCHA' || res.step === 'GENERAL_INFO_FILLED') {
+          failAutomationModal(errText);
+          showToast(errText, 'error', { duration: 12000 });
         } else if (automationPhase === 'email_otp' || automationPhase === 'mobile_otp') {
           reportOtpRetryError(automationPhase, errText);
           showToast(errText, 'error');
@@ -1010,6 +1186,8 @@ export default function CpcbRegistrationPage() {
       const errText = sanitizeAutomationUserError(err.message);
       setRegistrationBlocker(errText);
       if (/already exists|authorised person|authorized person/i.test(errText)) {
+        failAutomationModal(errText);
+      } else if (passedOtp) {
         failAutomationModal(errText);
       } else if (automationPhase === 'email_otp' || automationPhase === 'mobile_otp') {
         reportOtpRetryError(automationPhase, errText);
@@ -1077,11 +1255,16 @@ export default function CpcbRegistrationPage() {
     }));
     setRegistrationComplete(true);
     setSavedCeprId(ceprId || '');
-    setWizardStep('partA');
+    
+    // Automatically proceed to Importer automation if data is valid
+    setTimeout(() => {
+      handleNewApplication(ceprId || '');
+    }, 1000);
   };
 
-  const handleNewApplication = async () => {
-    if (!savedCeprId) {
+  const handleNewApplication = async (overrideCeprId = null) => {
+    const activeCeprId = typeof overrideCeprId === 'string' ? overrideCeprId : savedCeprId;
+    if (!activeCeprId) {
       showToast('CEPR ID not found — complete registration first.', 'error');
       return;
     }
@@ -1104,13 +1287,13 @@ export default function CpcbRegistrationPage() {
     for (const req of requiredGeneral) {
       if (!generalInfo[req.key]) missing.push(req.label);
     }
-    
+
     if (!generalInfo.operatingStates || generalInfo.operatingStates.length === 0) {
       missing.push('Operating States (minimum 1 required)');
     } else if (generalInfo.operatingStates.length === 2) {
       missing.push('Operating States (Cannot select exactly 2 states. Select 1, or 3+ states)');
     }
-    
+
     if (['Micro', 'Small', 'Medium', 'Large'].includes(generalInfo.typeOfCompany) && !autoData.typeOfCompanyDoc) {
       missing.push('Type of Company Document (MSME/Declaration)');
     }
@@ -1140,10 +1323,8 @@ export default function CpcbRegistrationPage() {
         'Representative picture of Plastic Packaging',
         'Type of Company Document',
       ];
-      if (missing.some((label) => partAHints.some((hint) => label.includes(hint)))) {
-        setWizardStep('partA');
-      } else if (missing.some((label) => label.startsWith('Part C'))) {
-        setWizardStep('partC');
+      if (missing.some((label) => label.startsWith('Part C'))) {
+        // Validation failed for Part C
       }
       showToast(`Missing required fields: ${missing.join(', ')}`, 'error');
       return;
@@ -1157,7 +1338,6 @@ export default function CpcbRegistrationPage() {
       )
       : [];
     if (section4Issues.length) {
-      setWizardStep('partB');
       showToast(formatSection4PartAIssue(section4Issues[0]), 'error', { duration: 14000 });
       if (section4Issues.length > 1) {
         showToast(
@@ -1177,7 +1357,7 @@ export default function CpcbRegistrationPage() {
           mobile,
           applicant_type: generalInfo.applicantType || 'PIBO',
           sub_applicant_type: generalInfo.subApplicantType || 'Importer',
-          cepr_id: savedCeprId || '',
+          cepr_id: activeCeprId || '',
           form_data_json: JSON.stringify({
             email,
             mobile,
@@ -1196,7 +1376,7 @@ export default function CpcbRegistrationPage() {
     setLoading(true);
     setCurrentAutomationStep('Starting CPCB login…');
     try {
-      await beginLoginFlow(savedCeprId);
+      await beginLoginFlow(activeCeprId);
     } finally {
       setLoading(false);
     }
@@ -1464,8 +1644,126 @@ export default function CpcbRegistrationPage() {
     }
   };
 
+  const handleChangeDocument = useCallback(async (docTypeHint) => {
+    try {
+      const picker = window.pwp?.ocr?.selectUploads || window.pwp?.ocr?.selectFiles;
+      if (!picker) {
+        showToast('File picker not available', 'error');
+        return;
+      }
+      const paths = await picker();
+      if (!paths || !paths.length) return;
+      const newPath = paths[0];
+
+      setLoadingMsg('Extracting data from new document...');
+
+      const batch = await window.pwp.ocr.extractBatch({
+        filePaths: [newPath],
+        type: 'company_document',
+        companyDocType: docTypeHint,
+      });
+
+      const res = batch?.results?.[0];
+      if (!res || !res.ok || res.skipped) {
+        showToast(res?.message || 'Extraction failed', 'error');
+        return;
+      }
+
+      const data = { ...(res.data || {}) };
+      const originalFileName = String(newPath).split(/[/\\]/).pop();
+      data.original_name = originalFileName;
+      const extractedType = data.doc_type;
+
+      if (extractedType && typeof extractedType === 'string') {
+        const ext = extractedType.toLowerCase();
+        // Ignore generic types that the AI might spit out
+        if (ext !== 'company_document' && ext !== 'unknown') {
+          const isPan = ext.includes('pan');
+          const isGst = ext.includes('gst');
+          const isCin = ext.includes('cin') || ext.includes('incorporation');
+          const isIec = ext.includes('iec') || ext.includes('import');
+
+          let isWrong = false;
+          if ((docTypeHint === 'gst' || docTypeHint === 'unit_gst') && (isPan || isCin || isIec) && !isGst) isWrong = true;
+          else if ((docTypeHint === 'person_pan' || docTypeHint === 'company_pan') && (isGst || isCin || isIec) && !isPan) isWrong = true;
+          else if (docTypeHint === 'cin' && (isGst || isPan || isIec) && !isCin) isWrong = true;
+          else if (docTypeHint === 'iec' && (isGst || isPan || isCin) && !isIec) isWrong = true;
+
+          if (isWrong) {
+            showToast(`Wrong document uploaded! Please re-upload the correct document.`, 'error');
+            return;
+          }
+        }
+      }
+
+      // Always use the expected docTypeHint so the mapper finds it by exact key
+      const docType = docTypeHint;
+
+      const isPersonPan = docType === 'person_pan';
+      const dobValue = data.dob || data.date_of_birth || data.dateOfBirth || data.birth_date || '';
+
+      const payload = {
+        doc_type: docType,
+        document_number: data.document_number || data.gstin || data.pan || '',
+        entity_name: data.entity_name || data.legal_name || data.name || data.company_name || '',
+        issue_date: isPersonPan
+          ? (dobValue || data.issue_date || '')
+          : (data.issue_date || data.registration_date || data.date_of_incorporation || dobValue || ''),
+        constitution_of_business: data.constitution_of_business || '',
+        address: data.address || '',
+        date_of_liability: data.date_of_liability || data.date_of_commencement || '',
+        enterprise_type: data.enterprise_type || '',
+        social_category: data.social_category || '',
+        date_of_incorporation: data.date_of_incorporation || '',
+        date_of_commencement: data.date_of_commencement || '',
+        industry_category: data.industry_category || '',
+        allowed_capacity: data.allowed_capacity || '',
+        validity_date: data.validity_date || data.valid_upto || '',
+        billing_month: data.billing_month || '',
+        amount: Number(data.amount) || 0,
+        units_consumed: Number(data.units_consumed) || 0,
+        due_date: data.due_date || '',
+        provider: data.provider || data.vendor_name || '',
+        file_path: newPath,
+        fileHash: data.fileHash || '',
+        raw_json: JSON.stringify(data),
+      };
+
+      if (window.pwp?.documents?.getAll && window.pwp?.documents?.delete) {
+        const existingDocs = await window.pwp.documents.getAll();
+        const existing = existingDocs.find(d => d.doc_type === docType);
+        if (existing && existing.id) {
+          await window.pwp.documents.delete(existing.id);
+        }
+      }
+
+      await window.pwp.documents.add(payload);
+      showToast('Document updated successfully', 'success');
+
+      const { docData } = await fetchRegistrationDocData();
+      await applyRegistrationData(docData, { overwrite: true });
+    } catch (err) {
+      showToast(err?.message || 'Failed to process document', 'error');
+    } finally {
+      setLoadingMsg('');
+    }
+  }, [applyRegistrationData, showToast]);
+
   const startRegistrationBlockers = useMemo(
     () => getStartRegistrationBlockers({
+      docReady,
+      missingDocs,
+      fileNameIssues,
+      autoData,
+      email,
+      mobile,
+      generalInfo,
+    }),
+    [docReady, missingDocs, fileNameIssues, autoData, email, mobile, generalInfo],
+  );
+
+  const registrationChecklist = useMemo(
+    () => getRegistrationChecklist({
       docReady,
       missingDocs,
       fileNameIssues,
@@ -1482,12 +1780,14 @@ export default function CpcbRegistrationPage() {
       <Toast toast={toast} onClose={hideToast} />
       <CpcbPortalToastFeed items={portalToasts} />
 
-      <h2 className="text-lg font-semibold text-slate-800 mb-1">PIBO & Importer Registration</h2>
-      <p className="text-sm text-slate-500 mb-6">
-        {registrationComplete
-          ? 'CPCB account is ready. Complete Part A, Part B and Part C, then click Register to fill the CPCB portal.'
-          : 'Only CPCB account registration fields are shown here. After the profile is created, New Application (Part A, B, C) will open.'}
-      </p>
+      {loadingMsg && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40 backdrop-blur-sm">
+          <div className="bg-white rounded-xl shadow-2xl px-6 py-5 flex flex-col items-center gap-3 animate-in fade-in zoom-in-95 duration-200 min-w-[280px]">
+            <Loader2 size={32} className="text-blue-600 animate-spin" />
+            <p className="text-sm font-medium text-slate-800 text-center">{loadingMsg}</p>
+          </div>
+        </div>
+      )}
 
       {loadingSavedRegistration && (
         <div className="mb-4 flex items-center gap-2 text-sm text-slate-500">
@@ -1511,38 +1811,8 @@ export default function CpcbRegistrationPage() {
         </div>
       )}
 
-      {registrationComplete && (
-        <div className="mb-6 grid grid-cols-3 gap-2">
-          {[
-            { id: 'partA', label: 'Part A' },
-            { id: 'partB', label: 'Part B' },
-            { id: 'partC', label: 'Part C' },
-          ].map((step, idx) => {
-            const active = wizardStep === step.id;
-            const done = ['partA', 'partB', 'partC'].indexOf(wizardStep) > idx;
-            return (
-              <button
-                key={step.id}
-                type="button"
-                onClick={() => setWizardStep(step.id)}
-                className={`rounded-lg border px-3 py-2 text-sm font-medium ${
-                  active
-                    ? 'border-green-600 bg-green-50 text-green-800'
-                    : done
-                      ? 'border-green-200 bg-white text-green-700'
-                      : 'border-slate-200 bg-slate-50 text-slate-500'
-                }`}
-              >
-                {idx + 1}. {step.label}
-              </button>
-            );
-          })}
-        </div>
-      )}
-
-      {!registrationComplete && (
       <div className="mb-6 pb-6 border-b border-slate-100 space-y-4">
-        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} />
+        <RegistrationDocUpload onExtracted={handleDocExtracted} showToast={showToast} generalInfo={generalInfo} autoData={autoData} />
 
         {fileNameIssues.length > 0 && (
           <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 space-y-2">
@@ -1562,254 +1832,583 @@ export default function CpcbRegistrationPage() {
           </div>
         )}
       </div>
-      )}
-
-      {!registrationComplete && (
-      <div className="mb-6">
-        <AutoFilledPreview data={autoData} isDummy={false} />
-      </div>
-      )}
-
-      {registrationBlocker ? (
-        <div className="mb-6 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800">
-          <p className="font-semibold">CPCB registration blocked</p>
-          <p className="mt-1">{registrationBlocker}</p>
-        </div>
-      ) : null}
-
-      <form onSubmit={handleFormSubmit} noValidate className="space-y-8">
-        {!registrationComplete && (
-        <div>
-          <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
-            <Building2 size={16} className="text-green-600" />
-            General Information
-            <span className="text-xs font-normal text-slate-400">(Step 2 — CPCB portal fields)</span>
-          </h3>
-
-          <p className="text-xs text-slate-500 mb-4">
-            Company Details — blank fields from CPCB portal. Fill manually if documents are not uploaded.
-          </p>
-
-          <div className="md:col-span-2 mb-6">
-            <h4 className="text-sm font-semibold text-slate-800 mb-3">Extracted Details (Verify/Edit)</h4>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">GSTIN *</label>
-                <input name="gstin" value={autoData.gstin || ''} onChange={(e) => setAutoData(prev => ({...prev, gstin: e.target.value}))} className={lockedInputClass} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Company PAN *</label>
-                <input name="companyPan" value={autoData.companyPan || ''} onChange={(e) => setAutoData(prev => ({...prev, companyPan: e.target.value}))} className={lockedInputClass} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Company Name</label>
-                <input name="companyName" value={autoData.companyName || ''} onChange={(e) => setAutoData(prev => ({...prev, companyName: e.target.value}))} className={lockedInputClass} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Auth Person Name *</label>
-                <input name="authName" value={autoData.authName || ''} onChange={(e) => setAutoData(prev => ({...prev, authName: e.target.value}))} className={lockedInputClass} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Auth Person PAN *</label>
-                <input name="authPan" value={autoData.authPan || ''} onChange={(e) => setAutoData(prev => ({...prev, authPan: e.target.value}))} className={lockedInputClass} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">Auth Person DOB *</label>
-                <input type="date" name="authDob" value={autoData.authDob || ''} onChange={(e) => setAutoData(prev => ({...prev, authDob: e.target.value}))} className={lockedInputClass} required />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">CIN (If Applicable)</label>
-                <input name="cin" value={autoData.cin || ''} onChange={(e) => setAutoData(prev => ({...prev, cin: e.target.value}))} className={`${lockedInputClass} uppercase`} />
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">IEC (If Applicable)</label>
-                <input name="iec" value={autoData.iec || ''} onChange={(e) => setAutoData(prev => ({...prev, iec: e.target.value}))} className={`${lockedInputClass} uppercase`} />
+      <form onSubmit={handleFormSubmit} noValidate className={`space-y-8 ${isPreviewMode ? 'pointer-events-none opacity-90' : ''}`}>
+        <div className="bg-transparent mb-6">
+          <div className="grid grid-cols-1 lg:grid-cols-4 gap-5">
+            <div className="bg-white border border-slate-200/60 rounded-xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-4 flex flex-col justify-center">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">Type of Company *</label>
+              <div className="relative flex items-center">
+                <Building2 size={16} className="absolute left-3 text-slate-400" />
+                <select name="typeOfCompany" value={generalInfo.typeOfCompany} onChange={handleGeneralChange} className={`${modernLockedSelectClass} !pl-9`} required>
+                  <option value="">Select</option>
+                  {TYPE_OF_COMPANY_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                </select>
               </div>
             </div>
+
+            <div className="bg-white border border-slate-200/60 rounded-xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-4 flex flex-col justify-center">
+              <label className="block text-xs font-bold text-slate-700 mb-1.5">Year of Commencement of Operations *</label>
+              <div className="relative flex items-center">
+                <Calendar size={16} className="absolute left-3 text-slate-400" />
+                <select
+                  name="yearOfCommencement"
+                  value={generalInfo.yearOfCommencement || ''}
+                  onChange={async (e) => {
+                    handleGeneralChange(e);
+                    if (window.pwp?.registration?.save) {
+                      const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
+                      const updatedFormData = { ...(savedRegistration?.formData || {}), email, mobile, autoData, generalInfo: newStateObj };
+                      window.pwp.registration.save({ ...(savedRegistration || {}), email, mobile, form_data_json: JSON.stringify(updatedFormData) }).catch(console.error);
+                    }
+                  }}
+                  className={`${modernLockedSelectClass} !pl-9`}
+                  required
+                >
+                  <option value="">Enter year</option>
+                  {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
+                    <option key={year} value={year}>{year}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+
+            {generalInfo.yearOfCommencement && requiresHistoricalEprData(generalInfo.yearOfCommencement) && (
+              <div className="lg:col-span-2 relative overflow-hidden rounded-xl border border-amber-200/80 bg-gradient-to-r from-amber-50 to-orange-50/60 shadow-sm flex items-center p-5 animate-in fade-in slide-in-from-top-2">
+                <div className="absolute right-0 bottom-0 opacity-20 transform translate-x-4 translate-y-4">
+                  <svg width="120" height="120" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1" strokeLinecap="round" strokeLinejoin="round" className="text-amber-500">
+                    <line x1="18" y1="20" x2="18" y2="10"></line><line x1="12" y1="20" x2="12" y2="4"></line><line x1="6" y1="20" x2="6" y2="14"></line>
+                  </svg>
+                </div>
+                <div className="flex gap-4 relative z-10">
+                  <div className="w-10 h-10 rounded-full border border-amber-300 flex items-center justify-center bg-white flex-shrink-0 shadow-sm text-amber-600">
+                    <AlertCircle size={20} />
+                  </div>
+                  <div>
+                    <h4 className="text-sm font-bold text-amber-900 tracking-tight">Historical EPR Data Required</h4>
+                    <p className="text-xs text-amber-800 mt-0.5 max-w-sm">
+                      Since your operations commenced before the current financial year, you must provide Procurement and Sales data.
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Type of Business *</label>
-              <select
-                name="typeOfBusiness"
-                value={generalInfo.typeOfBusiness}
-                onChange={handleGeneralChange}
-                className={lockedSelectClass}
-                
-                required
-              >
-                <option value="">Select</option>
-                {TYPE_OF_BUSINESS_OPTIONS.map((o) => (
-                  <option key={o} value={o}>{o}</option>
-                ))}
-              </select>
+          {generalInfo.yearOfCommencement && requiresHistoricalEprData(generalInfo.yearOfCommencement) && (
+            <div className="mt-5 space-y-4 animate-in fade-in slide-in-from-top-2">
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                {/* Procurement Section */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600"><FileSpreadsheet size={18} /></div>
+                      <h5 className="font-bold text-slate-800 tracking-tight">Procurement Data</h5>
+                    </div>
+                    <button type="button" onClick={() => downloadExcelTemplate('procurement')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 transition-colors">
+                      <Download size={14} /> Template
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 font-medium">Upload monthly/annual procurement details in Excel format</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <div className="relative flex-1">
+                      <input type="file" accept=".xlsx,.xls" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={(e) => handleExcelUpload(e, 'procurement')} disabled={isUploadingExcel} />
+                      <button type="button" disabled={isUploadingExcel} className="w-full inline-flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-slate-700 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50 shadow-sm">
+                        {isUploadingExcel ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                        Upload Excel
+                      </button>
+                    </div>
+                    <button type="button" onClick={() => navigate('/doc-table?tab=procurement')} className="inline-flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm">
+                      <Eye size={16} /> View
+                    </button>
+                  </div>
+                </div>
+
+                {/* Sales Section */}
+                <div className="bg-white p-5 rounded-xl border border-slate-200 shadow-sm flex flex-col gap-4">
+                  <div className="flex items-center justify-between pb-3 border-b border-slate-100">
+                    <div className="flex items-center gap-2">
+                      <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600"><FileSpreadsheet size={18} /></div>
+                      <h5 className="font-bold text-slate-800 tracking-tight">Sales Data</h5>
+                    </div>
+                    <button type="button" onClick={() => downloadExcelTemplate('sale')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 transition-colors">
+                      <Download size={14} /> Template
+                    </button>
+                  </div>
+                  <p className="text-xs text-slate-500 font-medium">Upload monthly/annual sales details in Excel format</p>
+                  <div className="flex items-center gap-3 mt-1">
+                    <div className="relative flex-1">
+                      <input type="file" accept=".xlsx,.xls" className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" onChange={(e) => handleExcelUpload(e, 'sale')} disabled={isUploadingExcel} />
+                      <button type="button" disabled={isUploadingExcel} className="w-full inline-flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-bold text-white bg-slate-700 rounded-lg hover:bg-slate-800 transition-colors disabled:opacity-50 shadow-sm">
+                        {isUploadingExcel ? <Loader2 size={16} className="animate-spin" /> : <Upload size={16} />}
+                        Upload Excel
+                      </button>
+                    </div>
+                    <button type="button" onClick={() => navigate('/doc-table?tab=sale')} className="inline-flex justify-center items-center gap-2 px-4 py-2.5 text-sm font-bold text-slate-700 bg-white border border-slate-200 rounded-lg hover:bg-slate-50 transition-colors shadow-sm">
+                      <Eye size={16} /> View
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="p-3 bg-white border border-amber-200/60 rounded-xl shadow-[0_2px_8px_rgba(0,0,0,0.02)] flex flex-wrap items-center justify-between gap-4">
+                <div className="flex items-center gap-3 pl-2">
+                  <div className="text-amber-500"><FilePlus size={18} /></div>
+                  <span className="text-[11px] font-bold text-amber-700 uppercase tracking-widest">Don't have the Excel filled out?</span>
+                  <span className="text-sm text-slate-500 font-medium hidden md:inline">You can also prepare data using our PDF invoice template.</span>
+                </div>
+                <button type="button" onClick={() => navigate('/doc-upload')} className="inline-flex items-center gap-2 text-sm font-bold text-blue-700 hover:text-blue-900 transition-colors mr-2">
+                  Prepare data using PDF Invoices <ChevronRight size={16} />
+                </button>
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Type of Company *</label>
-              <select
-                name="typeOfCompany"
-                value={generalInfo.typeOfCompany}
-                onChange={handleGeneralChange}
-                className={lockedSelectClass}
-                
-                required
-              >
-                <option value="">Select</option>
-                {TYPE_OF_COMPANY_OPTIONS.map((o) => (
-                  <option key={o} value={o}>{o}</option>
-                ))}
-              </select>
+          )}
+        </div>
+
+        <div className="bg-white border border-slate-200/60 rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-6 mb-6">
+          <div className="flex items-center justify-between mb-4 pb-4 border-b border-slate-100">
+            <div className="flex items-center gap-3">
+              <div className="bg-emerald-100 text-emerald-700 p-2 rounded-xl">
+                <Building2 size={20} strokeWidth={2.5} />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="text-lg font-bold text-slate-800">General Information</h3>
+                <span className="bg-emerald-50 border border-emerald-100 text-emerald-700 text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                  Step 2 — CPCB portal fields
+                </span>
+              </div>
             </div>
-            
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Registered Address Line 1 *</label>
-              <input
-                name="registeredAddressLine1"
-                value={generalInfo.registeredAddressLine1}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="Enter registered address"
-                className={lockedInputClass}
-                
-                
-                required
-              />
-            </div>
-            <div className="md:col-span-2">
-              <label className="block text-sm font-medium text-slate-700 mb-1">Registered Address Line 2</label>
-              <input
-                name="registeredAddressLine2"
-                value={generalInfo.registeredAddressLine2}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="Enter (optional)"
-                className={lockedInputClass}
-              />
-            </div>
-            <div className="md:col-span-2 mt-2">
-              <label className="flex items-center gap-2 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={generalInfo.isSameAsRegisteredAddress}
-                  onChange={(e) => setGeneralInfo(prev => ({ ...prev, isSameAsRegisteredAddress: e.target.checked }))}
-                  className="w-4 h-4 text-blue-600 rounded border-slate-300 focus:ring-blue-500"
-                />
-                <span className="text-sm font-medium text-slate-700">Plant/Unit Address is same as Registered Address</span>
-              </label>
-            </div>
-            
-            {!generalInfo.isSameAsRegisteredAddress && (
-              <>
-                <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Plant/Unit Address *</label>
-                  <input
-                    name="plantAddress"
-                    value={generalInfo.plantAddress}
-                    onChange={handleGeneralChange}
-                    type="text"
-                    placeholder="Enter Plant/Unit Address"
-                    className={inputClass}
-                    required
-                  />
+            <button
+              type="button"
+              onClick={() => setIsGeneralInfoExpanded(!isGeneralInfoExpanded)}
+              className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full shadow-sm transition-colors flex items-center gap-1"
+            >
+              {isGeneralInfoExpanded ? <><span className="hidden md:inline">Collapse</span> <ChevronUp size={14} className="opacity-70" /></> : <><span className="hidden md:inline">View Details</span> <ChevronDown size={14} className="opacity-70" /></>}
+            </button>
+          </div>
+
+          {isGeneralInfoExpanded && (
+            <div className="animate-in fade-in slide-in-from-top-2">
+              <p className="text-xs text-slate-500 mb-6 font-medium">
+                Company Details — Blank fields from CPCB portal. Fill manually if documents are not uploaded.
+              </p>
+
+              <div className="flex items-center gap-3 mb-4">
+                <h4 className="text-sm font-bold text-slate-800">Extracted Details (Verify/Edit)</h4>
+                <div className="flex items-center gap-1.5 bg-emerald-50 text-emerald-700 text-[10px] font-bold px-2 py-1 rounded border border-emerald-100">
+                  <Sparkles size={12} /> Auto-filled from documents
+                </div>
+              </div>
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">GSTIN *</label>
+                  <div className="relative flex items-center">
+                    <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="gstin" value={autoData.gstin || ''} onChange={(e) => setAutoData(prev => ({ ...prev, gstin: e.target.value }))} className={`${modernLockedInputClass} pr-8`} required placeholder="Enter GSTIN" />
+                    {autoData.gstDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.gstDocumentPath} fileName="GST Document" originalFileName={autoData.gstOriginalName} hideText onChangeDocument={() => handleChangeDocument('gst')} />
+                      </div>
+                    )}
+                  </div>
                 </div>
                 <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Unit GST Number *</label>
-                  <input
-                    name="unitGst"
-                    value={generalInfo.unitGst}
-                    onChange={handleGeneralChange}
-                    type="text"
-                    placeholder="Enter Unit GST"
-                    className={`${inputClass} uppercase`}
-                    required
-                  />
-                  {autoData.unitGstDoc ? (
-                    <UploadedFilePreview
-                      filePath={autoData.unitGstDoc}
-                      prefix="Certificate from documents"
-                      suffix="— uploaded automatically in Part A"
-                    />
-                  ) : null}
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Company PAN *</label>
+                  <div className="relative flex items-center">
+                    <IdCard size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="companyPan" value={autoData.companyPan || ''} onChange={(e) => setAutoData(prev => ({ ...prev, companyPan: e.target.value }))} className={`${modernLockedInputClass} pr-8`} required placeholder="Enter Company PAN" />
+                    {autoData.companyPanDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.companyPanDocumentPath} fileName="Company PAN" originalFileName={autoData.companyPanOriginalName} hideText onChangeDocument={() => handleChangeDocument('company_pan')} />
+                      </div>
+                    )}
+                  </div>
                 </div>
-                {/* Already captured by the document extractor — no manual upload needed. */}
-                {!autoData.unitGstDoc && (
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Company Name</label>
+                  <div className="relative flex items-center">
+                    <Building2 size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="companyName" value={autoData.companyName || ''} onChange={(e) => setAutoData(prev => ({ ...prev, companyName: e.target.value }))} className={modernLockedInputClass} placeholder="Enter Company Name" />
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person Name *</label>
+                  <div className="relative flex items-center">
+                    <User size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="authName" value={autoData.authName || ''} onChange={(e) => setAutoData(prev => ({ ...prev, authName: e.target.value }))} className={`${modernLockedInputClass} pr-8`} required placeholder="Enter Authorized Person Name" />
+                    {autoData.personPanDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.personPanDocumentPath} fileName="Person PAN" originalFileName={autoData.personPanOriginalName} hideText onChangeDocument={() => handleChangeDocument('person_pan')} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person PAN *</label>
+                  <div className="relative flex items-center">
+                    <IdCard size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="authPan" value={autoData.authPan || ''} onChange={(e) => setAutoData(prev => ({ ...prev, authPan: e.target.value }))} className={`${modernLockedInputClass} pr-8`} required placeholder="Enter Auth Person PAN" />
+                    {autoData.personPanDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.personPanDocumentPath} fileName="Person PAN" originalFileName={autoData.personPanOriginalName} hideText onChangeDocument={() => handleChangeDocument('person_pan')} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person DOB *</label>
+                  <div className="relative flex items-center">
+                    <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                    <input type="date" name="authDob" value={autoData.authDob || ''} onChange={(e) => setAutoData(prev => ({ ...prev, authDob: e.target.value }))} className={`${modernLockedInputClass} pr-8`} required />
+                    <Calendar size={16} className="absolute right-3 text-slate-400 pointer-events-none" />
+                    {autoData.personPanDocumentPath && (
+                      <div className="absolute right-8 flex items-center">
+                        <LocalFilePreview filePath={autoData.personPanDocumentPath} fileName="Person PAN" originalFileName={autoData.personPanOriginalName} hideText onChangeDocument={() => handleChangeDocument('person_pan')} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">CIN (If Applicable)</label>
+                  <div className="relative flex items-center">
+                    <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="cin" value={autoData.cin || ''} onChange={(e) => setAutoData(prev => ({ ...prev, cin: e.target.value }))} className={`${modernLockedInputClass} uppercase pr-8`} placeholder="Enter CIN Number" />
+                    {autoData.cinDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.cinDocumentPath} fileName="CIN Document" originalFileName={autoData.cinOriginalName} hideText onChangeDocument={() => handleChangeDocument('cin')} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">IEC (If Applicable)</label>
+                  <div className="relative flex items-center">
+                    <IdCard size={16} className="absolute left-3.5 text-slate-400" />
+                    <input name="iec" value={autoData.iec || ''} onChange={(e) => setAutoData(prev => ({ ...prev, iec: e.target.value }))} className={`${modernLockedInputClass} uppercase pr-8`} placeholder="Enter IEC Number" />
+                    {autoData.iecDocumentPath && (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.iecDocumentPath} fileName="IEC" originalFileName={autoData.iecOriginalName} hideText onChangeDocument={() => handleChangeDocument('iec')} />
+                      </div>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Details of Products</label>
+                  <div className="relative flex items-center">
+                    <FileText size={16} className="absolute left-3.5 text-slate-400" />
+                    <input value={autoData.detailsOfProductsPath ? getFileName(autoData.detailsOfProductsPath) : ''} placeholder="Please upload Details of Products" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                    {autoData.detailsOfProductsPath ? (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.detailsOfProductsPath} fileName="Details of Products" originalFileName={autoData.detailsOfProductsOriginalName} hideText onChangeDocument={() => triggerSimpleUpload('detailsOfProductsPath', 'autoData')} />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => triggerSimpleUpload('detailsOfProductsPath', 'autoData')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-sm">
+                        <Upload size={14} /> Upload
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plastic Packaging Picture</label>
+                  <div className="relative flex items-center">
+                    <ImageIcon size={16} className="absolute left-3.5 text-slate-400" />
+                    <input value={autoData.representativePicturePath ? getFileName(autoData.representativePicturePath) : ''} placeholder="Please upload Plastic Packaging Picture" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                    {autoData.representativePicturePath ? (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={autoData.representativePicturePath} fileName="Plastic Packaging Picture" originalFileName={autoData.representativePictureOriginalName} hideText onChangeDocument={() => triggerSimpleUpload('representativePicturePath', 'autoData')} />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => triggerSimpleUpload('representativePicturePath', 'autoData')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-sm">
+                        <Upload size={14} /> Upload
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Covering letter</label>
+                  <div className="relative flex items-center">
+                    <FileText size={16} className="absolute left-3.5 text-slate-400" />
+                    <input value={generalInfo.partCCoveringLetter ? getFileName(generalInfo.partCCoveringLetter) : ''} placeholder="Please upload Covering Letter" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                    {generalInfo.partCCoveringLetter ? (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={generalInfo.partCCoveringLetter} fileName="Covering Letter" hideText onChangeDocument={() => triggerSimpleUpload('partCCoveringLetter', 'generalInfo')} />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => handlePrepareLetter('coveringLetter')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors shadow-sm">
+                        <Sparkles size={14} /> Prepare
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Self Declaration</label>
+                  <div className="relative flex items-center">
+                    <FileText size={16} className="absolute left-3.5 text-slate-400" />
+                    <input value={generalInfo.partCAuditedStatement ? getFileName(generalInfo.partCAuditedStatement) : ''} placeholder="Please upload Self Declaration" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                    {generalInfo.partCAuditedStatement ? (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={generalInfo.partCAuditedStatement} fileName="Self Declaration" hideText onChangeDocument={() => triggerSimpleUpload('partCAuditedStatement', 'generalInfo')} />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => handlePrepareLetter('selfDeclaration')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors shadow-sm">
+                        <Sparkles size={14} /> Prepare
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-sm font-semibold text-slate-700 mb-1.5">Signature</label>
+                  <div className="relative flex items-center">
+                    <PenTool size={16} className="absolute left-3.5 text-slate-400" />
+                    <input value={generalInfo.partCSignature ? getFileName(generalInfo.partCSignature) : ''} placeholder="Please upload Signature" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                    {generalInfo.partCSignature ? (
+                      <div className="absolute right-2 flex items-center">
+                        <LocalFilePreview filePath={generalInfo.partCSignature} fileName="Signature" hideText onChangeDocument={() => triggerSimpleUpload('partCSignature', 'generalInfo')} />
+                      </div>
+                    ) : (
+                      <button type="button" onClick={() => triggerSimpleUpload('partCSignature', 'generalInfo')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-sm">
+                        <Upload size={14} /> Upload
+                      </button>
+                    )}
+                  </div>
+                </div>
+                {generalInfo.typeOfCompany === 'Large' && (
                   <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Upload Unit GST Certificate *</label>
-                    <input
-                      type="file"
-                      accept=".pdf,.png,.jpg,.jpeg"
-                      onChange={async (e) => {
-                        const file = e.target.files[0];
-                        if (file) await persistPartCFile(file, 'unitGstDoc');
-                      }}
-                      className={inputClass}
-                      required
-                    />
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Declaration of Large Entity</label>
+                    <div className="relative flex items-center">
+                      <FileText size={16} className="absolute left-3.5 text-slate-400" />
+                      <input value={autoData.typeOfCompanyDoc ? getFileName(autoData.typeOfCompanyDoc) : ''} placeholder="Please upload Declaration" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                      {autoData.typeOfCompanyDoc ? (
+                        <div className="absolute right-2 flex items-center">
+                          <LocalFilePreview filePath={autoData.typeOfCompanyDoc} fileName="Declaration of Large Entity" hideText onChangeDocument={() => triggerSimpleUpload('typeOfCompanyDoc', 'autoData')} />
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => handlePrepareLetter('largeEntity')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-blue-700 bg-blue-50 border border-blue-200 hover:bg-blue-100 transition-colors shadow-sm">
+                          <Sparkles size={14} /> Prepare
+                        </button>
+                      )}
+                    </div>
                   </div>
                 )}
-              </>
-            )}
-            <div className="md:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">State/UT *</label>
-              <select
-                name="stateUt"
-                value={generalInfo.stateUt}
-                onChange={handleGeneralChange}
-                className={lockedSelectClass}
-                
-                required
-              >
-                <option value="">Select</option>
-                {INDIAN_STATES.map((s) => (
-                  <option key={s} value={s}>{s}</option>
-                ))}
-              </select>
+                {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany) && (
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">MSME Certificate</label>
+                    <div className="relative flex items-center">
+                      <ImageIcon size={16} className="absolute left-3.5 text-slate-400" />
+                      <input value={autoData.typeOfCompanyDoc ? getFileName(autoData.typeOfCompanyDoc) : ''} placeholder="Please upload MSME Certificate" disabled className={`${modernLockedInputClass} text-slate-500 pr-24 truncate`} />
+                      {autoData.typeOfCompanyDoc ? (
+                        <div className="absolute right-2 flex items-center">
+                          <LocalFilePreview filePath={autoData.typeOfCompanyDoc} fileName="MSME Certificate" hideText onChangeDocument={() => triggerSimpleUpload('typeOfCompanyDoc', 'autoData')} />
+                        </div>
+                      ) : (
+                        <button type="button" onClick={() => triggerSimpleUpload('typeOfCompanyDoc', 'autoData')} className="absolute right-2 px-2.5 py-1 flex items-center gap-1.5 rounded-md text-[11px] font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 transition-colors shadow-sm">
+                          <Upload size={14} /> Upload
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                )}
+              </div>
             </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
-              <input
-                name="district"
-                value={generalInfo.district || ''}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="Enter district"
-                className={lockedInputClass}
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Designation *</label>
-              <input
-                name="authDesignation"
-                value={generalInfo.authDesignation}
-                onChange={handleGeneralChange}
-                type="text"
-                placeholder="e.g. Director, Manager"
-                className={lockedInputClass}
-                required
-              />
-            </div>
-            </div>
-          </div>
+          )}
         </div>
-        )}
 
-        {registrationComplete && wizardStep === 'partA' && (
-          <div className="space-y-6">
-            <div>
-              <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part A: General Information</h3>
-              <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
+        <div className="bg-white border border-slate-200/60 rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-6 mb-6">
+          <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-indigo-100 text-indigo-700 p-2 rounded-xl">
+                <Briefcase size={20} strokeWidth={2.5} />
+              </div>
+              <h3 className="text-lg font-bold text-slate-800">Business Details</h3>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsBusinessDetailsExpanded(!isBusinessDetailsExpanded)}
+              className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full shadow-sm transition-colors flex items-center gap-1"
+            >
+              {isBusinessDetailsExpanded ? <><span className="hidden md:inline">Collapse</span> <ChevronUp size={14} className="opacity-70" /></> : <><span className="hidden md:inline">View Details</span> <ChevronDown size={14} className="opacity-70" /></>}
+            </button>
+          </div>
+
+          {isBusinessDetailsExpanded && (
+            <div className="animate-in fade-in slide-in-from-top-2 grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Type of Business *</label>
+                <div className="relative flex items-center">
+                  <select name="typeOfBusiness" value={generalInfo.typeOfBusiness} onChange={handleGeneralChange} className={modernLockedSelectClass} required>
+                    <option value="">Select</option>
+                    {TYPE_OF_BUSINESS_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Designation *</label>
+                <div className="relative flex items-center">
+                  <User size={16} className="absolute left-3.5 text-slate-400" />
+                  <input name="authDesignation" value={generalInfo.authDesignation} onChange={handleGeneralChange} type="text" placeholder="e.g. Director, Manager" className={modernLockedInputClass} required />
+                </div>
+              </div>
+
+              <div className="md:col-span-2">
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Registered Address Line 1 *</label>
+                <div className="relative flex items-center">
+                  <MapPin size={16} className="absolute left-3.5 text-slate-400" />
+                  <input name="registeredAddressLine1" value={generalInfo.registeredAddressLine1} onChange={handleGeneralChange} type="text" placeholder="Enter registered address" className={`${modernLockedInputClass} pr-8`} required />
+                  {autoData.gstDocumentPath && (
+                    <div className="absolute right-2 flex items-center">
+                      <LocalFilePreview filePath={autoData.gstDocumentPath} fileName="GST Document" originalFileName={autoData.gstOriginalName} hideText onChangeDocument={() => handleChangeDocument('gst')} />
+                    </div>
+                  )}
+                </div>
+              </div>
+              <div className="md:col-span-2">
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Registered Address Line 2</label>
+                <div className="relative flex items-center">
+                  <MapPin size={16} className="absolute left-3.5 text-slate-400" />
+                  <input name="registeredAddressLine2" value={generalInfo.registeredAddressLine2} onChange={handleGeneralChange} type="text" placeholder="Enter (optional)" className={modernLockedInputClass} />
+                </div>
+              </div>
+
+              <div className="md:col-span-2 mt-1">
+                <label className="flex items-center gap-2.5 cursor-pointer p-3 bg-slate-50/50 border border-slate-200/60 rounded-xl hover:bg-slate-50 transition-colors">
+                  <input type="checkbox" checked={generalInfo.isSameAsRegisteredAddress} onChange={(e) => setGeneralInfo(prev => ({ ...prev, isSameAsRegisteredAddress: e.target.checked }))} className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500" />
+                  <span className="text-sm font-semibold text-slate-700">Plant/Unit Address is same as Registered Address</span>
+                </label>
+              </div>
+
+              {!generalInfo.isSameAsRegisteredAddress && (
+                <>
+                  <div className="md:col-span-2">
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plant/Unit Address *</label>
+                    <div className="relative flex items-center">
+                      <MapPin size={16} className="absolute left-3.5 text-slate-400" />
+                      <input name="plantAddress" value={generalInfo.plantAddress} onChange={handleGeneralChange} type="text" placeholder="Enter Plant/Unit Address" className={`${modernInputClass} pr-8`} required />
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Unit GST Number *</label>
+                    <div className="relative flex items-center">
+                      <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                      <input name="unitGst" value={generalInfo.unitGst} onChange={handleGeneralChange} type="text" placeholder="Enter Unit GST" className={`${modernInputClass} uppercase pr-8`} required />
+                      {autoData.unitGstDoc && (
+                        <div className="absolute right-2 flex items-center">
+                          <LocalFilePreview filePath={autoData.unitGstDoc} fileName="Unit GST Document" originalFileName={autoData.unitGstOriginalName} hideText onChangeDocument={() => handleChangeDocument('unit_gst')} />
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                  {!autoData.unitGstDoc && (
+                    <div>
+                      <label className="block text-sm font-semibold text-slate-700 mb-1.5">Upload Unit GST Certificate *</label>
+                      <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={async (e) => { const file = e.target.files[0]; if (file) await persistPartCFile(file, 'unitGstDoc'); }} className="w-full px-4 py-2 border border-slate-200 rounded-xl" required />
+                    </div>
+                  )}
+                </>
+              )}
+
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">State/UT *</label>
+                <div className="relative flex items-center">
+                  <select name="stateUt" value={generalInfo.stateUt} onChange={handleGeneralChange} className={modernLockedSelectClass} required>
+                    <option value="">Select</option>
+                    {INDIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">District *</label>
+                <div className="relative flex items-center">
+                  <MapPin size={16} className="absolute left-3.5 text-slate-400" />
+                  <input name="district" value={generalInfo.district || ''} onChange={handleGeneralChange} type="text" placeholder="Enter district" className={modernLockedInputClass} required />
+                </div>
+              </div>
+
+
+              <div className="md:col-span-2 mt-4 pt-4 border-t border-slate-100">
+                <p className="text-xs text-slate-500 font-medium mb-4">Authorised Person Details & Set Password</p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password *</label>
+                    <div className="relative flex items-center">
+                      <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                      <input name="password" value={generalInfo.password} onChange={handleGeneralChange} type={showPassword ? 'text' : 'password'} placeholder="Enter Password (min 8 chars)" className={`${modernLockedInputClass} pr-10`} required minLength={8} autoComplete="new-password" />
+                      <button type="button" onClick={() => setShowPassword((v) => !v)} className="absolute right-3 text-slate-400 hover:text-slate-600">
+                        {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </div>
+                  <div>
+                    <label className="block text-sm font-semibold text-slate-700 mb-1.5">Confirm Password *</label>
+                    <div className="relative flex items-center">
+                      <Lock size={16} className="absolute left-3.5 text-slate-400" />
+                      <input name="confirmPassword" value={generalInfo.confirmPassword} onChange={handleGeneralChange} type={showConfirmPassword ? 'text' : 'password'} placeholder="Confirm Password" className={`${modernLockedInputClass} pr-10`} required minLength={8} autoComplete="new-password" />
+                      <button type="button" onClick={() => setShowConfirmPassword((v) => !v)} className="absolute right-3 text-slate-400 hover:text-slate-600">
+                        {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="bg-white border border-slate-200/60 rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-6 mb-6">
+          <div className="flex items-center justify-between mb-5 border-b border-slate-100 pb-4">
+            <div className="flex items-center gap-3">
+              <div className="bg-blue-100 text-blue-700 p-2 rounded-xl">
+                <User size={20} strokeWidth={2.5} />
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <h3 className="text-lg font-bold text-slate-800">Contact Details</h3>
+                <span className="bg-blue-50 border border-blue-100 text-blue-700 text-[11px] font-semibold px-2.5 py-1 rounded-full">
+                  Step 1 — User Verification
+                </span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => setIsDirectorsDetailsExpanded(!isDirectorsDetailsExpanded)}
+              className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full shadow-sm transition-colors flex items-center gap-1"
+            >
+              {isDirectorsDetailsExpanded ? <><span className="hidden md:inline">Collapse</span> <ChevronUp size={14} className="opacity-70" /></> : <><span className="hidden md:inline">View Details</span> <ChevronDown size={14} className="opacity-70" /></>}
+            </button>
+          </div>
+          {isDirectorsDetailsExpanded && (
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5 animate-in fade-in slide-in-from-top-2">
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address *</label>
+                <div className="relative flex items-center">
+                  <Mail size={16} className="absolute left-3.5 text-slate-400" />
+                  <input value={email} onChange={(e) => setEmail(e.target.value)} type="email" placeholder="Enter Email Address" className={modernLockedInputClass} required />
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-semibold text-slate-700 mb-1.5">Mobile Number *</label>
+                <div className="relative flex items-center">
+                  <Phone size={16} className="absolute left-3.5 text-slate-400" />
+                  <input value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" placeholder="Enter Mobile Number" className={modernLockedInputClass} required />
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+
+        <div className="space-y-6">
+          <div>
+            <div className="flex justify-between items-center border-b pb-2 mb-4">
+              <h3 className="text-lg font-bold text-slate-800">Part A: General Information</h3>
+              <button
+                type="button"
+                onClick={() => setIsOperationsDetailsExpanded(!isOperationsDetailsExpanded)}
+                className="text-[11px] font-bold text-slate-700 bg-white hover:bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-full shadow-sm transition-colors flex items-center gap-1"
+              >
+                {isOperationsDetailsExpanded ? <><span className="hidden md:inline">Collapse</span> <ChevronUp size={14} className="opacity-70" /></> : <><span className="hidden md:inline">View Details</span> <ChevronDown size={14} className="opacity-70" /></>}
+              </button>
+            </div>
+            {isOperationsDetailsExpanded && (
+              <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6 animate-in fade-in slide-in-from-top-2">
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <RegistrationPartACompanyProfile
-                    generalInfo={generalInfo}
-                    onChange={handleGeneralChange}
-                    autoData={autoData}
-                    onTypeOfCompanyDocSelect={(file) => persistPartCFile(file, 'typeOfCompanyDoc')}
-                    inputClass={inputClass}
-                    selectClass={inputClass}
-                  />
+
                   <div className="md:col-span-2">
                     <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
                     <OperatingStatesMultiSelect
@@ -1890,65 +2489,8 @@ export default function CpcbRegistrationPage() {
                       className={inputClass}
                     />
                   </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Year of Commencement of Operations *</label>
-                    <select
-                      name="yearOfCommencement"
-                      value={generalInfo.yearOfCommencement || ''}
-                      onChange={async (e) => {
-                        handleGeneralChange(e);
-                        // Auto-save logic
-                        if (window.pwp?.registration?.save) {
-                          const newStateObj = { ...generalInfo, yearOfCommencement: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
-                            email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
-                    >
-                      <option value="">Enter year</option>
-                      {Array.from({ length: new Date().getFullYear() - 1890 + 1 }, (_, i) => new Date().getFullYear() - i).map((year) => (
-                        <option key={year} value={year}>{year}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">District *</label>
-                    <input
-                      name="district"
-                      value={generalInfo.district || ''}
-                      onChange={handleGeneralChange}
-                      type="text"
-                      placeholder="Enter district"
-                      className={lockedInputClass}
-                      required
-                    />
-                  </div>
-                  
-                  <ImporterEprPreparedReview
-                    detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
-                    representativePicturePath={autoData.representativePicturePath || ''}
-                    yearOfCommencement={generalInfo.yearOfCommencement || ''}
-                    plasticConsumed={
-                      generalInfo.plasticConsumed || Object.fromEntries(
-                        reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
-                      )
-                    }
-                    reportingYears={reportingFys}
-                    onPdfUpload={handlePartAPdfUpload}
-                    uploadingPdfField={uploadingPdfField}
-                    onPlasticConsumedChange={handlePlasticConsumedChange}
-                    plasticConsumedSource={plasticConsumedSource}
-                  />
 
-                  <div className="md:col-span-2">
+                  <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
                     <select
                       name="complianceStatus"
@@ -1967,185 +2509,43 @@ export default function CpcbRegistrationPage() {
                     )}
                   </div>
 
-            <div className="mt-4">
-              <label className="block text-sm font-medium text-slate-700 mb-1">
-                3e) Thickness of Plastic Packaging (In Microns) *
-              </label>
-              <input
-                type="text"
-                name="thicknessOfPlastic"
-                value={generalInfo.thicknessOfPlastic || ''}
-                onChange={handleGeneralChange}
-                placeholder="Enter thickness"
-                className={inputClass}
-                required
-              />
-              <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
-                <strong>Approved Minimum Thickness:</strong>
-                <ul className="list-disc pl-4 mt-1 space-y-0.5">
-                  <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
-                  <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
-                  <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
-                </ul>
+                  <div>
+                    <label className="block text-sm font-medium text-slate-700 mb-1">
+                      3e) Thickness of Plastic Packaging (In Microns) *
+                    </label>
+                    <input
+                      type="text"
+                      name="thicknessOfPlastic"
+                      value={generalInfo.thicknessOfPlastic || ''}
+                      onChange={handleGeneralChange}
+                      placeholder="Enter thickness"
+                      className={inputClass}
+                      required
+                    />
+                    <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
+                      <strong>Approved Minimum Thickness:</strong>
+                      <ul className="list-disc pl-4 mt-1 space-y-0.5">
+                        <li><strong>Cat-II (Plastic carry bag):</strong> Minimum 120 Micron</li>
+                        <li><strong>Cat-II (Plastic sheet/cover):</strong> Minimum 50 Micron</li>
+                        <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
               </div>
-            </div>
-          </div>
-        </div>
-        </div>
-        </div>
-        )}
-
-        {registrationComplete && wizardStep === 'partB' && (
-          <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} />
-        )}
-
-        {registrationComplete && wizardStep === 'partC' && (
-        <div className="space-y-6">
-          <div>
-            <h3 className="text-lg font-bold text-slate-800 border-b pb-2 mb-4">Part C: Document Uploads</h3>
-            <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6">
-              <div>
-                <label className="block text-sm font-medium text-slate-700 mb-1">
-                  {['Micro', 'Small', 'Medium'].includes(generalInfo.typeOfCompany)
-                    ? 'Type of Company Document — MSME Certificate (PDF) *'
-                    : 'Type of Company Document — Large Entity Declaration (PDF) *'}
-                </label>
-                <input
-                  type="file"
-                  accept=".pdf"
-                  onChange={async (e) => {
-                    const file = e.target.files[0];
-                    if (file) await persistPartCFile(file, 'typeOfCompanyDoc');
-                  }}
-                  className={inputClass}
-                />
-                {autoData.typeOfCompanyDoc && (
-                  <UploadedFilePreview filePath={autoData.typeOfCompanyDoc} />
-                )}
-              </div>
-            </div>
-          </div>
-
-          <RegistrationPartC
-            generalInfo={generalInfo}
-            setGeneralInfo={setGeneralInfo}
-            autoData={autoData}
-            setAutoData={setAutoData}
-            email={email}
-            mobile={mobile}
-            showToast={showToast}
-          />
-        </div>
-        )}
-
-        {!registrationComplete && (
-        <>
-        <div className="mt-8">
-          <p className="text-xs text-slate-500 mt-6 mb-4">
-            Authorized Person Details &amp; Set Password
-          </p>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Password *</label>
-              <div className="relative">
-                <input
-                  name="password"
-                  value={generalInfo.password}
-                  onChange={handleGeneralChange}
-                  type={showPassword ? 'text' : 'password'}
-                  placeholder="Enter Password (min 8 chars)"
-                  className={`${lockedInputClass} pr-10`}
-                  
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  tabIndex={-1}
-                  aria-label={showPassword ? 'Hide password' : 'Show password'}
-                >
-                  {showPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Confirm Password *</label>
-              <div className="relative">
-                <input
-                  name="confirmPassword"
-                  value={generalInfo.confirmPassword}
-                  onChange={handleGeneralChange}
-                  type={showConfirmPassword ? 'text' : 'password'}
-                  placeholder="Confirm Password"
-                  className={`${lockedInputClass} pr-10`}
-                  
-                  required
-                  minLength={8}
-                  autoComplete="new-password"
-                />
-                <button
-                  type="button"
-                  onClick={() => setShowConfirmPassword((v) => !v)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-                  tabIndex={-1}
-                  aria-label={showConfirmPassword ? 'Hide confirm password' : 'Show confirm password'}
-                >
-                  {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
-                </button>
-              </div>
-            </div>
+            )}
           </div>
         </div>
 
-        <div>
-          <h3 className="text-md font-medium text-slate-800 mb-1 flex items-center gap-2">
-            <Mail size={16} className="text-green-600" />
-            Contact Details
-            <span className="text-xs font-normal text-slate-400">(Step 1 — User Verification)</span>
-          </h3>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Email Address *</label>
-              <input
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                type="email"
-                placeholder="Enter Email Address"
-                className={lockedInputClass}
-                
-                
-                required
-              />
-            </div>
-            <div>
-              <label className="block text-sm font-medium text-slate-700 mb-1">Mobile Number *</label>
-              <input
-                value={mobile}
-                onChange={(e) => setMobile(e.target.value)}
-                type="tel"
-                placeholder="Enter Mobile Number"
-                className={lockedInputClass}
-                
-                
-                required
-              />
-            </div>
-          </div>
-        </div>
-        </>
-        )}
+
+
 
         {!registrationComplete && (
           <div
-            className={`rounded-xl border px-4 py-3 ${
-              startRegistrationBlockers.length === 0
-                ? 'border-green-200 bg-green-50'
-                : 'border-amber-200 bg-amber-50'
-            }`}
+            className={`rounded-xl border px-4 py-3 ${startRegistrationBlockers.length === 0
+              ? 'border-green-200 bg-green-50'
+              : 'border-amber-200 bg-amber-50'
+              }`}
           >
             <div className="flex items-start gap-2">
               {startRegistrationBlockers.length === 0 ? (
@@ -2153,39 +2553,73 @@ export default function CpcbRegistrationPage() {
               ) : (
                 <AlertCircle size={18} className="text-amber-600 shrink-0 mt-0.5" />
               )}
-              <div className="min-w-0">
+              <div className="min-w-0 w-full">
                 <p className={`text-sm font-semibold ${startRegistrationBlockers.length === 0 ? 'text-green-800' : 'text-amber-900'}`}>
                   {startRegistrationBlockers.length === 0
                     ? 'Ready — you can start CPCB registration'
                     : `Complete ${startRegistrationBlockers.length} item${startRegistrationBlockers.length === 1 ? '' : 's'} to enable Start Registration`}
                 </p>
-                {startRegistrationBlockers.length > 0 && (
-                  <ul className="mt-2 space-y-1">
-                    {startRegistrationBlockers.map((item) => (
-                      <li key={item.id} className="text-xs text-amber-900 flex items-start gap-1.5">
-                        <span className="text-amber-500 mt-0.5">•</span>
-                        <span>{item.label}</span>
-                      </li>
+                {registrationChecklist.length > 0 && (
+                  <div className="mt-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-x-4 gap-y-2">
+                    {registrationChecklist.map((item) => (
+                      <div key={item.id} className="text-xs text-amber-900 flex items-start gap-2">
+                        {item.fulfilled ? (
+                          <svg className="w-3.5 h-3.5 text-emerald-500 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="20 6 9 17 4 12"></polyline>
+                          </svg>
+                        ) : (
+                          <span className="text-amber-500 mt-0.5 leading-none shrink-0" style={{ fontSize: '14px' }}>•</span>
+                        )}
+                        <span className="leading-tight">{item.label}</span>
+                      </div>
                     ))}
-                  </ul>
+                  </div>
                 )}
               </div>
             </div>
           </div>
         )}
 
-        <div className="pt-4 border-t border-slate-100 flex justify-between gap-3">
-          {registrationComplete && wizardStep !== 'partA' ? (
-            <button
-              type="button"
-              onClick={() => setWizardStep(wizardStep === 'partC' ? 'partB' : 'partA')}
-              disabled={loading}
-              className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-            >
-              <ChevronLeft size={16} />
-              Back
-            </button>
-          ) : (
+        <RegistrationPreviewModal
+          show={isPreviewMode}
+          onClose={() => setIsPreviewMode(false)}
+          onConfirm={registrationComplete ? handleNewApplication : handleStartRegistration}
+          isRegistrationComplete={registrationComplete}
+          autoData={autoData}
+          generalInfo={generalInfo}
+        >
+          <RegistrationPreviewSummary
+            generalInfo={generalInfo}
+            autoData={autoData}
+            email={email}
+            mobile={mobile}
+          />
+
+          <div className="pointer-events-auto">
+            <ImporterEprPreparedReview
+              detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
+              representativePicturePath={autoData.representativePicturePath || ''}
+              yearOfCommencement={generalInfo.yearOfCommencement || ''}
+              plasticConsumed={
+                generalInfo.plasticConsumed || Object.fromEntries(
+                  reportingFys.map((fy) => [fy, { cat1: '0', cat2: '0', cat3: '0', cat4: '0' }]),
+                )
+              }
+              reportingYears={reportingFys}
+              onPdfUpload={handlePartAPdfUpload}
+              uploadingPdfField={uploadingPdfField}
+              onPlasticConsumedChange={handlePlasticConsumedChange}
+              plasticConsumedSource={plasticConsumedSource}
+            />
+          </div>
+
+          <div className="pointer-events-auto">
+            <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} isPreview={true} />
+          </div>
+        </RegistrationPreviewModal>
+
+        {!isPreviewMode && (
+          <div className="pt-4 border-t border-slate-100 flex justify-between gap-3 pointer-events-auto mt-6">
             <button
               type="button"
               onClick={() => navigate(-1)}
@@ -2194,58 +2628,25 @@ export default function CpcbRegistrationPage() {
             >
               Cancel
             </button>
-          )}
 
-          {!registrationComplete ? (
             <button
               type="button"
-              onClick={handleStartRegistration}
-              disabled={
-                startRegistrationBlockers.length > 0
-                || (showAutomationModal && automationPhase !== 'error')
-              }
-              title={
-                startRegistrationBlockers.length > 0
-                  ? `Complete ${startRegistrationBlockers.length} pending item(s) above`
-                  : 'Start CPCB account registration'
-              }
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+              onClick={handlePreviewRegistration}
+              // disabled={
+              //   loading ||
+              //   (showAutomationModal && automationPhase !== 'error') ||
+              //   (!registrationComplete && startRegistrationBlockers.length > 0)
+              // }
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-emerald-600 rounded-lg hover:bg-emerald-700 shadow-sm disabled:opacity-50"
             >
-              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-              Start Registration
+              <Eye size={16} />
+              {registrationComplete ? 'Preview Application' : 'Preview Registration'}
             </button>
-          ) : wizardStep !== 'partC' ? (
-            <button
-              type="button"
-              onClick={handleSaveAndNext}
-              disabled={loading}
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-            >
-              Save & Next
-              <ChevronRight size={16} />
-            </button>
-          ) : (
-            <button
-              type="button"
-              onClick={handleNewApplication}
-              disabled={
-                loading
-                || loginCaptchaSubmitting
-                || loginOtpSubmitting
-                || (showAutomationModal && automationPhase !== 'error')
-              }
-              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
-            >
-              {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                <Loader2 size={16} className="animate-spin" />
-              ) : (
-                <FilePlus size={16} />
-              )}
-              Register
-            </button>
-          )}
-        </div>
+          </div>
+        )}
       </form>
+
+
 
       {loading && !showAutomationModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && (
         <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
@@ -2588,9 +2989,9 @@ export default function CpcbRegistrationPage() {
             <div className="px-6 py-4 bg-slate-50 border-t flex justify-between items-center">
               <div className="text-sm text-slate-500 flex items-center gap-2">
                 {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                   <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
+                  <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
                 ) : (
-                   <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
+                  <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
                 )}
               </div>
               <button
@@ -2605,6 +3006,32 @@ export default function CpcbRegistrationPage() {
           </div>
         </div>
       )}
+
+      {studioOpen && (
+        <LetterStudioModal
+          open={studioOpen}
+          onClose={() => setStudioOpen(false)}
+          initialId={studioLetterId}
+          letters={applicableLetters}
+          values={buildLetterValues(sourceRecords)}
+          missing={missingFields}
+          attached={{
+            coveringLetter: generalInfo.partCCoveringLetter,
+            selfDeclaration: generalInfo.partCAuditedStatement,
+            largeEntity: autoData?.typeOfCompanyDoc,
+          }}
+          onAttachPdf={handleAttachFromStudio}
+          onNotify={showToast}
+        />
+      )}
+
+      <input
+        type="file"
+        accept=".pdf"
+        ref={simpleFileInputRef}
+        style={{ display: 'none' }}
+        onChange={handleSimpleFileSelected}
+      />
     </div>
   );
 }

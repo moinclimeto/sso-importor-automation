@@ -7,6 +7,7 @@ import {
   logoutClimeto,
   restoreClimetoSession,
 } from './authService.js';
+import { setTelemetryUser, trackTelemetry } from './telemetry/telemetry.js';
 
 let authHandlersRegistered = false;
 
@@ -17,7 +18,12 @@ export function registerAuthHandlers() {
   ipcMain.handle('auth:login', async (_, payload = {}) => {
     try {
       const db = getDb();
-      return await loginClimeto(db, payload);
+      const result = await loginClimeto(db, payload);
+      if (result?.success && result?.user) {
+        setTelemetryUser(result.user);
+        trackTelemetry('user_login', { userId: result.user.id, email: result.user.email }).catch(() => {});
+      }
+      return result;
     } catch (err) {
       console.error('auth:login error', err);
       return { success: false, error: err.message || 'Login failed.' };
@@ -27,6 +33,8 @@ export function registerAuthHandlers() {
   ipcMain.handle('auth:logout', async () => {
     try {
       const db = getDb();
+      trackTelemetry('user_logout').catch(() => {});
+      setTelemetryUser(null);
       return await logoutClimeto(db);
     } catch (err) {
       console.error('auth:logout error', err);
@@ -55,7 +63,11 @@ export function registerAuthHandlers() {
   });
 
   try {
-    restoreClimetoSession(getDb()).catch((err) => {
+    restoreClimetoSession(getDb()).then((session) => {
+      if (session?.success && session?.user) {
+        setTelemetryUser(session.user);
+      }
+    }).catch((err) => {
       console.warn('Failed to restore Climeto session on startup', err.message);
     });
   } catch (err) {

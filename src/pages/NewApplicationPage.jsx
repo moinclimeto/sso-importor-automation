@@ -60,7 +60,7 @@ import { getImporterReportingFinancialYears } from '../../shared/financialYearSc
 import { requiresHistoricalEprData } from '../../shared/commencementYearScope.js';
 
 const inputClass =
-  'w-full px-3 py-2 border border-slate-300 rounded-lg focus:ring-2 focus:ring-green-500 focus:border-green-500 outline-none';
+  'w-full px-4 py-2.5 bg-slate-50/60 border border-slate-200/80 text-slate-800 rounded-xl focus:bg-white focus:ring-[3px] focus:ring-emerald-500/20 focus:border-emerald-500 outline-none transition-all duration-300 placeholder:text-slate-400 font-medium shadow-[inset_0px_2px_4px_rgba(0,0,0,0.01)] hover:border-slate-300 hover:bg-slate-50';
 const selectClass = inputClass;
 
 const EMPTY_AUTO = {
@@ -174,11 +174,9 @@ export default function NewApplicationPage() {
   const [plasticConsumedSource, setPlasticConsumedSource] = useState('');
 
   const lockedInputClass = registrationComplete
-    ? `${inputClass} bg-slate-50 text-slate-700 cursor-not-allowed`
+    ? `${inputClass} !bg-slate-100 !border-slate-200/60 !text-slate-500 cursor-not-allowed shadow-none`
     : inputClass;
-  const lockedSelectClass = registrationComplete
-    ? `${selectClass} bg-slate-50 text-slate-700 cursor-not-allowed`
-    : selectClass;
+  const lockedSelectClass = lockedInputClass;
 
   const formatTimer = useCallback(
     (time) => `${Math.floor(time / 60).toString().padStart(2, '0')}:${(time % 60).toString().padStart(2, '0')}`,

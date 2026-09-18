@@ -229,4 +229,27 @@ contextBridge.exposeInMainWorld('pwp', {
     copyDiagnostics: () => ipcRenderer.invoke('monitoring:copyDiagnostics'),
     sendTest: () => ipcRenderer.invoke('monitoring:sendTest'),
   },
+  app: {
+    getVersion: () => ipcRenderer.invoke('app:getVersion'),
+    checkForUpdates: () => ipcRenderer.invoke('app:checkForUpdates'),
+    downloadUpdate: () => ipcRenderer.invoke('app:downloadUpdate'),
+    installUpdate: () => ipcRenderer.invoke('app:installUpdate'),
+    onUpdateEvent: (channel, callback) => {
+      const allowed = new Set([
+        'app:update-checking',
+        'app:update-available',
+        'app:update-not-available',
+        'app:update-download-progress',
+        'app:update-downloaded',
+        'app:update-error',
+      ]);
+      if (!allowed.has(channel)) return () => {};
+      const handler = (_event, payload) => callback?.(payload);
+      ipcRenderer.on(channel, handler);
+      return () => ipcRenderer.removeListener(channel, handler);
+    },
+  },
+  telemetry: {
+    track: (event, properties) => ipcRenderer.invoke('telemetry:track', { event, properties }),
+  },
 });

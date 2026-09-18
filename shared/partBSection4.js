@@ -233,7 +233,9 @@ export function buildPartBSection4FromRecords({
 } = {}) {
   const scopedPurchases = filterByCompany(purchases, companyId);
   const scopedSales = filterByCompany(sales, companyId);
-  const filters = { docStatus, financialYear: 'all' };
+  
+  const primaryState = operatingStates.length > 0 ? operatingStates[0] : null;
+  const filters = { docStatus, financialYear: 'all', defaultState: primaryState };
 
   return buildPartBSection4Groups({
     operatingStates,
