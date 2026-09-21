@@ -87,12 +87,17 @@ export async function collectPortalAlerts(page) {
 }
 
 export async function dismissPortalAlerts(page, onLog) {
+  const submitOpen = await page.getByText(/Do you want to submit application|Submit Application/i).first()
+    .isVisible({ timeout: 400 })
+    .catch(() => false);
+  const yesBtn = await page.locator('button.submit-pay-btn:not(.submit-pay-btn-no)').filter({
+    hasText: /^\s*Yes\s*$/i,
+  }).first().isVisible({ timeout: 300 }).catch(() => false);
+  if (submitOpen || yesBtn) return;
+
   const closeButtons = [
-    page.locator('.p-toast-icon-close, .toast-close-button, .p-dialog-header-close, .swal2-close').first(),
-    page.getByRole('button', { name: /^(OK|Ok|Close|Dismiss)$/i }).first(),
-    page.locator('.swal2-confirm, .p-confirm-dialog-accept, .modal .btn-primary, .modal .btn-success').filter({
-      hasText: /^(OK|Ok|Close|Yes)$/i,
-    }).first(),
+    page.locator('.p-toast-icon-close, .toast-close-button, .swal2-close').first(),
+    page.getByRole('button', { name: /^(OK|Ok|Dismiss)$/i }).first(),
   ];
 
   const alerts = await collectPortalAlerts(page);
@@ -106,8 +111,6 @@ export async function dismissPortalAlerts(page, onLog) {
       await page.waitForTimeout(400);
     }
   }
-
-  await page.keyboard.press('Escape').catch(() => {});
 }
 
 export async function countInvalidControls(page) {

@@ -117,6 +117,15 @@ export function classifyAutomationLog(message, type = 'info') {
     };
   }
 
+  if (/confirm|submit application|payment breakdown|click to pay|payu checkout|amount to be paid|opened in the app payment|yes on submit/i.test(text)) {
+    return {
+      addToList: true,
+      message: text.split('\n')[0].trim().slice(0, 200),
+      type: /fail|error|not detected|blocked/i.test(text) ? 'error' : 'success',
+      stepHint: text.split('\n')[0].trim().slice(0, 120),
+    };
+  }
+
   const isError = type === 'error'
     || /^error:/i.test(text)
     || /failed to verify otp|incorrect otp|invalid captcha/i.test(text)

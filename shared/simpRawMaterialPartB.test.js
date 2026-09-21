@@ -18,6 +18,8 @@ import {
   buildSimpSupplyRowsFromSales,
   formatSimpImportDate,
   mapToSimpPlasticType,
+  prepareSimpSupplyRowsForPortal,
+  validateSimpSupplyPortalRows,
 } from './simpRawMaterialPartB.js';
 
 test('validateSimpRawMaterialSupplyAgainstImport passes when supplied <= imported', () => {
@@ -150,24 +152,27 @@ test('generateSimpSupplyDetailsExcelBuffer generates valid workbook with registr
   const row2 = sheet.getRow(2);
   assert.equal(row2.getCell(1).value, 'Registered');
   assert.equal(row2.getCell(4).value, 'Alpha Packaging Pvt Ltd');
-  assert.equal(row2.getCell(5).value, 'India');
-  assert.equal(row2.getCell(10).value, 80);
+  assert.equal(row2.getCell(5).value, 'Plot 44, GIDC, Ahmedabad');
+  assert.equal(row2.getCell(9).value, 80);
+  assert.equal(row2.getCell(10).value, '2024-04-01');
+  assert.equal(row2.getCell(10).numFmt, '@');
 
   const row3 = sheet.getRow(3);
   assert.equal(row3.getCell(1).value, 'UnRegistered');
-  assert.equal(row3.getCell(10).value, 25);
+  assert.equal(row3.getCell(9).value, 25);
+  assert.ok(String(row3.getCell(10).value || '').match(/^\d{4}-\d{2}-\d{2}$/));
 
   const validations = sheet.dataValidations?.model || {};
   assert.equal(validations.A2?.type, 'list');
   assert.equal(validations.B2?.type, 'list');
+  assert.equal(validations.G2?.type, 'list');
   assert.equal(validations.H2?.type, 'list');
-  assert.equal(validations.I2?.type, 'list');
   assert.match(String(validations.A2.formulae?.[0] || ''), /Registered/);
   assert.match(String(validations.A2.formulae?.[0] || ''), /UnRegistered/);
   assert.match(String(validations.B2.formulae?.[0] || ''), /Producer \(Small or Micro\)/);
-  assert.match(String(validations.I2.formulae?.[0] || ''), /LDPE/);
-  assert.ok(headers.includes('Country'));
-  assert.ok(headers.some((h) => /import date/i.test(String(h))));
+  assert.match(String(validations.H2.formulae?.[0] || ''), /LDPE/);
+  assert.ok(!headers.includes('Country'));
+  assert.ok(headers.includes('Sales Date (YYYY-MM-DD)'));
   assert.equal(wb.worksheets.length, 1);
 });
 
@@ -324,4 +329,51 @@ test('buildSimpImportRowsFromPurchases maps published purchase lines', () => {
   assert.equal(rows[0].financialYear, '2024-25');
   assert.equal(mapToSimpPlasticType('pe'), 'LDPE');
   assert.equal(mapToSimpPlasticType('PVC'), 'Others');
+});
+
+test('prepareSimpSupplyRowsForPortal fills missing contact from fallback', () => {
+  const prepared = prepareSimpSupplyRowsForPortal([
+    {
+      entityName: 'Buyer A',
+      quantityTons: 1,
+      financialYear: '2025-26',
+      plasticType: 'LDPE',
+    },
+    {
+      entityName: 'Buyer B',
+      quantityTons: 2,
+      financialYear: '2024-25',
+      plasticType: 'PP',
+      contact: '8888888888',
+    },
+  ], { fallbackContact: '9876543210' });
+  assert.equal(prepared[0].contact, '9876543210');
+  assert.equal(prepared[1].contact, '8888888888');
+  assert.equal(prepared[0].country, 'India');
+  assert.equal(prepared[0].salesDate, '2025-04-01');
+  assert.equal(prepared[0].entityType, 'Producer');
+});
+
+test('validateSimpSupplyPortalRows flags empty contact like CPCB', () => {
+  const issues = validateSimpSupplyPortalRows([
+    { entityName: 'A', country: 'India', contact: '1', salesDate: '2025-04-01', entityType: 'Producer', quantityTons: 1 },
+    { entityName: 'B', country: 'India', contact: '2', salesDate: '2025-04-01', entityType: 'Producer', quantityTons: 1 },
+    { entityName: 'C', country: 'India', contact: '3', salesDate: '2025-04-01', entityType: 'Producer', quantityTons: 1 },
+    { entityName: 'D', country: 'India', contact: '', salesDate: '2025-04-01', entityType: 'Producer', quantityTons: 1 },
+  ]);
+  assert.equal(issues.length, 1);
+  assert.match(issues[0].message, /Row 4: 'contact' is required/);
+});
+
+test('supply Excel fills fallback contact so CPCB Contact column is not empty', async () => {
+  const buffer = await generateSimpSupplyDetailsExcelBuffer([
+    {
+      entityName: 'Buyer A',
+      quantityTons: 1,
+      financialYear: '2025-26',
+      plasticType: 'LDPE',
+    },
+  ], { fallbackContact: '9876543210' });
+  const parsed = await parseSimpSupplyDetailsExcelBuffer(buffer);
+  assert.equal(parsed[0].contact, '9876543210');
 });

@@ -113,6 +113,7 @@ export default function RegistrationPartASimpRawMaterial({
   inputClass = '',
   selectClass = '',
   uploadingField = '',
+  isPreview = false,
 }) {
   const currentYear = new Date().getFullYear();
   const years = Array.from({ length: currentYear - 1950 + 1 }, (_, i) => String(currentYear - i));
@@ -164,6 +165,7 @@ export default function RegistrationPartASimpRawMaterial({
                 patch('operatingStates', [e.target.value]);
               }}
               className={selectClass || inputClass}
+              disabled={isPreview}
             >
               <option value="">Select State / UT</option>
               {INDIAN_STATES.map((st) => (
@@ -259,6 +261,7 @@ export default function RegistrationPartASimpRawMaterial({
               value={generalInfo.yearOfCommencement || ''}
               onChange={onChange}
               className={selectClass || inputClass}
+              disabled={isPreview}
             >
               <option value="">Select year</option>
               {years.map((y) => (
@@ -303,6 +306,7 @@ export default function RegistrationPartASimpRawMaterial({
               value={dicRegistered ? 'Yes' : (generalInfo.dicRegistered || 'No')}
               onChange={onChange}
               className={selectClass || inputClass}
+              disabled={isPreview}
             >
               <option value="No">No</option>
               <option value="Yes">Yes</option>

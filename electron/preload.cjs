@@ -146,6 +146,12 @@ contextBridge.exposeInMainWorld('pwp', {
       ipcRenderer.on('scraper:epr-targets-prompt', handler);
       return () => ipcRenderer.removeListener('scraper:epr-targets-prompt', handler);
     },
+    onPaymentReview: (callback) => {
+      const handler = (_event, data) => callback?.(data);
+      ipcRenderer.on('scraper:payment-review', handler);
+      return () => ipcRenderer.removeListener('scraper:payment-review', handler);
+    },
+    openPayuWindow: (url) => ipcRenderer.invoke('scraper:openPayuWindow', { url }),
     closeRegistrationSession: () => ipcRenderer.invoke('scraper:closeRegistrationSession'),
     runEpr: () => ipcRenderer.invoke('scraper:runEpr'),
     getProfile: () => ipcRenderer.invoke('scraper:getProfile'),

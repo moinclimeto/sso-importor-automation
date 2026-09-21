@@ -71,6 +71,8 @@ import { upsertSupplierMasterRow } from '../supplierMasterService.js';
 import { upsertPackagingMasterRow } from '../packagingMasterService.js';
 import { setPaymentBypassNotifier, resolvePaymentBypass } from '../automation/paymentBypassBridge.js';
 import { setEprTargetsNotifier, resolveEprTargetsConfirmation } from '../automation/eprTargetsConfirmationBridge.js';
+import { setPaymentReviewNotifier } from '../automation/paymentReviewBridge.js';
+import { openPayuInAppWindow } from '../payment/payuWindow.js';
 import { setPortalToastEmitter, attachPortalToastWatcherToContext } from '../automation/portalToastWatcher.js';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -1470,6 +1472,7 @@ async function syncSupplierMasterFromRecord(
     bindPortalToastSender(event);
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     setEprTargetsNotifier((data) => event.sender.send('scraper:epr-targets-prompt', data));
+    setPaymentReviewNotifier((data) => event.sender.send('scraper:payment-review', data));
     return await startLoginFlow(payload, (msg) => sendScraperLog(event, msg));
   });
 
@@ -1485,6 +1488,7 @@ async function syncSupplierMasterFromRecord(
   ipcMain.handle('scraper:submitLoginOtp', async (event, payload) => {
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     setEprTargetsNotifier((data) => event.sender.send('scraper:epr-targets-prompt', data));
+    setPaymentReviewNotifier((data) => event.sender.send('scraper:payment-review', data));
     const otp = typeof payload === 'string' ? payload : payload?.otp;
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
     const runOnboarding = Boolean(typeof payload === 'object' && payload?.runOnboarding);
@@ -1494,6 +1498,7 @@ async function syncSupplierMasterFromRecord(
   ipcMain.handle('scraper:runApplicationOnboardingAfterLogin', async (event, payload) => {
     setPaymentBypassNotifier(() => event.sender.send('scraper:payment-bypass-prompt'));
     setEprTargetsNotifier((data) => event.sender.send('scraper:epr-targets-prompt', data));
+    setPaymentReviewNotifier((data) => event.sender.send('scraper:payment-review', data));
     const autoScrape = Boolean(typeof payload === 'object' && payload?.autoScrape);
     const automationMode = typeof payload === 'object' ? payload?.automationMode : undefined;
     const fillPartB = typeof payload === 'object' && payload?.fillPartB !== undefined
@@ -1512,6 +1517,12 @@ async function syncSupplierMasterFromRecord(
 
   ipcMain.handle('scraper:answerEprTargetsConfirmation', async (_event, payload) => {
     return resolveEprTargetsConfirmation(payload || {});
+  });
+
+  ipcMain.handle('scraper:openPayuWindow', async (_event, payload) => {
+    const url = typeof payload === 'string' ? payload : payload?.url;
+    openPayuInAppWindow(url);
+    return { success: true };
   });
 
   ipcMain.handle('scraper:resendLoginOtp', async (event) => {

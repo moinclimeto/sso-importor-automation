@@ -6,6 +6,9 @@ import {
   generateSimpSupplyDetailsExcelBuffer,
   validateSimpRawMaterialSupplyAgainstImport,
   validateSimpImportCoveringRequiredYears,
+  prepareSimpImportRowsForPortal,
+  prepareSimpSupplyRowsForPortal,
+  validateSimpSupplyPortalRows,
   SIMP_IMPORT_EXCEL_FILE_NAME,
   SIMP_SUPPLY_EXCEL_FILE_NAME,
 } from '../../shared/simpRawMaterialPartB.js';
@@ -18,6 +21,7 @@ import {
 } from './portalErrorGuard.js';
 import { panFromGstin, unitGstMatchesCompanyPan } from '../../shared/entityRegistrationTypes.js';
 import { registrationDocFileName } from '../../shared/cpcbPortalFileName.js';
+import { notifyPaymentReview } from './paymentReviewBridge.js';
 import { resolveSimpImportDetailsForAutomation, resolveSimpSupplyDetailsForAutomation } from './registrationPartBData.js';
 
 function pickExistingPath(...candidates) {
@@ -58,19 +62,48 @@ async function rowHasVisibleView(row) {
   return false;
 }
 
-async function uploadToInputWithUploadV2(page, labelExact, filePath, onLog, uploadBaseName = 'person_pan') {
+async function uploadRowForLabelContains(page, labelRe) {
+  const slot = page.locator('app-input-with-upload-v2, app-input-with-upload')
+    .filter({ hasText: labelRe })
+    .first();
+  if (await slot.count().catch(() => 0)) {
+    await slot.waitFor({ state: 'visible', timeout: 10000 });
+    await slot.scrollIntoViewIfNeeded().catch(() => {});
+    return slot;
+  }
+  const labelEl = page.locator('label, .input-label').filter({ hasText: labelRe }).first();
+  await labelEl.waitFor({ state: 'visible', timeout: 10000 });
+  await labelEl.scrollIntoViewIfNeeded().catch(() => {});
+  const v2 = labelEl.locator('xpath=ancestor::app-input-with-upload-v2[1]');
+  if (await v2.count().catch(() => 0)) return v2.first();
+  const v1 = labelEl.locator('xpath=ancestor::app-input-with-upload[1]');
+  if (await v1.count().catch(() => 0)) return v1.first();
+  return labelEl.locator(
+    'xpath=ancestor::*[.//input[@type="file"] and not(self::form) and not(self::app-simp-form-config) and not(self::body)][1]',
+  ).first();
+}
+
+async function uploadToInputWithUploadV2(page, labelExact, filePath, onLog, uploadBaseName = 'person_pan', options = {}) {
   if (!filePath || !fs.existsSync(filePath)) {
     if (onLog) onLog(`${labelExact}: no PDF on disk — ${filePath || '(empty path)'}`);
     return false;
   }
   const safeFile = prepareTempUploadFile(filePath, uploadBaseName);
+  const contains = Boolean(options.contains);
+  const labelRe = new RegExp(String(labelExact).replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
 
   let row;
   try {
-    row = await uploadRowForLabel(page, labelExact);
+    row = contains
+      ? await uploadRowForLabelContains(page, labelRe)
+      : await uploadRowForLabel(page, labelExact);
   } catch (err) {
-    if (onLog) onLog(`${labelExact}: upload row not found — ${err.message}`);
-    return false;
+    try {
+      row = await uploadRowForLabelContains(page, labelRe);
+    } catch (err2) {
+      if (onLog) onLog(`${labelExact}: upload row not found — ${err2.message || err.message}`);
+      return false;
+    }
   }
 
   await row.scrollIntoViewIfNeeded().catch(() => {});
@@ -484,40 +517,115 @@ export async function fillSimpPartA(page, data = {}, onLog) {
 }
 
 /**
- * CPCB SIMP Part B: click Upload Excel → set file in app-upload-excel modal → Upload.
+ * CPCB SIMP Part B: click the matching table's Upload Excel → attach .xlsx in app-upload-excel → Upload.
+ * Must not reuse leftover PDF file inputs from Part A (`doc_upload.pdf`).
  */
+async function closeExcelUploadModal(page) {
+  const modal = page.locator('app-upload-excel').filter({ hasText: /Upload Excel|Choose File/i });
+  if (!(await modal.first().isVisible({ timeout: 400 }).catch(() => false))) return;
+  const closeBtn = modal.locator('button, a, span, i').filter({ hasText: /^\s*(×|x|Close)\s*$/i }).first();
+  if (await closeBtn.isVisible({ timeout: 400 }).catch(() => false)) {
+    await closeBtn.click({ force: true }).catch(() => {});
+  } else {
+    await page.keyboard.press('Escape').catch(() => {});
+  }
+  await modal.first().waitFor({ state: 'hidden', timeout: 4000 }).catch(() => {});
+}
+
+async function clickTableUploadExcel(page, sectionText, onLog, sectionName) {
+  const heading = page.getByText(sectionText).first();
+  await heading.waitFor({ state: 'visible', timeout: 15000 });
+  await heading.scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(300);
+
+  const followingBtn = heading.locator(
+    'xpath=following::button[contains(normalize-space(.), "Upload Excel")][1]',
+  );
+  if (await followingBtn.isVisible({ timeout: 2000 }).catch(() => false)) {
+    await followingBtn.click({ force: true });
+    return;
+  }
+
+  const buttons = page.getByRole('button', { name: /^\s*Upload Excel\s*$/i });
+  const count = await buttons.count().catch(() => 0);
+  const index = /producers|supplied|sales/i.test(sectionName) ? Math.min(1, Math.max(0, count - 1)) : 0;
+  if (count < 1) throw new Error(`No Upload Excel button found for ${sectionName}`);
+  await buttons.nth(index).click({ force: true });
+  if (onLog) onLog(`Opened Excel modal for ${sectionName} (Upload Excel #${index + 1} of ${count}).`);
+}
+
+async function attachXlsxInExcelModal(page, tempPath, onLog, sectionName) {
+  const modal = page.locator('app-upload-excel').filter({
+    hasText: /Upload Excel|Choose File|Download Excel Template/i,
+  }).last();
+  await modal.waitFor({ state: 'visible', timeout: 12000 });
+
+  const inputs = modal.locator('input[type="file"]');
+  const inputCount = await inputs.count();
+  let excelInput = null;
+  for (let i = 0; i < inputCount; i += 1) {
+    const input = inputs.nth(i);
+    const accept = String(await input.getAttribute('accept') || '');
+    if (/pdf/i.test(accept) && !/xls|sheet|excel|csv/i.test(accept)) continue;
+    excelInput = input;
+    if (/xls|sheet|excel|csv/i.test(accept)) break;
+  }
+  if (!excelInput && inputCount) excelInput = inputs.last();
+  if (!excelInput) {
+    throw new Error(`${sectionName}: Excel modal has no file input`);
+  }
+
+  await excelInput.setInputFiles([]);
+  await excelInput.setInputFiles(tempPath);
+  await excelInput.evaluate((el) => {
+    el.dispatchEvent(new Event('input', { bubbles: true }));
+    el.dispatchEvent(new Event('change', { bubbles: true }));
+  }).catch(() => {});
+  await page.waitForTimeout(400);
+
+  let shown = await modal.innerText().catch(() => '');
+  if (!/\.xlsx|\.xls/i.test(shown)) {
+    const chooserWait = page.waitForEvent('filechooser', { timeout: 5000 }).catch(() => null);
+    const chooseBtn = modal.getByText(/Choose File/i).first();
+    if (await chooseBtn.isVisible({ timeout: 800 }).catch(() => false)) {
+      await chooseBtn.click({ force: true }).catch(() => {});
+    }
+    const chooser = await chooserWait;
+    if (chooser) await chooser.setFiles(tempPath);
+    await page.waitForTimeout(400);
+    shown = await modal.innerText().catch(() => '');
+  }
+
+  if (/\.pdf\b/i.test(shown) && !/\.xlsx|\.xls/i.test(shown)) {
+    throw new Error(
+      `${sectionName}: portal Excel modal still shows a PDF (doc_upload.pdf) instead of ${path.basename(tempPath)}.`,
+    );
+  }
+  if (onLog) onLog(`${sectionName}: Excel file attached (${path.basename(tempPath)}).`);
+
+  const uploadBtn = modal.locator('button').filter({ hasText: /^\s*Upload\s*$/i }).first();
+  await uploadBtn.click({ force: true });
+  await page.waitForTimeout(1200);
+  await waitForPortalBusy(page, 25000);
+  await modal.waitFor({ state: 'hidden', timeout: 15000 }).catch(() => {});
+}
+
 async function uploadExcelViaPortalModal(page, sectionText, excelBuffer, tempFileName, onLog, sectionName) {
-  const tempPath = path.join(os.tmpdir(), tempFileName);
-  fs.writeFileSync(tempPath, excelBuffer);
+  const stamp = Date.now();
+  const safeName = String(tempFileName || 'simp-part-b.xlsx').replace(/[<>:"/\\|?*]/g, '_');
+  const tempPath = path.join(os.tmpdir(), `${stamp}-${safeName}`);
+  fs.writeFileSync(tempPath, Buffer.from(excelBuffer));
 
   try {
-    const heading = page.getByText(sectionText).first();
-    await heading.scrollIntoViewIfNeeded().catch(() => {});
-    const section = page.locator('div').filter({ has: heading }).filter({
-      has: page.getByRole('button', { name: /Upload Excel/i }),
-    }).first();
-    const openBtn = (await section.count().catch(() => 0))
-      ? section.getByRole('button', { name: /Upload Excel/i }).first()
-      : page.getByRole('button', { name: /Upload Excel/i }).first();
-    await openBtn.click({ force: true });
-
-    const modal = page.locator('app-upload-excel').first();
-    await modal.waitFor({ state: 'visible', timeout: 12000 });
-    const fileInput = modal.locator('input[type="file"]').first();
-    await fileInput.waitFor({ state: 'attached', timeout: 8000 });
-    await fileInput.setInputFiles(tempPath);
-    await page.waitForTimeout(400);
-
-    const uploadBtn = modal.locator('button').filter({ hasText: /^\s*Upload\s*$/i }).first();
-    await uploadBtn.click({ force: true });
-    await page.waitForTimeout(1200);
-    await waitForPortalBusy(page, 25000);
+    await closeExcelUploadModal(page);
+    await clickTableUploadExcel(page, sectionText, onLog, sectionName);
+    await attachXlsxInExcelModal(page, tempPath, onLog, sectionName);
 
     const alerts = await collectPortalAlerts(page);
     if (alerts.length) {
       throw new Error(alerts[0]);
     }
-    if (onLog) onLog(`Uploaded Excel for ${sectionName}: ${tempFileName}`);
+    if (onLog) onLog(`Uploaded Excel for ${sectionName}: ${path.basename(tempPath)}`);
     return true;
   } catch (err) {
     if (onLog) onLog(`Excel upload failed for ${sectionName}: ${err.message}`);
@@ -533,20 +641,31 @@ async function uploadExcelViaPortalModal(page, sectionText, excelBuffer, tempFil
 export async function fillSimpPartB(page, data = {}, onLog) {
   if (onLog) onLog('Filling SIMP Part B: Bulk Data Upload (Import & Supply)...');
 
-  const importRows = await resolveSimpImportDetailsForAutomation({
-    existing: data.simpImportDetails,
-    gstin: data.gstin || data.unitGst || '',
-    onLog,
-  });
-  const supplyRows = await resolveSimpSupplyDetailsForAutomation({
-    existing: data.simpSupplyDetails,
-    gstin: data.gstin || data.unitGst || '',
-    onLog,
-  });
+  const importRows = prepareSimpImportRowsForPortal(
+    await resolveSimpImportDetailsForAutomation({
+      existing: data.simpImportDetails,
+      gstin: data.gstin || data.unitGst || '',
+      onLog,
+    }),
+    { fallbackContact: data.mobile || data.authMobile || '' },
+  );
+  const supplyRows = prepareSimpSupplyRowsForPortal(
+    await resolveSimpSupplyDetailsForAutomation({
+      existing: data.simpSupplyDetails,
+      gstin: data.gstin || data.unitGst || '',
+      onLog,
+    }),
+    { fallbackContact: data.mobile || data.authMobile || '' },
+  );
 
   const yearIssues = validateSimpImportCoveringRequiredYears(importRows);
   if (yearIssues.length) {
     throw new Error(yearIssues.map((issue) => issue.message).join(' | '));
+  }
+
+  const supplyFieldIssues = validateSimpSupplyPortalRows(supplyRows);
+  if (supplyFieldIssues.length) {
+    throw new Error(supplyFieldIssues.map((issue) => issue.message).join(' | '));
   }
 
   const validationIssues = validateSimpRawMaterialSupplyAgainstImport(importRows, supplyRows);
@@ -571,23 +690,169 @@ export async function fillSimpPartB(page, data = {}, onLog) {
     onLog('No Import Details records to upload.');
   }
 
-  if (supplyRows.length > 0) {
-    if (onLog) onLog(`Generating Importer Sales Excel for ${supplyRows.length} record(s)...`);
-    const supplyExcel = await generateSimpSupplyDetailsExcelBuffer(supplyRows);
-    await uploadExcelViaPortalModal(
-      page,
-      /List of Producers and Quantum of Raw Materials supplied|Producers and Quantum/i,
-      supplyExcel,
-      SIMP_SUPPLY_EXCEL_FILE_NAME,
-      onLog,
-      'Producers/Sellers Supplied',
+  if (!supplyRows.length) {
+    throw new Error(
+      'SIMP Part B sales table is empty. CPCB needs at least one row in “List of Producers and Quantum of Raw Materials supplied…”. Add sales rows in Part B (or publish Doc Processor sales), then Register again.',
     );
-  } else if (onLog) {
-    onLog('No Producers/Sellers Supplied records to upload.');
   }
+  if (onLog) onLog(`Generating Importer Sales Excel for ${supplyRows.length} record(s)...`);
+  const supplyExcel = await generateSimpSupplyDetailsExcelBuffer(supplyRows, {
+    fallbackContact: data.mobile || data.authMobile || '',
+  });
+  await uploadExcelViaPortalModal(
+    page,
+    /List of Producers and Quantum of Raw Materials supplied|Producers and Quantum/i,
+    supplyExcel,
+    SIMP_SUPPLY_EXCEL_FILE_NAME,
+    onLog,
+    'Producers/Sellers Supplied',
+  );
 
   await page.waitForTimeout(1500);
   if (onLog) onLog('Part B (SIMP) bulk upload completed.');
+}
+
+async function isSimpPartCReady(page, onLog) {
+  try {
+    const row = await uploadRowForLabelContains(page, /Please Upload Signature|Signature \(Only PDF File\)/i);
+    const viewed = await rowHasVisibleView(row);
+    if (!viewed && onLog) onLog('Part C Signature still has no View — portal will block Confirm.');
+    return viewed;
+  } catch (err) {
+    if (onLog) onLog(`Part C Signature slot not found: ${err.message}`);
+    return false;
+  }
+}
+
+async function submitApplicationModalVisible(page) {
+  const dialog = page.getByRole('dialog').filter({
+    hasText: /Submit Application|Do you want to submit application/i,
+  }).first();
+  if (await dialog.isVisible({ timeout: 800 }).catch(() => false)) return true;
+  return page.locator('button.submit-pay-btn:not(.submit-pay-btn-no)').filter({
+    hasText: /^\s*Yes\s*$/i,
+  }).first().isVisible({ timeout: 400 }).catch(() => false);
+}
+
+async function stillOnSimpPartC(page) {
+  if (await submitApplicationModalVisible(page)) return false;
+  const url = String(page.url() || '');
+  if (/payment-breakdown|payu|webcheckoutpro/i.test(url)) return false;
+  const gps = await page.getByText(/GPS Location of the unit/i).first().isVisible({ timeout: 1500 }).catch(() => false);
+  return gps && /simp\/importer\/application/i.test(url);
+}
+
+async function locateSimpPartCConfirmButton(page) {
+  const afterBack = page.locator('app-custom-button').filter({ hasText: /^\s*Back\s*$/i }).locator(
+    'xpath=following::app-custom-button[1]',
+  ).locator('button.custom-btn, button').filter({ hasText: /^\s*Confirm\s*$/i }).first();
+  if (await afterBack.count().catch(() => 0)) return afterBack;
+
+  const host = page.locator('app-custom-button').filter({
+    has: page.locator('button.custom-btn.btn-primary, button.custom-btn'),
+  }).filter({ hasText: /^\s*Confirm\s*$/i }).last();
+  const inner = host.locator('button.custom-btn, button').first();
+  if (await inner.count().catch(() => 0)) return inner;
+
+  return page.getByRole('button', { name: /^\s*Confirm\s*$/i }).last();
+}
+
+async function fireAngularClick(locator) {
+  await locator.evaluate((el) => {
+    const host = el.closest('app-custom-button') || el;
+    const btn = el.tagName === 'BUTTON' ? el : (host.querySelector('button') || el);
+    const fire = (node) => {
+      if (!node) return;
+      node.dispatchEvent(new PointerEvent('pointerdown', { bubbles: true, cancelable: true, composed: true }));
+      node.dispatchEvent(new MouseEvent('mousedown', { bubbles: true, cancelable: true, view: window }));
+      node.dispatchEvent(new PointerEvent('pointerup', { bubbles: true, cancelable: true, composed: true }));
+      node.dispatchEvent(new MouseEvent('mouseup', { bubbles: true, cancelable: true, view: window }));
+      node.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window, composed: true }));
+      if (typeof node.click === 'function') node.click();
+    };
+    fire(btn);
+    if (host !== btn) fire(host);
+  }).catch(() => {});
+}
+
+async function clickSubmitApplicationYes(page, onLog, timeoutMs = 20000) {
+  const yes = page.locator('button.submit-pay-btn:not(.submit-pay-btn-no)').filter({
+    hasText: /^\s*Yes\s*$/i,
+  }).first().or(page.getByRole('button', { name: /^\s*Yes\s*$/i }).last());
+
+  const prompt = page.getByText(/Do you want to submit application/i).first();
+  const title = page.getByText(/Submit Application/i).first();
+  const appeared = await yes.isVisible({ timeout: timeoutMs }).catch(() => false)
+    || await prompt.isVisible({ timeout: 1500 }).catch(() => false)
+    || await title.isVisible({ timeout: 1500 }).catch(() => false);
+  if (!appeared) return false;
+
+  if (!(await yes.isVisible({ timeout: 4000 }).catch(() => false))) return false;
+  await yes.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await yes.click({ timeout: 8000 });
+  } catch {
+    await yes.click({ force: true }).catch(() => {});
+    await yes.evaluate((el) => el.click()).catch(() => {});
+  }
+  if (onLog) onLog('Clicked Yes on Submit Application popup.');
+  notifyPaymentReview({
+    step: 'submit-modal',
+    message: 'Submit Application — Yes clicked. Opening payment page…',
+  });
+  await page.waitForTimeout(1000);
+  await waitForPortalBusy(page, 30000);
+  return true;
+}
+
+async function clickSimpPartCConfirm(page, onLog) {
+  await waitForPortalBusy(page, 15000);
+
+  if (await clickSubmitApplicationYes(page, onLog, 1500)) return true;
+  if (/payment-breakdown/i.test(page.url())) return true;
+
+  const confirmBtn = await locateSimpPartCConfirmButton(page);
+  await confirmBtn.waitFor({ state: 'attached', timeout: 10000 }).catch(() => {});
+  if (!(await confirmBtn.count().catch(() => 0))) {
+    if (onLog) onLog('Part C Confirm button not found.');
+    return false;
+  }
+
+  await confirmBtn.scrollIntoViewIfNeeded().catch(() => {});
+  await page.waitForTimeout(400);
+
+  const disabled = await confirmBtn.isDisabled().catch(() => false);
+  if (disabled) {
+    if (onLog) onLog('Part C Confirm is disabled — portal is still waiting for a required field.');
+    return false;
+  }
+
+  if (onLog) onLog('Clicking Part C Confirm...');
+  try {
+    await confirmBtn.click({ timeout: 5000 });
+  } catch {
+    const box = await confirmBtn.boundingBox().catch(() => null);
+    if (box) await page.mouse.click(box.x + box.width / 2, box.y + box.height / 2);
+    else await confirmBtn.click({ force: true, timeout: 4000 }).catch(() => {});
+  }
+
+  await page.waitForTimeout(800);
+  await waitForPortalBusy(page, 30000);
+
+  if (await clickSubmitApplicationYes(page, onLog, 18000)) return true;
+
+  if (/payment-breakdown/i.test(page.url())) {
+    if (onLog) onLog('Confirm accepted — payment-breakdown page opened.');
+    return true;
+  }
+
+  if (/\/onboarding\/applications/i.test(page.url())) {
+    if (onLog) onLog('Confirm saved a DRAFT. Opening it from Applications list for payment…');
+    return true;
+  }
+
+  if (onLog) onLog('Still on Part C after Confirm. Portal did not show Submit Application.');
+  return false;
 }
 
 /**
@@ -596,67 +861,82 @@ export async function fillSimpPartB(page, data = {}, onLog) {
 export async function fillSimpPartC(page, data = {}, onLog) {
   if (onLog) onLog('Filling SIMP Part C: GPS Location & Documents...');
 
-  await page.waitForTimeout(1500);
+  await page.waitForTimeout(800);
   await waitForPortalBusy(page, 15000);
+  await page.getByText(/GPS Location of the unit|Please Upload Signature|Cover Letter/i)
+    .first()
+    .waitFor({ state: 'visible', timeout: 20000 })
+    .catch(() => {});
 
-  // 1. Fill GPS Coordinates (Decimal degrees)
   const latitude = String(data.latitude || data.lat || '').trim();
   const longitude = String(data.longitude || data.lng || data.long || '').trim();
 
   if (latitude) {
-    await fillInputByLabel(
-      page,
-      /Latitude/i,
-      latitude,
-      onLog,
-      'GPS Latitude'
-    );
+    await fillInputByLabel(page, /Latitude/i, latitude, onLog, 'GPS Latitude');
   }
   if (longitude) {
-    await fillInputByLabel(
-      page,
-      /Longitude/i,
-      longitude,
-      onLog,
-      'GPS Longitude'
-    );
+    await fillInputByLabel(page, /Longitude/i, longitude, onLog, 'GPS Longitude');
   }
 
-  // 2. Upload Part C Documents
-  const coverLetter = data.partCCoveringLetter || data.coveringLetter || '';
-  const signature = data.partCSignature || data.signature || '';
-  const selfDeclaration = data.partCAuditedStatement || data.selfDeclaration || data.auditedStatement || '';
+  const coverLetter = pickExistingPath(
+    data.partCCoveringLetter,
+    data.coveringLetter,
+    data.coveringLetterDoc,
+  );
+  const signature = pickExistingPath(
+    data.partCSignature,
+    data.signature,
+    data.signatureDoc,
+    data.signaturePath,
+  );
+  const selfDeclaration = pickExistingPath(
+    data.partCAuditedStatement,
+    data.selfDeclaration,
+    data.auditedStatement,
+    data.selfDeclarationDoc,
+  );
 
   if (coverLetter) {
-    await uploadNearLabel(page, 'Cover Letter', coverLetter, onLog, true);
-    await uploadNearLabel(page, 'Covering Letter', coverLetter, onLog, true);
-  }
-  if (signature) {
-    await uploadNearLabel(page, 'Signature', signature, onLog, true);
-  }
-  if (selfDeclaration) {
-    await uploadNearLabel(page, 'Self declaration', selfDeclaration, onLog, true);
-    await uploadNearLabel(page, 'Any other Information', selfDeclaration, onLog, true);
-    await uploadNearLabel(page, 'Additional Information', selfDeclaration, onLog, true);
+    await uploadToInputWithUploadV2(page, 'Cover Letter', coverLetter, onLog, 'covering_letter', { contains: true });
   }
 
-  // 3. Tick "I agree" checkbox
-  const agree = page.getByText(/I agree to the following points that|I agree/i).first();
-  if (await agree.isVisible({ timeout: 6000 }).catch(() => false)) {
-    const box = agree.locator('xpath=preceding::input[@type="checkbox"][1]').or(
-      page.getByRole('checkbox', { name: /I agree/i }).first()
+  if (!signature) {
+    throw new Error('Part C Signature PDF is missing in the app. Upload Signature on Part C, then Register again.');
+  }
+  const signatureOk = await uploadToInputWithUploadV2(
+    page,
+    'Please Upload Signature',
+    signature,
+    onLog,
+    'signature',
+    { contains: true },
+  );
+  if (!signatureOk) {
+    const retry = await uploadToInputWithUploadV2(
+      page,
+      'Signature (Only PDF File)',
+      signature,
+      onLog,
+      'signature',
+      { contains: true },
     );
-    if (await box.count()) {
-      if (!(await box.isChecked().catch(() => false))) {
-        await box.check({ force: true }).catch(() => agree.click());
-      }
-    } else {
-      await agree.click();
+    if (!retry) {
+      throw new Error('Part C Signature did not attach on CPCB (View is still missing). Check the signature PDF and retry.');
     }
-    if (onLog) onLog('Ticked Part C "I agree" checkbox.');
   }
 
-  await page.waitForTimeout(1000);
+  if (selfDeclaration) {
+    await uploadToInputWithUploadV2(
+      page,
+      'Self Declaration',
+      selfDeclaration,
+      onLog,
+      'self_declaration',
+      { contains: true },
+    );
+  }
+
+  await page.waitForTimeout(800);
   if (onLog) onLog('Part C (SIMP) location & documents filled.');
 }
 
@@ -726,6 +1006,69 @@ export async function runSimpRawMaterialApplicationFlow(page, formData = {}, onL
     saveFn: () => clickSimpNextIfPartMoved(page, /GPS Location|Latitude|Cover Letter|Part C/i, onLog),
   });
 
-  // Step 3: Part C & Submit
-  await fillSimpPartC(page, mergedData, onLog);
+  // Step 3: Part C Confirm, then payment (or resume latest DRAFT)
+  try {
+    await fillUntilPortalAccepts(page, {
+      stepName: 'Part C (SIMP)',
+      onLog,
+      fillFn: () => fillSimpPartC(page, mergedData, onLog),
+      isReadyFn: () => isSimpPartCReady(page, onLog),
+      saveFn: () => clickSimpPartCConfirm(page, onLog),
+    });
+  } catch (err) {
+    if (onLog) onLog(`Part C did not submit from the form (${err.message}). Continuing from Applications / DRAFT…`);
+  }
+
+  await continueSimpPaymentFromCurrentPage(page, onLog);
+}
+
+async function continueSimpPaymentFromCurrentPage(page, onLog) {
+  const { handlePaymentPopupsAndOpenPayu } = await import('./fillRegistrationForms.js');
+  const { openFirstDraftApplication } = await import('./resumeDraftApplication.js');
+
+  if (/payment-breakdown/i.test(page.url())) {
+    if (onLog) onLog('Already on payment-breakdown. Continuing payment…');
+    await handlePaymentPopupsAndOpenPayu(page, onLog);
+    return;
+  }
+
+  if (await clickSubmitApplicationYes(page, onLog, 2500)) {
+    await handlePaymentPopupsAndOpenPayu(page, onLog);
+    return;
+  }
+
+  const onAppsList = /\/onboarding\/applications/i.test(page.url())
+    || await page.getByText(/Application for Importer Facility|All Application/i).first().isVisible({ timeout: 2000 }).catch(() => false);
+
+  if (onAppsList) {
+    if (onLog) onLog('Opening latest DRAFT from Applications list to finish payment…');
+    notifyPaymentReview({
+      step: 'draft-resume',
+      message: 'Draft saved. Opening latest DRAFT to continue payment…',
+    });
+    await openFirstDraftApplication(page, onLog, { rowIndex: 0 });
+  }
+
+  const partCTab = page.getByText(/Part C:\s*Signature/i).first();
+  if (await partCTab.isVisible({ timeout: 8000 }).catch(() => false)) {
+    if (onLog) onLog('Opening Part C: Signature on the draft…');
+    await partCTab.click();
+    await waitForPortalBusy(page, 20000);
+    await page.waitForTimeout(800);
+  }
+
+  if (/payment-breakdown/i.test(page.url())) {
+    await handlePaymentPopupsAndOpenPayu(page, onLog);
+    return;
+  }
+
+  const confirmBtn = page.locator('button.custom-btn, app-custom-button button').filter({
+    hasText: /^\s*Confirm\s*$/i,
+  }).first();
+  if (await confirmBtn.isVisible({ timeout: 8000 }).catch(() => false)) {
+    await clickSimpPartCConfirm(page, onLog);
+  }
+
+  if (onLog) onLog('Submitting application and opening payment…');
+  await handlePaymentPopupsAndOpenPayu(page, onLog);
 }

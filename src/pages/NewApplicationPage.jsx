@@ -8,6 +8,7 @@ import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import RegistrationPartBSimpRawMaterial from '../components/RegistrationPartBSimpRawMaterial.jsx';
 import RegistrationPartCSimpRawMaterial from '../components/RegistrationPartCSimpRawMaterial.jsx';
 import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
+import RegistrationPaymentModal from '../components/RegistrationPaymentModal.jsx';
 import {
   AUTO_FILLED_FIELDS,
   collectRegistrationUploadFileIssues,
@@ -189,6 +190,8 @@ export default function NewApplicationPage() {
   const [showEprTargetsModal, setShowEprTargetsModal] = useState(false);
   const [eprTargetsModalData, setEprTargetsModalData] = useState(null);
   const [eprTargetsSubmitting, setEprTargetsSubmitting] = useState(false);
+  const [paymentReviewData, setPaymentReviewData] = useState(null);
+  const [showPaymentReviewModal, setShowPaymentReviewModal] = useState(false);
 
   const lockedInputClass = registrationComplete
     ? `${inputClass} !bg-slate-100 !border-slate-200/60 !text-slate-500 cursor-not-allowed shadow-none`
@@ -369,6 +372,23 @@ export default function NewApplicationPage() {
       setShowEprTargetsModal(true);
       setEprTargetsSubmitting(false);
       showToast('Section 7 EPR Targets calculated on CPCB portal — please confirm to submit.', 'info', { duration: 10000 });
+    });
+  }, [showToast]);
+
+  useEffect(() => {
+    if (!window.pwp?.scraper?.onPaymentReview) return undefined;
+    return window.pwp.scraper.onPaymentReview((data) => {
+      setPaymentReviewData((prev) => ({ ...(prev || {}), ...(data || {}) }));
+      setShowPaymentReviewModal(true);
+      setShowAutomationModal(true);
+      setAutomationPhase('running');
+      setCurrentAutomationStep(data?.message || (data?.payuUrl ? 'PayU checkout is open' : 'Payment breakdown ready'));
+      if (data?.message) appendAutomationLog(setAutomationLogs, data.message, 'success');
+      if (data?.payuUrl) {
+        showToast('PayU checkout opened in the app.', 'success', { duration: 8000 });
+      } else {
+        showToast(data?.message || 'CPCB payment breakdown is ready in the app.', 'success', { duration: 8000 });
+      }
     });
   }, [showToast]);
 
@@ -1319,8 +1339,11 @@ export default function NewApplicationPage() {
         failAutomationModal(`Application started — sync failed: ${res.scrape?.error || 'Unknown error'}`);
         showToast(`Application started, but portal sync failed: ${res.scrape?.error || 'Unknown error'}.`, 'error', { duration: 15000 });
       } else {
-        completeAutomationModal(`Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`);
-        showToast(`Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal.`, 'success', { duration: 15000 });
+        const msg = `Application submitted — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}. Complete payment in the app window.`;
+        appendAutomationLog(setAutomationLogs, msg, 'success');
+        setAutomationPhase('running');
+        setCurrentAutomationStep('Complete payment on PayU…');
+        showToast('Application submitted. PayU / fee details should open in the app.', 'success', { duration: 15000 });
       }
       return true;
     }
@@ -1931,6 +1954,7 @@ export default function NewApplicationPage() {
               generalInfo={generalInfo}
               setGeneralInfo={setGeneralInfo}
               gstin={autoData.gstin}
+              fallbackContact={mobile}
               onPersist={(next) => persistRegistrationForm(next)}
             />
             <RegistrationPartCSimpRawMaterial
@@ -2542,6 +2566,13 @@ export default function NewApplicationPage() {
         submitting={eprTargetsSubmitting}
         onConfirm={handleConfirmEprTargets}
         onCancel={handleCancelEprTargets}
+      />
+
+      <RegistrationPaymentModal
+        isOpen={showPaymentReviewModal}
+        data={paymentReviewData}
+        onClose={() => setShowPaymentReviewModal(false)}
+        onOpenPayu={(url) => window.pwp?.scraper?.openPayuWindow?.(url)}
       />
 
       {false && !showAutomationLogsModal && automationLogs.length > 0 && (

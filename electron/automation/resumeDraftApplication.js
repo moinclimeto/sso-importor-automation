@@ -178,19 +178,11 @@ export async function openFirstDraftApplication(page, onLog, { rowIndex = 0 } = 
 
   await waitForCpcbLoaderGone(page, 40000);
   await waitForPortalBusy(page, 25000).catch(() => {});
-
-  try {
-    await page.waitForURL(/view-application/i, { timeout: 30000 });
-  } catch {
-    await page.waitForFunction(
-      () => /view-application/i.test(window.location.pathname || window.location.href),
-      { timeout: 8000 },
-    ).catch(() => {});
-  }
   await page.waitForTimeout(1200);
 
-  if (!/view-application/i.test(page.url() || '')) {
-    throw new Error(`Expected view-application page after View click — got ${page.url()}`);
+  const openedUrl = page.url() || '';
+  if (!/view-application|simp\/importer\/application|payment-breakdown/i.test(openedUrl)) {
+    if (onLog) onLog(`Opened application from list. Current URL: ${openedUrl}`);
   }
 }
 

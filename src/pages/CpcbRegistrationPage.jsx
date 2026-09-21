@@ -9,6 +9,7 @@ import RegistrationPartC from '../components/RegistrationPartC.jsx';
 import RegistrationPartBSimpRawMaterial from '../components/RegistrationPartBSimpRawMaterial.jsx';
 import RegistrationPartCSimpRawMaterial from '../components/RegistrationPartCSimpRawMaterial.jsx';
 import EprTargetsConfirmationModal from '../components/EprTargetsConfirmationModal.jsx';
+import RegistrationPaymentModal from '../components/RegistrationPaymentModal.jsx';
 import RegistrationPreviewModal from '../components/RegistrationPreviewModal.jsx';
 import UploadedFilePreview from '../components/UploadedFilePreview.jsx';
 import {
@@ -40,6 +41,7 @@ import {
 import { storeCompressedUpload } from '../utils/storeUploadFile.js';
 import { normalizeRegistrationPaths } from '../utils/normalizeRegistrationPaths.js';
 import { SUB_APPLICANT_OPTIONS_MAP, isSimpRawMaterial } from '../../shared/entityRegistrationTypes.js';
+import { validateSimpSupplyPortalRows } from '../../shared/simpRawMaterialPartB.js';
 import { getStartRegistrationBlockers, getRegistrationChecklist } from '../utils/registrationStartReadiness.js';
 import { sanitizeAutomationUserError } from '../utils/automationLogFilter.js';
 import { downloadExcelTemplate, parseExcelFile, importExcelRows } from '../utils/excelImport.js';
@@ -222,6 +224,8 @@ export default function CpcbRegistrationPage() {
   const [paymentBypassMode, setPaymentBypassMode] = useState('choose');
   const [showEprTargetsModal, setShowEprTargetsModal] = useState(false);
   const [eprTargetsModalData, setEprTargetsModalData] = useState(null);
+  const [paymentReviewData, setPaymentReviewData] = useState(null);
+  const [showPaymentReviewModal, setShowPaymentReviewModal] = useState(false);
   const [eprTargetsSubmitting, setEprTargetsSubmitting] = useState(false);
   const [isGeneralInfoExpanded, setIsGeneralInfoExpanded] = useState(true);
   const [isBusinessDetailsExpanded, setIsBusinessDetailsExpanded] = useState(true);
@@ -586,6 +590,23 @@ export default function CpcbRegistrationPage() {
     });
   }, [showToast]);
 
+  useEffect(() => {
+    if (!window.pwp?.scraper?.onPaymentReview) return undefined;
+    return window.pwp.scraper.onPaymentReview((data) => {
+      setPaymentReviewData((prev) => ({ ...(prev || {}), ...(data || {}) }));
+      setShowPaymentReviewModal(true);
+      setShowAutomationModal(true);
+      setAutomationPhase('running');
+      setCurrentAutomationStep(data?.message || (data?.payuUrl ? 'PayU checkout is open' : 'Payment breakdown ready'));
+      if (data?.message) appendAutomationLog(setAutomationLogs, data.message, 'success');
+      if (data?.payuUrl) {
+        showToast('PayU checkout opened in the app.', 'success', { duration: 8000 });
+      } else {
+        showToast(data?.message || 'CPCB payment breakdown is ready in the app.', 'success', { duration: 8000 });
+      }
+    });
+  }, [showToast]);
+
   const handleConfirmEprTargets = async () => {
     setEprTargetsSubmitting(true);
     try {
@@ -930,6 +951,13 @@ export default function CpcbRegistrationPage() {
       return;
     }
     if (wizardStep === 'partB') {
+      const supplyFieldIssues = validateSimpSupplyPortalRows(
+        (generalInfo.simpSupplyDetails || []).filter((row) => Number(row.quantityTons || row.quantityTpa || 0) > 0),
+      );
+      if (isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) && supplyFieldIssues.length) {
+        showToast(supplyFieldIssues[0].message, 'error', { duration: 14000 });
+        return;
+      }
       await persistRegistrationForm();
       showToast('Part B saved.', 'success');
       setWizardStep('partC');
@@ -938,7 +966,16 @@ export default function CpcbRegistrationPage() {
 
   const handlePreviewRegistration = () => {
     const isSimp = isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType);
-    if (!isSimp && !generalInfo.operatingStates?.length) {
+    if (isSimp) {
+      if (!generalInfo.yearOfCommencement) {
+        showToast('Year of Commencement of Production is required.', 'error');
+        return;
+      }
+      setIsPreviewMode(true);
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+      return;
+    }
+    if (!generalInfo.operatingStates?.length) {
       showToast('Select at least one operating state.', 'error');
       return;
     }
@@ -1727,13 +1764,11 @@ export default function CpcbRegistrationPage() {
 
   const handleLoginOnboardingResult = (res) => {
     if (res.success && res.step === 'APPLICATION_ONBOARDING_COMPLETE') {
-      const msg = `Application started — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}`;
-      completeAutomationModal(msg);
-      showToast(
-        `Application started! ${res.applicantType || 'PIBO'} — ${res.subApplicantType || 'Importer'} selected on CPCB portal. Browser is open.`,
-        'success',
-        { duration: 15000 },
-      );
+      const msg = `Application submitted — ${res.applicantType || 'PIBO'} / ${res.subApplicantType || 'Importer'}. Complete payment in the app window.`;
+      appendAutomationLog(setAutomationLogs, msg, 'success');
+      setAutomationPhase('running');
+      setCurrentAutomationStep('Complete payment on PayU…');
+      showToast('Application submitted. PayU / fee details should open in the app.', 'success', { duration: 15000 });
       return true;
     }
 
@@ -2915,11 +2950,12 @@ export default function CpcbRegistrationPage() {
         )}
 
         {registrationComplete && isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) && wizardStep === 'partB' && (
-          <RegistrationPartBSimpRawMaterial
-            generalInfo={generalInfo}
-            setGeneralInfo={setGeneralInfo}
-            gstin={autoData.gstin}
-            onPersist={(next) => {
+            <RegistrationPartBSimpRawMaterial
+              generalInfo={generalInfo}
+              setGeneralInfo={setGeneralInfo}
+              gstin={autoData.gstin}
+              fallbackContact={mobile}
+              onPersist={(next) => {
               if (next && window.pwp?.registration?.save) {
                 window.pwp.registration.save(
                   buildRegistrationSavePayload({
@@ -2966,8 +3002,39 @@ export default function CpcbRegistrationPage() {
             mobile={mobile}
           />
 
+          {isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) ? (
+            <div className="pointer-events-auto space-y-6 mt-6">
+              <RegistrationPartASimpRawMaterial
+                generalInfo={generalInfo}
+                autoData={autoData}
+                email={email}
+                mobile={mobile}
+                inputClass={inputClass}
+                selectClass={inputClass}
+                uploadingField=""
+                isPreview
+              />
+              <RegistrationPartBSimpRawMaterial
+                generalInfo={generalInfo}
+                setGeneralInfo={setGeneralInfo}
+                gstin={autoData.gstin}
+                fallbackContact={mobile}
+                isPreview
+              />
+              <RegistrationPartCSimpRawMaterial
+                generalInfo={generalInfo}
+                setGeneralInfo={setGeneralInfo}
+                autoData={autoData}
+                setAutoData={setAutoData}
+                email={email}
+                mobile={mobile}
+                showToast={showToast}
+                inputClass={inputClass}
+              />
+            </div>
+          ) : (
+            <>
           <div className="pointer-events-auto">
-            {!isSimpRawMaterial(generalInfo.applicantType, generalInfo.subApplicantType) && (
               <ImporterEprPreparedReview
                 detailsOfProductsPath={autoData.detailsOfProductsPath || ''}
                 representativePicturePath={autoData.representativePicturePath || ''}
@@ -2983,12 +3050,13 @@ export default function CpcbRegistrationPage() {
                 onPlasticConsumedChange={handlePlasticConsumedChange}
                 plasticConsumedSource={plasticConsumedSource}
               />
-            )}
           </div>
 
           <div className="pointer-events-auto">
             <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} isPreview={true} />
           </div>
+            </>
+          )}
         </RegistrationPreviewModal>
 
         {!isPreviewMode && (
@@ -3091,7 +3159,7 @@ export default function CpcbRegistrationPage() {
 
 
 
-      {loading && !showAutomationModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && (
+      {loading && !showAutomationModal && !showLoginCaptchaModal && !showLoginOtpModal && !showPaymentBypassModal && !showPaymentReviewModal && (
         <div className="fixed inset-0 z-[90] bg-white/85 flex flex-col items-center justify-center">
           <Loader2 size={40} className="animate-spin text-green-600 mb-4" />
           <p className="text-slate-800 font-semibold">Please wait</p>
@@ -3456,6 +3524,13 @@ export default function CpcbRegistrationPage() {
         submitting={eprTargetsSubmitting}
         onConfirm={handleConfirmEprTargets}
         onCancel={handleCancelEprTargets}
+      />
+
+      <RegistrationPaymentModal
+        isOpen={showPaymentReviewModal}
+        data={paymentReviewData}
+        onClose={() => setShowPaymentReviewModal(false)}
+        onOpenPayu={(url) => window.pwp?.scraper?.openPayuWindow?.(url)}
       />
 
       {studioOpen && (

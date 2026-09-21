@@ -6,6 +6,8 @@ import { spawn } from 'child_process';
 import { uploadDocumentByLabel } from './cpcbRegistration.js';
 import { getDb } from '../db/database.js';
 import { notifyPaymentBypassPrompt, waitForPaymentBypassAnswer } from './paymentBypassBridge.js';
+import { notifyPaymentReview } from './paymentReviewBridge.js';
+import { openPayuInAppWindow } from '../payment/payuWindow.js';
 import { notifyEprTargetsPrompt, waitForEprTargetsConfirmation } from './eprTargetsConfirmationBridge.js';
 import {
   collectPortalAlerts,
@@ -188,6 +190,8 @@ export function normalizeApplicationData(raw = {}) {
     gstin: src.gstin || src.gst || '',
     companyPan: src.companyPan || src.pan || '',
     cin: src.cin || '',
+    mobile: src.mobile || src.authMobile || '',
+    email: src.email || '',
   };
 }
 
@@ -1368,6 +1372,18 @@ function openUrlInSystemChrome(url, onLog) {
   return true;
 }
 
+function isPayuCheckoutUrl(url) {
+  const u = String(url || '');
+  if (!/^https?:\/\//i.test(u)) return false;
+  if (/checkoutx\?/i.test(u)) return false;
+  return /webcheckoutpro|payucheckout|\/recommended/i.test(u) || (/payu\.in\//i.test(u) && !/\/checkoutx/i.test(u));
+}
+
+function pickPayuCheckoutUrl(urls = []) {
+  const list = [...new Set((urls || []).filter(Boolean))];
+  return list.find(isPayuCheckoutUrl) || '';
+}
+
 function paymentModal(page, titleRe) {
   return page.getByRole('dialog').filter({ hasText: titleRe }).first()
     .or(page.locator('.modal, .cdk-overlay-pane, .p-dialog, [role="dialog"]').filter({ hasText: titleRe }).first());
@@ -1375,34 +1391,46 @@ function paymentModal(page, titleRe) {
 
 async function clickModalButton(page, titleRe, buttonName, onLog, timeout = 12000) {
   const modal = paymentModal(page, titleRe);
-  if (!(await modal.isVisible({ timeout }).catch(() => false))) return false;
-  const btn = modal.getByRole('button', { name: new RegExp(`^${buttonName}$`, 'i') }).first()
-    .or(modal.locator('button').filter({ hasText: new RegExp(`^${buttonName}$`, 'i') }).first());
-  await btn.click({ timeout: 8000 }).catch(() => btn.click({ force: true }));
-  if (onLog) onLog(`Clicked ${buttonName} on ${titleRe}`);
+  const visible = await modal.isVisible({ timeout }).catch(() => false);
+  const nameRe = new RegExp(`^\\s*${buttonName}\\s*$`, 'i');
+  const yesExact = page.locator('button.submit-pay-btn:not(.submit-pay-btn-no)').filter({ hasText: nameRe }).first();
+  const btn = visible
+    ? modal.locator('button.submit-pay-btn:not(.submit-pay-btn-no), button').filter({ hasText: nameRe }).first()
+        .or(modal.getByRole('button', { name: nameRe }).first())
+    : yesExact.or(page.locator('button:visible').filter({ hasText: nameRe }).first());
+  if (!(await btn.isVisible({ timeout: visible ? 8000 : timeout }).catch(() => false))) return false;
+  await btn.scrollIntoViewIfNeeded().catch(() => {});
+  try {
+    await btn.click({ timeout: 8000 });
+  } catch {
+    await btn.click({ force: true }).catch(() => {});
+    await btn.evaluate((el) => el.click()).catch(() => {});
+  }
+  if (onLog) onLog(`Clicked ${buttonName} on Submit Application popup.`);
   await page.waitForTimeout(1500);
   return true;
 }
 
-/** Clicks the pay button once and captures the PayU link it generates. */
+/** Clicks the pay button once and captures the PayU checkout page (not the checkoutx API). */
 async function capturePayuAndOpenChrome(page, payBtn, onLog) {
   const captured = [];
   const onReq = (req) => {
     const url = req.url();
-    if (/payu|webcheckoutpro|payment/i.test(url) && /https?:/i.test(url)) captured.push(url);
+    if (isPayuCheckoutUrl(url)) captured.push(url);
   };
-  page.on('request', onReq);
+  const context = page.context();
+  context.on('request', onReq);
 
-  if (onLog) onLog('Clicking Click to Pay / Submit & Pay to generate payment link...');
-  const popupPromise = page.context().waitForEvent('page', { timeout: 25000 }).catch(() => null);
+  notifyPaymentReview({ step: 'click-to-pay', message: 'Click To Pay — opening PayU checkout…' });
+  if (onLog) onLog('Click To Pay — generating PayU checkout page…');
+  const popupPromise = context.waitForEvent('page', { timeout: 30000 }).catch(() => null);
 
   await payBtn.scrollIntoViewIfNeeded().catch(() => {});
   try {
     await payBtn.click({ timeout: 10000 });
   } catch {
-    // The button often navigates or detaches on the first click — never let the
-    // retry hang on Playwright's 30s default.
     await payBtn.click({ force: true, timeout: 5000 }).catch(() => {});
+    await payBtn.evaluate((el) => el.click()).catch(() => {});
   }
 
   const popup = await popupPromise;
@@ -1412,11 +1440,16 @@ async function capturePayuAndOpenChrome(page, payBtn, onLog) {
   }
 
   try {
-    await page.waitForURL(/payu|webcheckoutpro/i, { timeout: 15000 });
+    await page.waitForURL((url) => isPayuCheckoutUrl(url), { timeout: 18000 });
     captured.unshift(page.url());
-  } catch { /* stay on breakdown */ }
+  } catch { /* stay on breakdown or popup */ }
 
-  page.off('request', onReq);
+  await page.waitForTimeout(1500);
+  for (const p of context.pages()) {
+    captured.push(p.url());
+  }
+
+  context.off('request', onReq);
 
   const scanDomForPayu = async (target) =>
     target
@@ -1425,6 +1458,10 @@ async function capturePayuAndOpenChrome(page, payBtn, onLog) {
           /payu|webcheckoutpro/i.test(f.action || '')
         );
         if (form?.action) return form.action;
+        const iframe = Array.from(document.querySelectorAll('iframe')).find((f) =>
+          /payu|webcheckoutpro/i.test(f.src || '')
+        );
+        if (iframe?.src) return iframe.src;
         const link = Array.from(document.querySelectorAll('a[href]')).find((a) =>
           /payu|webcheckoutpro/i.test(a.href || '')
         );
@@ -1432,21 +1469,86 @@ async function capturePayuAndOpenChrome(page, payBtn, onLog) {
       })
       .catch(() => '');
 
-  const payuUrl = captured.find((u) => /payu|webcheckoutpro/i.test(u))
-    || page.context().pages().reverse().find((p) => /payu|webcheckoutpro/i.test(p.url()))?.url()
-    || (popup ? await scanDomForPayu(popup) : '')
-    || (await scanDomForPayu(page))
-    || '';
+  const payuUrl = pickPayuCheckoutUrl(captured)
+    || pickPayuCheckoutUrl([
+      popup ? popup.url() : '',
+      page.url(),
+      popup ? await scanDomForPayu(popup) : '',
+      await scanDomForPayu(page),
+    ]);
 
   if (payuUrl) {
-    if (onLog) onLog(`Payment link: ${payuUrl}`);
-    openUrlInSystemChrome(payuUrl, onLog);
+    if (onLog) onLog(`PayU checkout page: ${payuUrl}`);
+    try {
+      openPayuInAppWindow(payuUrl);
+      if (onLog) onLog('PayU checkout opened in the app payment window.');
+    } catch (err) {
+      if (onLog) onLog(`In-app PayU window failed (${err.message}). Opening Chrome instead.`);
+      openUrlInSystemChrome(payuUrl, onLog);
+    }
+    notifyPaymentReview({ step: 'payu', payuUrl, portalUrl: page.url(), message: 'PayU checkout is open.' });
     await trackPaymentActivity(page, onLog);
   } else if (onLog) {
-    onLog(`PayU URL not detected. Current URL: ${page.url()}`);
-    if (captured.length) onLog(`Payment URLs seen: ${captured.slice(0, 5).join(' | ')}`);
+    onLog(`PayU checkout page not detected. Current URL: ${page.url()}`);
+    if (captured.length) onLog(`URLs seen: ${captured.slice(0, 8).join(' | ')}`);
   }
   return payuUrl;
+}
+
+export async function scrapePaymentBreakdownDetails(page, onLog) {
+  const details = await page.evaluate(() => {
+    const norm = (s) => String(s || '').replace(/\s+/g, ' ').trim();
+    const full = norm(document.body?.innerText || '');
+    const grab = (label, until = '') => {
+      const stop = until || 'Name|Residential Address|State/UT|Type of facility|Person Name|Designation|Mobile Number|PAN Number|Email ID|Application Fee|Waste Generated|Fee in Rs|Amount to be Paid|Average Of Last|Click To Pay|Back';
+      const re = new RegExp(`${label}\\s*[:\\-]?\\s*(.+?)(?=\\s+(?:${stop})\\b|$)`, 'i');
+      const m = full.match(re);
+      return m ? norm(m[1]) : '';
+    };
+    return {
+      company: {
+        name: grab('(?:Company Details\\s+)?Name', 'Residential Address'),
+        address: grab('Residential Address', 'State/UT'),
+        state: grab('State/UT', 'Type of facility'),
+        typeOfFacility: grab('Type of facility', 'Contact Person'),
+      },
+      contact: {
+        personName: grab('Person Name', 'Designation'),
+        designation: grab('Designation', 'Mobile Number'),
+        mobile: grab('Mobile Number', 'PAN Number'),
+        pan: grab('PAN Number', 'Email ID'),
+        email: grab('Email ID', 'Application Fee'),
+      },
+      fee: {
+        description: grab(
+          'Fee for registration[\\s\\S]{0,160}?Rules\\.',
+          'Average Of Last',
+        ) || (full.match(/Fee for registration[\s\S]{0,200}?Rules\./i) || [])[0] || '',
+        averageRate: grab('Average Of Last 2 Years / Fee @ Rs\\. 10 / T', 'Waste Generated'),
+        wasteGeneratedTpa: grab('Waste Generated \\(TPA\\)', 'Fee in Rs'),
+        feeInRs: grab('Fee in Rs\\.', 'Amount to be Paid'),
+        amountToBePaid: grab('Amount to be Paid', 'Back|Click To Pay'),
+      },
+      fullText: full.slice(0, 5000),
+    };
+  }).catch(() => ({ company: {}, contact: {}, fee: {}, fullText: '' }));
+
+  let screenshotDataUrl = '';
+  try {
+    const buf = await page.screenshot({ type: 'jpeg', quality: 55 });
+    screenshotDataUrl = `data:image/jpeg;base64,${Buffer.from(buf).toString('base64')}`;
+  } catch {
+    /* screenshot optional */
+  }
+
+  const payload = {
+    ...details,
+    screenshotDataUrl,
+    portalUrl: page.url(),
+  };
+  notifyPaymentReview(payload);
+  if (onLog) onLog(`Payment breakdown captured for app: ${payload.fee?.amountToBePaid || payload.company?.name || page.url()}`);
+  return payload;
 }
 
 async function trackPaymentActivity(page, onLog) {
@@ -1541,6 +1643,7 @@ async function clickPaymentBypassNo(page, onLog, timeoutMs = 30000) {
  */
 async function findPayButton(page, onLog, timeoutMs = 4000) {
   const names = [
+    /Click\s*To\s*Pay/i,
     /Click to Pay/i,
     /Submit\s*&\s*Pay/i,
     /Submit and Pay/i,
@@ -1557,17 +1660,27 @@ async function findPayButton(page, onLog, timeoutMs = 4000) {
   return null;
 }
 
-async function handlePaymentPopupsAndOpenPayu(page, onLog) {
-  if (onLog) onLog('Waiting for Submit Application confirmation...');
+export async function handlePaymentPopupsAndOpenPayu(page, onLog) {
+  if (!/payment-breakdown/i.test(page.url() || '')) {
+    if (onLog) onLog('Submit Application popup — clicking Yes…');
+    notifyPaymentReview({
+      step: 'submit-modal',
+      message: 'Confirm ke baad Submit Application popup. Yes click ho raha hai.',
+    });
 
-  const submitConfirm = await clickModalButton(page, /Submit Application/i, 'Yes', onLog, 15000);
-  if (!submitConfirm) {
-    const yes = page.locator('button:visible').filter({ hasText: /^Yes$/i }).first();
-    if (await yes.isVisible({ timeout: 4000 }).catch(() => false)) {
-      await yes.click({ force: true }).catch(() => {});
-      if (onLog) onLog('Clicked Yes on confirmation popup');
-      await page.waitForTimeout(1500);
+    const submitConfirm = await clickModalButton(page, /Submit Application|Do you want to submit application/i, 'Yes', onLog, 12000);
+    if (!submitConfirm) {
+      const yes = page.locator('button.submit-pay-btn:not(.submit-pay-btn-no), button:visible').filter({
+        hasText: /^\s*Yes\s*$/i,
+      }).first();
+      if (await yes.isVisible({ timeout: 4000 }).catch(() => false)) {
+        await yes.click({ force: true }).catch(() => {});
+        if (onLog) onLog('Clicked Yes on confirmation popup');
+        await page.waitForTimeout(1500);
+      }
     }
+  } else if (onLog) {
+    onLog('Already on payment-breakdown.');
   }
 
   try {
@@ -1576,6 +1689,12 @@ async function handlePaymentPopupsAndOpenPayu(page, onLog) {
   } catch {
     if (onLog) onLog(`Current URL after submit: ${page.url()}`);
   }
+
+  await waitForPortalBusy(page, 20000);
+  await page.getByText(/Amount to be Paid|Click To Pay|Application Fee/i).first()
+    .waitFor({ state: 'visible', timeout: 15000 })
+    .catch(() => {});
+  await scrapePaymentBreakdownDetails(page, onLog);
 
   const clickedNo = await clickPaymentBypassNo(page, onLog);
   if (!clickedNo && onLog) onLog('Payment Bypass popup not visible — continuing.');

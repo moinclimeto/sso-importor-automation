@@ -19,6 +19,8 @@ import {
   generateSimpSupplyDetailsExcelBuffer,
   parseSimpImportDetailsExcelBuffer,
   parseSimpSupplyDetailsExcelBuffer,
+  prepareSimpSupplyRowsForPortal,
+  validateSimpSupplyPortalRows,
 } from '../../shared/simpRawMaterialPartB.js';
 import { resolveCompanyIdFromGstin } from '../utils/resolveCompanyIdFromGstin.js';
 
@@ -64,11 +66,12 @@ function ExcelActionButtons({ onDownload, onUploadClick, busy }) {
   );
 }
 
-function TableCard({ title, columns, rows, onAdd, onRemove, onChange, children, extraActions }) {
+function TableCard({ title, columns, rows, onAdd, onRemove, onChange, children, extraActions, isPreview = false }) {
   return (
     <div className="rounded-xl border border-slate-200 overflow-hidden bg-white">
       <div className="flex items-center justify-between gap-3 px-4 py-3 bg-teal-700 text-white">
         <h4 className="text-sm font-semibold">{title}</h4>
+        {!isPreview ? (
         <div className="flex items-center gap-2">
           {extraActions}
           <button
@@ -80,6 +83,7 @@ function TableCard({ title, columns, rows, onAdd, onRemove, onChange, children, 
             Add row
           </button>
         </div>
+        ) : null}
       </div>
       <div className="overflow-x-auto">
         <table className="min-w-full text-sm">
@@ -105,9 +109,12 @@ function TableCard({ title, columns, rows, onAdd, onRemove, onChange, children, 
                   <td className="px-2 py-2 text-slate-500">{index + 1}</td>
                   {columns.map((col) => (
                     <td key={col.key} className="px-2 py-2">
-                      {col.render(row, (value) => onChange(index, col.key, value))}
+                      {isPreview
+                        ? <span className="text-slate-800">{String(row[col.key] ?? '').trim() || (col.key === 'quantityTons' ? String(row.quantityTpa || '') : '') || '—'}</span>
+                        : col.render(row, (value) => onChange(index, col.key, value))}
                     </td>
                   ))}
+                  {!isPreview ? (
                   <td className="px-2 py-2">
                     <button
                       type="button"
@@ -118,6 +125,7 @@ function TableCard({ title, columns, rows, onAdd, onRemove, onChange, children, 
                       <Trash2 size={15} />
                     </button>
                   </td>
+                  ) : null}
                 </tr>
               ))
             )}
@@ -134,12 +142,15 @@ export default function RegistrationPartBSimpRawMaterial({
   setGeneralInfo,
   onPersist,
   gstin = '',
+  fallbackContact = '',
+  isPreview = false,
 }) {
   const fyOptions = useMemo(() => getCpcbPortalPartA3cYears(), []);
   const requiredYears = useMemo(() => requiredSimpImportFinancialYears(), []);
   const importRows = Array.isArray(generalInfo.simpImportDetails) ? generalInfo.simpImportDetails : [];
   const supplyRows = Array.isArray(generalInfo.simpSupplyDetails) ? generalInfo.simpSupplyDetails : [];
   const gstinValue = gstin || generalInfo.gstin || generalInfo.unitGst || generalInfo.plantGst || '';
+  const contactFallback = fallbackContact || generalInfo.mobile || '';
   const supplyHasData = supplyRows.some(
     (row) => importRowQuantity(row) > 0 || String(row.entityName || '').trim(),
   );
@@ -150,6 +161,12 @@ export default function RegistrationPartBSimpRawMaterial({
   const yearIssues = useMemo(
     () => validateSimpImportCoveringRequiredYears(importRows, requiredYears),
     [importRows, requiredYears],
+  );
+  const contactIssues = useMemo(
+    () => validateSimpSupplyPortalRows(
+      (supplyRows || []).filter((row) => importRowQuantity(row) > 0),
+    ),
+    [supplyRows],
   );
   const [preparing, setPreparing] = useState(false);
   const [excelBusy, setExcelBusy] = useState(false);
@@ -210,7 +227,7 @@ export default function RegistrationPartBSimpRawMaterial({
       ),
     },
     {
-      header: 'Contact',
+      header: 'Contact *',
       key: 'contact',
       render: (row, onValue) => (
         <input value={row.contact || ''} onChange={(e) => onValue(e.target.value)} className={inputClass} />
@@ -302,7 +319,7 @@ export default function RegistrationPartBSimpRawMaterial({
       ),
     },
     {
-      header: 'Contact',
+      header: 'Contact *',
       key: 'contact',
       render: (row, onValue) => (
         <input value={row.contact || ''} onChange={(e) => onValue(e.target.value)} className={inputClass} />
@@ -325,7 +342,7 @@ export default function RegistrationPartBSimpRawMaterial({
       ),
     },
     {
-      header: 'Import Date (YYYY-MM-DD)',
+      header: 'Sales Date (YYYY-MM-DD)',
       key: 'salesDate',
       render: (row, onValue) => (
         <input
@@ -412,7 +429,7 @@ export default function RegistrationPartBSimpRawMaterial({
         }
         return;
       }
-      patch('simpSupplyDetails', rows);
+      patch('simpSupplyDetails', prepareSimpSupplyRowsForPortal(rows, { fallbackContact: contactFallback }));
       setPrepareMessage(`Prepared ${rows.length} sales row(s) from published Doc Processor sales.`);
     } catch (err) {
       if (!silent) setPrepareMessage(err?.message || 'Could not prepare sales details from Doc Processor.');
@@ -451,7 +468,9 @@ export default function RegistrationPartBSimpRawMaterial({
     setExcelBusy(true);
     setPrepareMessage('');
     try {
-      const buffer = await generateSimpSupplyDetailsExcelBuffer(supplyRows);
+      const buffer = await generateSimpSupplyDetailsExcelBuffer(supplyRows, {
+        fallbackContact: contactFallback,
+      });
       downloadExcelBuffer(buffer, SIMP_SUPPLY_EXCEL_FILE_NAME);
       setPrepareMessage(
         supplyRows.length
@@ -500,7 +519,7 @@ export default function RegistrationPartBSimpRawMaterial({
         setPrepareMessage('No supply rows found in that Excel. Use Importer Sales Template headers (Operations sheet).');
         return;
       }
-      patch('simpSupplyDetails', rows);
+      patch('simpSupplyDetails', prepareSimpSupplyRowsForPortal(rows, { fallbackContact: contactFallback }));
       setPrepareMessage(`Loaded ${rows.length} supply row(s) from Excel. You can still edit cells or add rows here.`);
     } catch (err) {
       setPrepareMessage(err?.message || 'Could not read supply Excel.');
@@ -524,6 +543,7 @@ export default function RegistrationPartBSimpRawMaterial({
         title="Import Details of last two Financial Years"
         columns={importColumns}
         rows={importRows}
+        isPreview={isPreview}
         onAdd={() => patch('simpImportDetails', [...importRows, emptySimpImportRow()])}
         onRemove={(index) => patch('simpImportDetails', importRows.filter((_, i) => i !== index))}
         onChange={(index, key, value) => updateRow('simpImportDetails', index, key, value)}
@@ -558,6 +578,7 @@ export default function RegistrationPartBSimpRawMaterial({
         title="List of Producers and Quantum of Raw Materials supplied to Producers/Sellers in last two Financial Years"
         columns={supplyColumns}
         rows={supplyRows}
+        isPreview={isPreview}
         onAdd={() => patch('simpSupplyDetails', [...supplyRows, emptySimpSupplyRow()])}
         onRemove={(index) => patch('simpSupplyDetails', supplyRows.filter((_, i) => i !== index))}
         onChange={(index, key, value) => updateRow('simpSupplyDetails', index, key, value)}
@@ -597,6 +618,16 @@ export default function RegistrationPartBSimpRawMaterial({
           {yearIssues.map((issue) => (
             <p key={issue.missingYears.join('-')}>{issue.message}</p>
           ))}
+        </div>
+      ) : null}
+
+      {contactIssues.length > 0 ? (
+        <div className="rounded-lg border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-800 space-y-1">
+          <p className="font-medium">CPCB sales Excel will reject these rows:</p>
+          {contactIssues.map((issue) => (
+            <p key={`${issue.row}-${issue.field}`}>{issue.message}</p>
+          ))}
+          <p>Fill Contact (mobile) on every sales row. If the buyer mobile is missing, enter it here before Register.</p>
         </div>
       ) : null}
 

@@ -98,13 +98,12 @@ export const SIMP_SUPPLY_DETAILS_COLUMNS = [
   { header: 'Entity Type', key: 'entityType', width: 22 },
   { header: 'EPR Registration No.', key: 'eprRegistrationNo', width: 22 },
   { header: 'Name', key: 'entityName', width: 28 },
-  { header: 'Country', key: 'country', width: 16 },
   { header: 'Address', key: 'address', width: 36 },
   { header: 'Contact', key: 'contact', width: 16 },
   { header: 'Financial Year', key: 'financialYear', width: 16 },
   { header: 'Type Of Plastic Raw Material', key: 'plasticType', width: 28 },
   { header: 'Quantity(tons)', key: 'quantityTons', width: 16 },
-  { header: 'Import Date (YYYY-MM-DD)', key: 'salesDate', width: 24 },
+  { header: 'Sales Date (YYYY-MM-DD)', key: 'salesDate', width: 24 },
 ];
 
 export function normalizePlasticTypeKey(value = '') {
@@ -282,26 +281,129 @@ export function resolveSimpSupplyRegistrationType(sale = {}, supplierMaster = []
   return 'Registered';
 }
 
+export function firstNonEmptySimpContact(...values) {
+  for (const value of values) {
+    const text = String(value || '').replace(/\s+/g, '').trim();
+    if (text) return String(value).trim();
+  }
+  return '';
+}
+
+export function defaultSimpDateForFinancialYear(financialYear = '') {
+  const fy = normalizeFinancialYearKey(financialYear);
+  const start = fy.match(/^(20\d{2})/);
+  return start ? `${start[1]}-04-01` : '';
+}
+
 export function resolveSimpSupplyContact(sale = {}, supplierMaster = []) {
   const extraction = parseNestedObject(sale.extraction);
   const sourceFields = parseNestedObject(sale._source_fields);
-  const candidates = [
+  const fromMaster = findSimpPartyMaster(sale, supplierMaster);
+  return firstNonEmptySimpContact(
     sale.mobile_number,
+    sale.customer_mobile_number,
+    sale.buyer_mobile,
+    sale.buyer_mobile_number,
     sale.contact,
+    sale.contact_number,
     sale.phone,
     sale.mobile,
     extraction.mobile_number,
     extraction.mobile,
     extraction.phone,
     extraction.buyer_mobile,
+    extraction.customer_mobile,
     sourceFields.mobile_number,
     sourceFields.mobile,
-  ];
-  for (const value of candidates) {
-    if (String(value || '').replace(/\s+/g, '').trim()) return String(value).trim();
-  }
-  const fromMaster = findSimpPartyMaster(sale, supplierMaster);
-  return String(fromMaster?.mobile || fromMaster?.mobile_number || '').trim();
+    fromMaster?.mobile,
+    fromMaster?.mobile_number,
+    fromMaster?.phone,
+    fromMaster?.contact,
+  );
+}
+
+export function prepareSimpSupplyRowsForPortal(records = [], { fallbackContact = '' } = {}) {
+  return (records || [])
+    .filter((row) => importRowQuantity(row) > 0)
+    .map((row) => {
+      const financialYear = normalizeFinancialYearKey(row.financialYear || row.financial_year || row.fy || '');
+      const salesDate = formatSimpImportDate(
+        row.salesDate || row.sales_date || row.invoice_date || row.importDate || '',
+      ) || defaultSimpDateForFinancialYear(financialYear)
+        || defaultSimpDateForFinancialYear(requiredSimpImportFinancialYears()[0]);
+      const entityType = String(row.entityType || row.entity_type || '').trim() || 'Producer';
+      return {
+        ...emptySimpSupplyRow(),
+        ...row,
+        registrationType: /unreg/i.test(String(row.registrationType || row.registration_type || ''))
+          ? 'Unregistered'
+          : 'Registered',
+        entityType,
+        eprRegistrationNo: String(row.eprRegistrationNo || row.epr_registration_number || '').trim(),
+        entityName: String(row.entityName || row.entity_name || row.name || '').trim(),
+        country: defaultSimpCountry(row.country || row.buyer_country),
+        address: String(row.address || row.buyer_address || '').trim(),
+        contact: firstNonEmptySimpContact(
+          row.contact,
+          row.phone,
+          row.mobile,
+          row.mobile_number,
+          fallbackContact,
+        ),
+        financialYear,
+        plasticType: mapToSimpPlasticType(row.plasticType || row.plastic_type || row.resinType || ''),
+        quantityTons: importRowQuantity(row),
+        quantityTpa: importRowQuantity(row),
+        salesDate,
+      };
+    });
+}
+
+export function prepareSimpImportRowsForPortal(records = [], { fallbackContact = '' } = {}) {
+  return (records || [])
+    .filter((row) => importRowQuantity(row) > 0)
+    .map((row) => {
+      const financialYear = normalizeFinancialYearKey(row.financialYear || row.financial_year || row.fy || '');
+      const importDate = formatSimpImportDate(
+        row.importDate || row.import_date || row.invoice_date || '',
+      ) || defaultSimpDateForFinancialYear(financialYear);
+      return {
+        ...emptySimpImportRow(),
+        ...row,
+        entityName: String(row.entityName || row.entity_name || row.name || '').trim(),
+        country: defaultSimpCountry(row.country || row.origin_country),
+        address: String(row.address || row.supplier_address || '').trim(),
+        contact: firstNonEmptySimpContact(row.contact, row.phone, row.mobile, row.mobile_number, fallbackContact),
+        financialYear,
+        plasticType: mapToSimpPlasticType(row.plasticType || row.plastic_type || row.resinType || ''),
+        quantityTons: importRowQuantity(row),
+        quantityTpa: importRowQuantity(row),
+        importDate,
+      };
+    });
+}
+
+export function validateSimpSupplyPortalRows(rows = []) {
+  const issues = [];
+  (rows || []).forEach((row, index) => {
+    const n = index + 1;
+    if (!String(row.entityName || '').trim()) {
+      issues.push({ row: n, field: 'name', message: `Row ${n}: 'name' is required and cannot be empty` });
+    }
+    if (!String(row.country || '').trim()) {
+      issues.push({ row: n, field: 'country', message: `Row ${n}: 'country' is required and cannot be empty` });
+    }
+    if (!String(row.contact || '').trim()) {
+      issues.push({ row: n, field: 'contact', message: `Row ${n}: 'contact' is required and cannot be empty` });
+    }
+    if (!String(row.salesDate || row.importDate || '').trim()) {
+      issues.push({ row: n, field: 'importDate', message: `Row ${n}: 'Import date' is required and cannot be empty` });
+    }
+    if (!String(row.entityType || '').trim()) {
+      issues.push({ row: n, field: 'entityType', message: `Row ${n}: 'entity type' is required and cannot be empty` });
+    }
+  });
+  return issues;
 }
 
 export function resolveSimpSupplyEprNo(sale = {}, supplierMaster = []) {
@@ -634,11 +736,12 @@ export async function generateSimpImportDetailsExcelBuffer(records = []) {
       entityName: String(r.entityName || r.entity_name || r.name || '').trim(),
       country: defaultSimpCountry(r.country || r.origin_country),
       address: String(r.address || r.supplier_address || '').trim(),
-      contact: String(r.contact || r.phone || r.mobile || '').trim(),
+      contact: firstNonEmptySimpContact(r.contact, r.phone, r.mobile, r.mobile_number),
       financialYear: normalizeFinancialYearKey(r.financialYear || r.financial_year || r.fy || ''),
       plasticType: mapToSimpPlasticType(r.plasticType || r.plastic_type || r.resinType || ''),
       quantityTons: qty,
-      importDate: formatSimpImportDate(r.importDate || r.import_date || r.invoice_date || ''),
+      importDate: formatSimpImportDate(r.importDate || r.import_date || r.invoice_date || '')
+        || defaultSimpDateForFinancialYear(r.financialYear || r.financial_year),
     });
   }
 
@@ -652,7 +755,7 @@ export async function generateSimpImportDetailsExcelBuffer(records = []) {
  * @param {Array<object>} records
  * @returns {Promise<Buffer>}
  */
-export async function generateSimpSupplyDetailsExcelBuffer(records = []) {
+export async function generateSimpSupplyDetailsExcelBuffer(records = [], { fallbackContact = '' } = {}) {
   const workbook = new ExcelJS.Workbook();
   const sheet = workbook.addWorksheet(SIMP_SUPPLY_EXCEL_SHEET_NAME);
 
@@ -669,7 +772,8 @@ export async function generateSimpSupplyDetailsExcelBuffer(records = []) {
     fgColor: { argb: 'FFE8F8ED' },
   };
 
-  for (const r of records) {
+  const prepared = prepareSimpSupplyRowsForPortal(records, { fallbackContact });
+  for (const r of prepared) {
     const qty = importRowQuantity(r);
     const regType = /unreg/i.test(String(r.registrationType || r.registration_type || ''))
       ? 'UnRegistered'
@@ -680,13 +784,14 @@ export async function generateSimpSupplyDetailsExcelBuffer(records = []) {
       entityType: String(r.entityType || r.entity_type || '').trim(),
       eprRegistrationNo: String(r.eprRegistrationNo || r.epr_registration_number || '').trim(),
       entityName: String(r.entityName || r.entity_name || r.name || '').trim(),
-      country: defaultSimpCountry(r.country || r.buyer_country),
       address: String(r.address || r.buyer_address || '').trim(),
-      contact: String(r.contact || r.phone || r.mobile || '').trim(),
+      contact: String(r.contact || '').trim(),
       financialYear: normalizeFinancialYearKey(r.financialYear || r.financial_year || r.fy || ''),
       plasticType: mapToSimpPlasticType(r.plasticType || r.plastic_type || r.resinType || ''),
       quantityTons: qty,
-      salesDate: formatSimpImportDate(r.salesDate || r.sales_date || r.invoice_date || r.importDate || ''),
+      salesDate: formatSimpImportDate(r.salesDate || r.sales_date || r.invoice_date || r.importDate || '')
+        || defaultSimpDateForFinancialYear(r.financialYear || r.financial_year)
+        || defaultSimpDateForFinancialYear(requiredSimpImportFinancialYears()[0]),
     });
   }
 
@@ -735,7 +840,7 @@ function mapImportHeaderToKey(header = '') {
   if (h === 'name' || h === 'nameofentity' || h === 'entityname') return 'entityName';
   if (h === 'country') return 'country';
   if (h === 'address') return 'address';
-  if (h === 'contact' || h === 'mobile' || h === 'mobilenumber' || h === 'phone') return 'contact';
+  if (h === 'contact' || h === 'mobile' || h === 'mobilenumber' || h === 'phone' || h === 'contactnumber') return 'contact';
   if (h === 'financialyear' || h === 'fy') return 'financialYear';
   if (h.includes('typeofplastic') || h === 'plastictype' || h === 'resintype') return 'plasticType';
   if (h.includes('quantity')) return 'quantityTons';
@@ -751,7 +856,7 @@ function mapSupplyHeaderToKey(header = '') {
   if (h === 'name' || h === 'nameofentity' || h === 'entityname') return 'entityName';
   if (h === 'country') return 'country';
   if (h === 'address') return 'address';
-  if (h === 'contact' || h === 'mobile' || h === 'mobilenumber' || h === 'phone') return 'contact';
+  if (h === 'contact' || h === 'mobile' || h === 'mobilenumber' || h === 'phone' || h === 'contactnumber') return 'contact';
   if (h === 'financialyear' || h === 'fy') return 'financialYear';
   if (h.includes('typeofplastic') || h === 'plastictype' || h === 'resintype') return 'plasticType';
   if (h.includes('quantity')) return 'quantityTons';

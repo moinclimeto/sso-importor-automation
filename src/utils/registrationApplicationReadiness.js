@@ -53,7 +53,7 @@ function partAHint(label = '') {
 }
 
 import { isSimpRawMaterial, unitGstMatchesCompanyPan, panFromGstin } from '../../shared/entityRegistrationTypes.js';
-import { validateSimpRawMaterialSupplyAgainstImport, validateSimpImportCoveringRequiredYears } from '../../shared/simpRawMaterialPartB.js';
+import { validateSimpRawMaterialSupplyAgainstImport, validateSimpImportCoveringRequiredYears, validateSimpSupplyPortalRows, prepareSimpSupplyRowsForPortal } from '../../shared/simpRawMaterialPartB.js';
 
 /** Blockers for Register / New Application — runs before login or automation. */
 export function getRegisterApplicationBlockers({
@@ -147,6 +147,17 @@ export function getRegisterApplicationBlockers({
       blockers.push({
         id: `simp-supply-${issue.financialYear}-${issue.plasticType}`,
         label: issue.message,
+        section: 'partB',
+      });
+    }
+
+    const preparedSupply = prepareSimpSupplyRowsForPortal(generalInfo.simpSupplyDetails || [], {
+      fallbackContact: generalInfo.mobile || autoData.mobile || '',
+    });
+    for (const issue of validateSimpSupplyPortalRows(preparedSupply)) {
+      blockers.push({
+        id: `simp-supply-field-${issue.row}-${issue.field}`,
+        label: `Part B sales Excel: ${issue.message}`,
         section: 'partB',
       });
     }
