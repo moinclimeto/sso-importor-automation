@@ -516,9 +516,11 @@ export async function getCaptchaImageDataUrl(page, onLog) {
   if (element?.locator) {
     await element.locator.scrollIntoViewIfNeeded().catch(() => {});
     await page.waitForTimeout(300);
-    const buffer = await element.locator.screenshot();
-    if (onLog) onLog(`Captcha loaded from portal ${element.type} screenshot`);
-    return { captchaImage: `data:image/png;base64,${buffer.toString('base64')}` };
+    const buffer = await element.locator.screenshot({ timeout: 5000 }).catch(() => null);
+    if (buffer) {
+      if (onLog) onLog(`Captcha loaded from portal ${element.type} screenshot`);
+      return { captchaImage: `data:image/png;base64,${buffer.toString('base64')}` };
+    }
   }
 
   throw new Error('Captcha image not found on Supporting Documents tab');

@@ -471,6 +471,8 @@ export default function SalesReview() {
       quantity: totalMt,
       lineItems,
       item_name: first?.productDescription || record.item_name,
+      hsn_code: first?.hsn || record.hsn_code,
+      unit: first?.uom || first?.unit || record.unit,
       category_of_plastic: bulkCat || first?.plasticCategory || record.category_of_plastic,
       plastic_type: bulkMaterial || first?.plasticMaterial || record.plastic_type,
       product_type: isClinker ? 'Clinker' : (header.product_type || record.product_type || 'Cement'),
@@ -589,7 +591,7 @@ export default function SalesReview() {
   }
 
   return (
-    <div className="flex flex-col h-[calc(100vh-7rem)] min-h-0 gap-3">
+    <div className="absolute inset-6 flex flex-col min-h-0 gap-3 overflow-hidden">
       {/* Top bar */}
       <div className="flex flex-wrap items-center justify-between gap-3 bg-white border border-slate-200 rounded-xl px-4 py-3 shadow-sm">
         <div className="flex items-center gap-2">
@@ -633,7 +635,7 @@ export default function SalesReview() {
 
       <div className="flex flex-1 min-h-0 gap-3 flex-col lg:flex-row">
         {/* Invoice preview */}
-        <div className="w-full lg:w-[42%] lg:shrink-0 flex flex-col h-[38vh] lg:h-auto lg:min-h-0 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
+        <div className="w-full lg:w-[42%] lg:shrink-0 flex flex-col h-[38vh] lg:h-full lg:min-h-0 bg-white border border-slate-200 rounded-xl overflow-hidden shadow-sm">
           <div className="px-3 py-2 border-b border-slate-100 text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">
             Invoice Preview
           </div>
@@ -647,7 +649,7 @@ export default function SalesReview() {
         </div>
 
         {/* Right panel — single scroll so line items always render */}
-        <div className="flex-1 min-h-0 overflow-y-auto pr-1 space-y-3">
+        <div className="flex-1 h-full min-h-0 overflow-y-auto pr-1 space-y-3">
           {/* Document header — no Verify Supplier */}
           <section className="bg-white border border-slate-200 rounded-xl p-4 shadow-sm">
             <div className="flex items-center justify-between gap-3 mb-3">

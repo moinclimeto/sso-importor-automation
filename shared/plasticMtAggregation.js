@@ -120,12 +120,16 @@ export function aggregateByFinancialYear(records = [], docType = 'purchase', fil
 
 /** FY + State → Cat-I / Cat-II / Cat-III / Cat-IV / Total (MT) */
 export function aggregateByStateAndFy(records = [], docType = 'purchase', filters = {}) {
-  const rows = filterRecords(records, { ...filters, docType });
+  const { defaultState, ...restFilters } = filters;
+  const rows = filterRecords(records, { ...restFilters, docType });
   const byKey = {};
 
   for (const row of rows) {
     const fy = resolveRecordFy(row, docType);
-    const state = resolveRecordState(row, docType);
+    let state = resolveRecordState(row, docType);
+    if (state === 'Unknown' && defaultState) {
+      state = defaultState;
+    }
     const key = `${fy}::${state}`;
     if (!byKey[key]) {
       byKey[key] = { financial_year: fy, state, ...emptyCategoryMtMap() };

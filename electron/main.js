@@ -10,9 +10,18 @@ import { initDatabase, dbJsonPath } from './db/database.js';
 import { migrateFromJsonToSqlite } from './db/dataMigration.js';
 import { registerAuthHandlers } from './authHandlers.js';
 import { appendStartupLog, getRendererIndexHtml } from './appPaths.js';
+import { enforceSingleInstance, registerMainWindow, focusMainWindow } from './platform/singleInstance.js';
+import { initAutoUpdater, stopAutoUpdater } from './updater/autoUpdater.js';
+import { registerUpdaterHandlers } from './updater/ipc.js';
+import { registerTelemetryHandlers } from './telemetry/ipc.js';
+import { setTelemetryDatabase, startTelemetry, stopTelemetry } from './telemetry/telemetry.js';
 
 initMainMonitoring();
 loadEnvFile();
+
+if (!enforceSingleInstance()) {
+  process.exit(0);
+}
 
 try {
   dns.setDefaultResultOrder('ipv4first');
@@ -106,6 +115,7 @@ function createWindow() {
   });
 
   attachWindowMonitoring(win);
+  registerMainWindow(win);
 
   if (isDevMode()) {
     win.webContents.on('console-message', (_event, level, message, line, sourceId) => {
@@ -149,11 +159,14 @@ async function startApp() {
 
   try {
     registerMonitoringHandlers();
+    registerUpdaterHandlers();
+    registerTelemetryHandlers();
   } catch (err) {
     captureException(err, { type: 'startup-monitoring-ipc', process: 'main' });
   }
 
-  createWindow();
+  const win = createWindow();
+  focusMainWindow();
   appendStartupLog('window created');
 
   onAppReadyMonitoring().catch((err) => {
@@ -164,8 +177,11 @@ async function startApp() {
   try {
     await initDatabase(async (database) => {
       await migrateFromJsonToSqlite(database, dbJsonPath);
+      setTelemetryDatabase(database);
     });
     appendStartupLog('database ready');
+    startTelemetry();
+    initAutoUpdater();
   } catch (err) {
     captureException(err, { type: 'startup-database', process: 'main' });
     showStartupError('Climeto Importer database error', err);
@@ -197,6 +213,15 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 
+app.on('before-quit', () => {
+  stopAutoUpdater();
+  stopTelemetry().catch(() => {});
+});
+
 app.on('activate', () => {
-  if (BrowserWindow.getAllWindows().length === 0) createWindow();
+  if (BrowserWindow.getAllWindows().length === 0) {
+    registerMainWindow(createWindow());
+  } else {
+    focusMainWindow();
+  }
 });

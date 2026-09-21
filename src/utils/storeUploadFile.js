@@ -5,6 +5,11 @@ export async function storeCompressedUpload(file, options = {}) {
   if (!sourcePath) {
     sourcePath = await persistLocalUpload(file);
   }
+
+  if (!sourcePath && file instanceof File) {
+    const blobUrl = URL.createObjectURL(file);
+    return { success: true, filePath: blobUrl, compressed: false, fileName: options.fileName || file.name };
+  }
   if (!sourcePath) {
     return { success: false, message: 'Could not read the file path. Please upload from the desktop app.' };
   }

@@ -443,7 +443,7 @@ export function buildExtractionPrompt(type, financialYear = 'all', companyDocTyp
 
     return `OCR PROCUREMENT / PURCHASE invoice. JSON only minified. Extract SUPPLIER (seller/vendor) details for data entry. Also extract BUYER details only for company matching — never copy buyer into supplier fields.
 ${fyHint}
-{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"buyer_address":null,"buyer_state":null,"buyer_city":null,"buyer_pin_code":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
+{"registration_type":null,"entity_type":null,"supplier_name":null,"supplier_gst":null,"supplier_address":null,"supplier_state":null,"supplier_city":null,"supplier_pin_code":null,"supplier_mobile":null,"buyer_name":null,"buyer_gst":null,"buyer_address":null,"buyer_state":null,"buyer_city":null,"buyer_pin_code":null,"invoice_number":null,"irn_no":null,"account_number":null,"ifsc_code":null,"country":null,"plastic_material_type":null,"category_of_plastic":null,"financial_year":null,"date":null,"hsn_code":null,"total_plastic_quantity":null,"quantity_unit":null,"recycled_plastic_percent":null,"conversion_factor":null,"line_items":[{"product":null,"product_description":null,"hsn":null,"quantity":null,"unit":null,"weight":null,"weight_unit":null,"rate":null}]}
 CRITICAL PARTY RULES:
 - supplier_name / supplier_gst / supplier_address / supplier_mobile = SELLER/VENDOR party ONLY (Bill From, Sold By, Dispatched From, Supplier, Party Name on purchase side).
 - supplier_gst also appears in invoice footer as "Company's GST No.", "Our GSTIN", "GSTIN/UIN" near signature — that is the SELLER GST (issuer), not the buyer.
@@ -487,7 +487,7 @@ conversion_factor=numeric if printed else null.`;
   return `OCR SALE. JSON only minified.
 Counterparty=BUYER(Bill To).Also extract seller GST+name for company match.Seller bank for bank fields.
 ${fy}
-{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","pin":"","city":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","products":[{"d":"","h":"","m":"","q":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
+{"inv":"","dt":"YYYY-MM-DD","cpy":"original","buyerName":"","buyerGst":"","sellerName":"","sellerGst":"","addr":"","st":"","dist":"","pin":"","city":"","ac":"","ifsc":"","mob":"","ent":"","reg":"","fy":"","tot":0,"pc":"","hsn_code":"","products":[{"d":"","h":"","m":"","q":"","u":"","a":0,"ga":0,"gr":0,"c":"","rp":""}]}
 RULES:buyerName/buyerGst/addr/st/dist/pin/city/mob=buyer(customer).sellerName/sellerGst=seller.st=State name from buyer address (not code).dist=District if printed.pin=PIN if printed.sellerName/sellerGst=seller.ac/ifsc=seller bank.tot=grand total.dt=YYYY-MM-DD.ent=Entity Type (Producer/PWP/Brand Owner/Importer/Manufacturer/Other).reg=Registration Type (Registered/Unregistered).fy=Financial Year (e.g. 2023-24).c/rp/pc/reg only if printed else "".cpy='original'|'duplicate'|'triplicate' from header top right (default original).${productsHint}`;
 }
 
@@ -505,6 +505,8 @@ export function expandRawExtraction(raw = {}) {
 
 
 
+  const topHsn = nf(raw.hsn ?? raw.hsn_code ?? raw.hsnCode);
+
   const products = productsSrc.slice(0, 15).map((p, i) => {
     const uom = normalizeLineUom({
       quantity: p.q ?? p.quantity ?? p.qty,
@@ -520,7 +522,7 @@ export function expandRawExtraction(raw = {}) {
 
       productDescription: nf(p.d ?? p.productDescription ?? p.description ?? p.item_name),
 
-      hsn: nf(p.h ?? p.hsn ?? p.hsnCode ?? p.hsn_code) || resolveLineHsn(p),
+      hsn: nf(p.h ?? p.hsn ?? p.hsnCode ?? p.hsn_code) || resolveLineHsn(p) || topHsn,
 
       plasticMaterial: nf(p.m ?? p.plasticMaterial ?? p.plasticType ?? p.plastic_type),
 
@@ -597,6 +599,8 @@ export function expandRawExtraction(raw = {}) {
     totalInvoiceAmount: num(raw.tot ?? raw.gstOtherCharges ?? raw.totalInvoiceAmount ?? raw.total_amount) || null,
 
     registrationType: nf(raw.reg ?? raw.registrationType) || null,
+    
+    hsn_code: topHsn || null,
     
     entityType: nf(raw.ent ?? raw.entityType ?? raw.entity_type) || null,
     

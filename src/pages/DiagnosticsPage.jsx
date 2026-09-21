@@ -52,6 +52,15 @@ export default function DiagnosticsPage() {
     load();
   }
 
+  async function checkUpdates() {
+    const result = await window.pwp?.app?.checkForUpdates?.();
+    if (result?.reason === 'development') {
+      setNotice('Auto-update only runs in installed (packaged) builds.');
+      return;
+    }
+    setNotice(result?.success ? 'Update check started. Watch the banner for progress.' : `Update check failed: ${result?.reason || 'unknown'}`);
+  }
+
   return (
     <div className="space-y-5">
       {oldOs && (
@@ -103,6 +112,9 @@ export default function DiagnosticsPage() {
         </button>
         <button type="button" onClick={flush} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm hover:bg-slate-50">
           <Send size={14} /> Retry upload
+        </button>
+        <button type="button" onClick={checkUpdates} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-200 bg-white text-sm hover:bg-slate-50">
+          <RefreshCw size={14} /> Check updates
         </button>
         <button type="button" onClick={sendTest} className="inline-flex items-center gap-2 px-3 py-2 rounded-lg bg-green-600 text-white text-sm hover:bg-green-700">
           <AlertTriangle size={14} /> Send test error

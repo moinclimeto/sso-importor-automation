@@ -385,7 +385,7 @@ function isBrandOwnerApplicant(data = {}) {
 function partASection2StateField(page) {
   return page.locator('app-form-field-renderer').filter({
     hasText: new RegExp(
-      `2\\s*a\\)\\s*Select States\\/UTs in which the ${PIBO_ENTITY_LABEL} is Operating`,
+      `2\\s*a\\)\\s*Select States\\/UTs in which the ${PIBO_ENTITY_LABEL} is Operating|Select States\\/UTs in which the .* is Operating`,
       'i',
     ),
   }).first();

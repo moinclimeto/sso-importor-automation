@@ -1256,6 +1256,20 @@ export default function DocTable() {
   const [searchQuery, setSearchQuery] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [pageSize, setPageSize] = useState(25);
+  const [partyFilter, setPartyFilter] = useState('');
+
+  const uniqueParties = useMemo(() => {
+    const parties = new Set();
+    rows.forEach(r => {
+      const party = isPurchase 
+        ? (r.supplier_name || r.vendor_name || '') 
+        : (r.entity_name || r.customer_name || '');
+      if (party.trim()) {
+        parties.add(party.trim());
+      }
+    });
+    return Array.from(parties).sort((a, b) => a.localeCompare(b));
+  }, [rows, isPurchase]);
 
   const handlePageSizeChange = (size) => {
     setPageSize(size);
@@ -1299,11 +1313,52 @@ export default function DocTable() {
     return Object.values(groups).sort((a, b) => b.key.localeCompare(a.key));
   }, [rows]);
 
-  // Filtered rows based on search query
+  const partyGroups = useMemo(() => {
+    const groups = {};
+    rows.forEach(r => {
+      const partyName = isPurchase 
+        ? (r.supplier_name || r.vendor_name || '') 
+        : (r.entity_name || r.customer_name || '');
+      
+      const partyKey = partyName.trim() || 'Unknown Party';
+      
+      if (!groups[partyKey]) {
+        groups[partyKey] = {
+          label: partyKey,
+          key: partyKey,
+          rows: [],
+          totalQtyMT: 0,
+          totalAmount: 0,
+        };
+      }
+      
+      groups[partyKey].rows.push(r);
+      const qtyMT = resolveRecordTotalMt(r, isPurchase ? 'purchase' : 'sale')
+        ?? parseFloat(r.quantity_sold_mt || r.quantity_mt || r.quantity || r.available_quantity_mt || 0);
+      const amount = parseFloat(r.total_amount || 0);
+      
+      if (!isNaN(qtyMT)) groups[partyKey].totalQtyMT += qtyMT;
+      if (!isNaN(amount)) groups[partyKey].totalAmount += amount;
+    });
+    
+    return Object.values(groups).sort((a, b) => a.label.localeCompare(b.label));
+  }, [rows, isPurchase]);
+
+  // Filtered rows based on search query and party filter
   const filteredRows = useMemo(() => {
-    if (!searchQuery.trim()) return rows;
+    let result = rows;
+    if (partyFilter) {
+      result = result.filter(r => {
+        const party = isPurchase 
+          ? (r.supplier_name || r.vendor_name || '') 
+          : (r.entity_name || r.customer_name || '');
+        return party.trim() === partyFilter;
+      });
+    }
+
+    if (!searchQuery.trim()) return result;
     const q = searchQuery.trim().toLowerCase();
-    return rows.filter((r) => {
+    return result.filter((r) => {
       const supplierName = (r.supplier_name || r.vendor_name || r.entity_name || r.customer_name || '').toLowerCase();
       const invoiceNo = (r.invoice_no || r.invoice_number || r.application_number || '').toLowerCase();
       const invoiceDate = (r.invoice_date || r.procurement_date || '').toLowerCase();
@@ -1319,7 +1374,7 @@ export default function DocTable() {
         state.includes(q)
       );
     });
-  }, [rows, searchQuery]);
+  }, [rows, searchQuery, partyFilter, isPurchase]);
 
   // Paginated rows
   const totalPages = Math.max(1, Math.ceil(filteredRows.length / pageSize));
@@ -1329,8 +1384,8 @@ export default function DocTable() {
     return filteredRows.slice(start, start + pageSize);
   }, [filteredRows, currentPage, totalPages, pageSize]);
 
-  // Reset to page 1 when search changes or type changes
-  useEffect(() => { setCurrentPage(1); }, [searchQuery, type]);
+  // Reset to page 1 when search, party or type changes
+  useEffect(() => { setCurrentPage(1); }, [searchQuery, partyFilter, type]);
 
   const handleDownloadMonthInvoices = async (monthGroup) => {
     if (!monthGroup || !monthGroup.rows.length) return;
@@ -1647,14 +1702,14 @@ export default function DocTable() {
 
 
 
-      const { saved, duplicates } = await importExcelRows(type, parsed);
+      const { saved, updated, duplicates } = await importExcelRows(type, parsed);
 
-
-
-      let msg = `Imported ${saved} ${title.toLowerCase()} record(s) from Excel.`;
-
+      let msg = `Imported ${saved} new record(s)`;
+      if (updated > 0) msg += `, updated ${updated} existing`;
+      msg += ` from Excel.`;
+      
       if (duplicates) {
-        msg += ` Skipped ${duplicates} duplicate invoice(s).`;
+        msg += ` Skipped ${duplicates} duplicates.`;
       }
 
 
@@ -1852,6 +1907,13 @@ export default function DocTable() {
             >
               Month-wise
             </button>
+            <button
+              type="button"
+              onClick={() => setViewMode('party')}
+              className={`px-2.5 py-1 text-xs font-medium rounded-md transition-colors ${viewMode === 'party' ? 'bg-white text-slate-800 shadow-sm' : 'text-slate-500 hover:text-slate-700'}`}
+            >
+              Party-wise
+            </button>
           </div>
           {(
             <div className="flex bg-emerald-50 p-0.5 rounded-lg border border-emerald-100">
@@ -1911,8 +1973,19 @@ export default function DocTable() {
 
         {/* Search Bar - only visible in row-wise mode */}
         {viewMode === 'row' && (
-          <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
+          <div className="flex items-center gap-2">
+            <select
+              value={partyFilter}
+              onChange={(e) => setPartyFilter(e.target.value)}
+              className="px-3 py-1.5 text-xs rounded-lg border border-slate-200 bg-white text-slate-700 focus:outline-none focus:ring-2 focus:ring-slate-300 max-w-[200px]"
+            >
+              <option value="">All Parties</option>
+              {uniqueParties.map(p => (
+                <option key={p} value={p}>{p}</option>
+              ))}
+            </select>
+            <div className="relative">
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 pointer-events-none" />
             <input
               type="text"
               value={searchQuery}
@@ -1929,6 +2002,7 @@ export default function DocTable() {
                 <X size={13} />
               </button>
             )}
+          </div>
           </div>
         )}
 
@@ -2029,12 +2103,57 @@ export default function DocTable() {
               </tbody>
             </table>
           </div>
+        ) : viewMode === 'party' ? (
+          <div className="bg-white border border-slate-200 rounded-xl shadow-sm overflow-hidden">
+            <table className="w-full text-sm">
+              <thead className="bg-slate-50 border-b border-slate-200">
+                <tr>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Party Name</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Total Invoices</th>
+                  <th className="px-4 py-3 text-left font-semibold text-slate-600">Total Quantity (MT)</th>
+                  <th className="px-4 py-3 text-right font-semibold text-slate-600">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {partyGroups.map((pg) => (
+                  <tr key={pg.key} className="border-b border-slate-100 hover:bg-slate-50/60 transition-colors">
+                    <td className="px-4 py-3 font-medium text-slate-800">{pg.label}</td>
+                    <td className="px-4 py-3 text-slate-600">{pg.rows.length}</td>
+                    <td className="px-4 py-3 text-slate-600">{fmt(pg.totalQtyMT)} MT</td>
+                    <td className="px-4 py-3 text-right">
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setMonthDetail(pg)}
+                          className="px-3 py-1.5 text-xs font-medium text-slate-700 bg-slate-100 rounded-lg hover:bg-slate-200"
+                        >
+                          View
+                        </button>
+                        <button
+                          onClick={() => handleDownloadMonthInvoices(pg)}
+                          className="px-3 py-1.5 text-xs font-medium text-white bg-slate-800 rounded-lg hover:bg-slate-900 flex items-center gap-1.5"
+                        >
+                          <Download size={14} /> Download
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
         ) : isPurchase ? (
 
           <>
-            {renderWideTable(paginatedRows, PURCHASE_TABLE_COLUMNS, requestDelete, tableExtras({
+            {renderWideTable(paginatedRows, PURCHASE_TABLE_COLUMNS.filter(c => c.key !== 'country'), requestDelete, tableExtras({
               onReview: (r) => navigate(`/procurement-review/${r.id}?tab=${docTab}`),
               getValue: (r, col, _idx, value) => {
+                let parsedLines = [];
+                try {
+                  const raw = r.line_items || r.lineItems;
+                  parsedLines = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+                } catch(e) {}
+                const firstLine = parsedLines[0] || {};
+                
                 if (col.key === 'category_of_plastic') return 'Cat-II';
                 if (col.key === 'supplier_name' && !value) return r.vendor_name;
                 if (col.key === 'invoice_number' && !value) return r.invoice_no;
@@ -2043,6 +2162,14 @@ export default function DocTable() {
                 if (col.key === 'date_of_entry') return cell(r.date_of_entry || r.invoice_date || value);
                 if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin || r.supplier_gst || r.seller_gst;
                 if (col.key === 'supplier_gst' && !value) return r.supplier_gst_number || r.vendor_gstin || r.seller_gst;
+                
+                // Line item field fallbacks
+                if (col.key === 'hsn') return firstLine.hsn || firstLine.hsn_code || r.hsn || r.hsn_code || value;
+                if (col.key === 'unit') return firstLine.unit || firstLine.uom || r.unit || value;
+                if (col.key === 'item_name') return firstLine.productDescription || firstLine.product || firstLine.item_name || r.item_name || value;
+                if (col.key === 'invoice_quantity') return firstLine.quantity || r.invoice_quantity || r.quantity || value;
+                if (col.key === 'rate') return firstLine.rate || firstLine.price || r.rate || r.price || value;
+                
                 if (col.key === 'quantity_mt' && (value === undefined || value === '')) {
                   const mt = resolveRecordTotalMt(r, 'purchase');
                   if (mt != null) return fmt(mt);
@@ -2072,6 +2199,20 @@ export default function DocTable() {
             {renderWideTable(paginatedRows, SALE_TABLE_COLUMNS, requestDelete, tableExtras({
               onReview: (r) => navigate(`/sales-review/${r.id}?tab=${docTab}`),
               getValue: (r, col, idx, value) => {
+                let parsedLines = [];
+                try {
+                  const raw = r.line_items || r.lineItems;
+                  parsedLines = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+                } catch(e) {}
+                const firstLine = parsedLines[0] || {};
+                
+                // Line item field fallbacks
+                if (col.key === 'hsn') return firstLine.hsn || firstLine.hsn_code || r.hsn || r.hsn_code || value;
+                if (col.key === 'unit') return firstLine.unit || firstLine.uom || r.unit || value;
+                if (col.key === 'item_name') return firstLine.productDescription || firstLine.product || firstLine.item_name || r.item_name || value;
+                if (col.key === 'invoice_quantity') return firstLine.quantity || r.invoice_quantity || r.quantity || value;
+                if (col.key === 'rate') return firstLine.rate || firstLine.price || r.rate || r.price || value;
+
                 if (col.key === 's_no' && (value === undefined || value === '')) return (Math.min(currentPage, totalPages) - 1) * pageSize + idx + 1;
                 if (col.key === 'entity_name' && !value) return r.customer_name;
                 if (col.key === 'category_of_plastic') return 'Cat-II';
@@ -2206,7 +2347,95 @@ export default function DocTable() {
               </div>
             </div>
             <div className="p-0 overflow-y-auto flex-1">
-              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS : SALE_TABLE_COLUMNS, requestDelete, tableExtras())}
+              {renderWideTable(monthDetail.rows, isPurchase ? PURCHASE_TABLE_COLUMNS.filter(c => c.key !== 'country') : SALE_TABLE_COLUMNS, requestDelete, tableExtras(isPurchase ? {
+                getValue: (r, col, _idx, value) => {
+                  let parsedLines = [];
+                  try {
+                    const raw = r.line_items || r.lineItems;
+                    parsedLines = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+                  } catch(e) {}
+                  const firstLine = parsedLines[0] || {};
+                  
+                  if (col.key === 'category_of_plastic') return 'Cat-II';
+                  if (col.key === 'supplier_name' && !value) return r.vendor_name;
+                  if (col.key === 'invoice_number' && !value) return r.invoice_no;
+                  if (col.key === 'invoice_date') return cell(r.invoice_date || r.procurement_date || r.date_of_entry || value);
+                  if (col.key === 'procurement_date') return cell(r.procurement_date || r.invoice_date || value);
+                  if (col.key === 'date_of_entry') return cell(r.date_of_entry || r.invoice_date || value);
+                  if (col.key === 'supplier_gst_number' && !value) return r.vendor_gstin || r.supplier_gst || r.seller_gst;
+                  if (col.key === 'supplier_gst' && !value) return r.supplier_gst_number || r.vendor_gstin || r.seller_gst;
+                  
+                  // Line item field fallbacks
+                  if (col.key === 'hsn') return firstLine.hsn || firstLine.hsn_code || r.hsn || r.hsn_code || value;
+                  if (col.key === 'unit') return firstLine.unit || firstLine.uom || r.unit || value;
+                  if (col.key === 'item_name') return firstLine.productDescription || firstLine.product || firstLine.item_name || r.item_name || value;
+                  if (col.key === 'invoice_quantity') return firstLine.quantity || r.invoice_quantity || r.quantity || value;
+                  if (col.key === 'rate') return firstLine.rate || firstLine.price || r.rate || r.price || value;
+                  
+                  if (col.key === 'quantity_mt' && (value === undefined || value === '')) {
+                    const mt = resolveRecordTotalMt(r, 'purchase');
+                    if (mt != null) return fmt(mt);
+                    return r.quantity != null ? fmt(r.quantity) : value;
+                  }
+                  if ((col.key === 'quantity_mt' || col.key === 'quantity_kg') && value !== undefined && value !== '') return fmt(value);
+                  if (col.key === 'quantity_kg' && (value === undefined || value === '')) {
+                    const mt = resolveRecordTotalMt(r, 'purchase') ?? r.quantity_mt;
+                    if (mt) return fmt(Number(mt) * 1000);
+                  }
+                  return value;
+                }
+              } : {
+                getValue: (r, col, _idx, value) => {
+                  let parsedLines = [];
+                  try {
+                    const raw = r.line_items || r.lineItems;
+                    parsedLines = typeof raw === 'string' ? JSON.parse(raw) : (Array.isArray(raw) ? raw : []);
+                  } catch(e) {}
+                  const firstLine = parsedLines[0] || {};
+                  
+                  // Line item field fallbacks
+                  if (col.key === 'hsn') return firstLine.hsn || firstLine.hsn_code || r.hsn || r.hsn_code || value;
+                  if (col.key === 'unit') return firstLine.unit || firstLine.uom || r.unit || value;
+                  if (col.key === 'item_name') return firstLine.productDescription || firstLine.product || firstLine.item_name || r.item_name || value;
+                  if (col.key === 'invoice_quantity') return firstLine.quantity || r.invoice_quantity || r.quantity || value;
+                  if (col.key === 'rate') return firstLine.rate || firstLine.price || r.rate || r.price || value;
+
+                  if (col.key === 'entity_name' && !value) return r.customer_name;
+                  if (col.key === 'category_of_plastic') return 'Cat-II';
+                  if (col.key === 'product_type') {
+                    const hsn = String(r.hsn_code || r.hsn || '').trim();
+                    return hsn === '25231000' ? 'Clinker' : 'Cement';
+                  }
+                  if (col.key === 'invoice_date') return cell(r.invoice_date || value);
+                  if (col.key === 'recycled_plastic_percent') {
+                    if (r.product_type === 'Clinker') return '100';
+                    return '';
+                  }
+                  if (col.key === 'district') {
+                    return cell(resolveSalesDistrict(r) || value);
+                  }
+                  if (col.key === 'account_number') {
+                    const resolved = String(r.account_number || globalBankDetails.account_number || '').trim();
+                    return cell(resolved || value);
+                  }
+                  if (col.key === 'ifsc_code') {
+                    const resolved = String(r.ifsc_code || globalBankDetails.ifsc_code || '').trim();
+                    return cell(resolved || value);
+                  }
+                  if (col.key === 'gst_other_charges') {
+                    const resolved = resolveSalesGstOtherCharges(r);
+                    if (resolved !== '' && resolved != null) return fmt(resolved);
+                    if (value !== undefined && value !== '') return fmt(value);
+                    return cell(value);
+                  }
+                  if ((col.key === 'quantity_sold_mt' || col.key === 'quantity') && (value === undefined || value === '')) {
+                    const mt = resolveRecordTotalMt(r, 'sale');
+                    if (mt != null) return fmt(mt);
+                  }
+                  if ((col.key === 'quantity_sold_mt' || col.key === 'quantity') && value !== undefined && value !== '') return fmt(value);
+                  return value;
+                }
+              }))}
             </div>
           </div>
         </div>

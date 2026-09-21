@@ -163,6 +163,15 @@ export function buildRegistrationDataFromDocuments(docs = []) {
   const cin = byType.cin;
   const udyam = byType.udyam;
   const iecDoc = byType.iec;
+  const supportingCategoryDoc = byType.supporting_category_doc;
+  const operationsDetailsDoc = byType.operations_details;
+  const plasticPackagingDoc = byType.plastic_packaging_picture;
+
+  const getOrig = (d) => {
+    if (!d) return '';
+    const raw = parseRaw(d);
+    return raw.original_name || raw.fileName || raw.invoice_file_name || raw._page?.sourceFileName || d.file_path?.split(/[/\\]/)?.pop() || '';
+  };
 
   const gstin = firstNonEmpty(gst?.document_number, gstRaw.document_number).toUpperCase();
   const companyPan = firstNonEmpty(
@@ -251,6 +260,21 @@ export function buildRegistrationDataFromDocuments(docs = []) {
     unitGstDoc: firstNonEmpty(unitGstDoc?.file_path),
     cinDocumentPath: firstNonEmpty(cin?.file_path),
     iecDocumentPath: firstNonEmpty(iecDoc?.file_path),
+    typeOfCompanyDoc: firstNonEmpty(supportingCategoryDoc?.file_path),
+    detailsOfProductsPath: firstNonEmpty(operationsDetailsDoc?.file_path),
+    representativePicturePath: firstNonEmpty(plasticPackagingDoc?.file_path),
+
+    // Original file names
+    panOriginalName: getOrig(companyPanDoc) || getOrig(personPanDoc),
+    companyPanOriginalName: getOrig(companyPanDoc),
+    personPanOriginalName: getOrig(personPanDoc),
+    gstOriginalName: getOrig(gst),
+    unitGstOriginalName: getOrig(unitGstDoc),
+    cinOriginalName: getOrig(cin),
+    iecOriginalName: getOrig(iecDoc),
+    typeOfCompanyDocOriginalName: getOrig(supportingCategoryDoc),
+    detailsOfProductsOriginalName: getOrig(operationsDetailsDoc),
+    representativePictureOriginalName: getOrig(plasticPackagingDoc),
   };
 }
 

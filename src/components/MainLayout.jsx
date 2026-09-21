@@ -2,9 +2,10 @@ import { useState, useEffect } from 'react';
 import { Outlet, NavLink, useLocation, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext.jsx';
 import {
-  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet, Activity
+  Building2, LogOut, Menu, X, FileScan, LayoutGrid, Upload, Database, LayoutDashboard, ChevronDown, ChevronRight, Loader2, ArrowLeft, FileSpreadsheet, Activity, Moon, Bell, ChevronLeft
 } from 'lucide-react';
 import logo from '../assets/ClimetoTransparentLogo.png';
+import sidebarBg from '../../assets/sidebar.png';
 import { getApi } from '../utils/pwpApi.js';
 import { Toast, useToast } from '../components/Toast.jsx';
 import { RefreshCw } from 'lucide-react';
@@ -13,14 +14,15 @@ import ReadinessGuidelinesModal from './ReadinessGuidelinesModal.jsx';
 import CpcbLoginModal from './CpcbLoginModal.jsx';
 
 const navLinks = [
-  {
-    icon: LayoutDashboard,
-    label: 'Overview',
-    subLinks: [
-      // { to: '/dashboard', label: 'Dashboard' },
-      { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
-    ]
-  },
+  // {
+  //   icon: LayoutDashboard,
+  //   label: 'Overview',
+  //   subLinks: [
+  //     // { to: '/dashboard', label: 'Dashboard' },
+  //     { to: '/cpcb-dashboard', label: 'CPCB Dashboard' }
+  //   ]
+  // },
+  { to: '/cpcb-dashboard', icon: LayoutDashboard, label: 'CPCB Dashboard' },/*  */
   /*
   {
     icon: Database,
@@ -94,7 +96,7 @@ const NavItem = ({ item, sidebarOpen }) => {
       <div className="mb-0.5">
         <button
           onClick={() => setIsOpen(!isOpen)}
-          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors text-sm font-medium ${isChildActive ? 'bg-green-50 text-green-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
+          className={`w-full flex items-center justify-between px-3 py-2.5 rounded-lg transition-colors text-[15px] font-bold ${isChildActive ? 'bg-green-50 text-green-700' : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'}`}
         >
           <div className="flex items-center gap-3">
             {Icon && <Icon size={18} className="flex-shrink-0" />}
@@ -110,7 +112,7 @@ const NavItem = ({ item, sidebarOpen }) => {
               <NavLink
                 key={sub.to}
                 to={sub.to}
-                className={({ isActive }) => `px-3 py-2 rounded-lg text-sm font-medium transition-colors ${isActive ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
+                className={({ isActive }) => `px-3 py-2 rounded-lg text-[14px] font-semibold transition-colors ${isActive ? 'bg-green-50 text-green-700' : 'text-slate-500 hover:text-slate-800 hover:bg-slate-50'}`}
               >
                 {sub.label}
               </NavLink>
@@ -126,9 +128,9 @@ const NavItem = ({ item, sidebarOpen }) => {
       to={item.to}
       className={({ isActive }) => {
         const active = isActive || (item.to === '/doc-processor' && isDocSection);
-        return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-0.5 transition-colors text-sm font-medium
+        return `flex items-center gap-3 px-3 py-2.5 rounded-lg mb-1 transition-colors text-[15px] font-bold
         ${active
-            ? 'bg-green-50 text-green-700'
+            ? 'bg-emerald-50 text-emerald-800'
             : 'text-slate-600 hover:bg-slate-50 hover:text-slate-900'
           }`;
       }}
@@ -198,9 +200,9 @@ function MainLayoutInner() {
 
   const handleRegistrationConfirm = async () => {
     try {
-      const res = await window.pwp.registration.save({ 
-        applicant_type: 'PWP', 
-        sub_applicant_type: 'Cement Co-processing' 
+      const res = await window.pwp.registration.save({
+        applicant_type: 'PWP',
+        sub_applicant_type: 'Cement Co-processing'
       });
       if (res.success) {
         if (res.inserted) {
@@ -217,20 +219,20 @@ function MainLayoutInner() {
     }
   };
 
-    useEffect(() => {
-      const loadCompany = async () => {
-        if (!window.pwp?.companies) return;
-        try {
-          const companies = await window.pwp.companies.getAll();
-          if (companies?.length) {
-            setMyCompany(companies[0]);
-          }
-        } catch (err) {
-          console.error('Failed to load company profile', err);
+  useEffect(() => {
+    const loadCompany = async () => {
+      if (!window.pwp?.companies) return;
+      try {
+        const companies = await window.pwp.companies.getAll();
+        if (companies?.length) {
+          setMyCompany(companies[0]);
         }
-      };
-      loadCompany();
-    }, []);
+      } catch (err) {
+        console.error('Failed to load company profile', err);
+      }
+    };
+    loadCompany();
+  }, []);
 
   const handleSyncEpr = async () => {
     setSyncingEpr(true);
@@ -277,18 +279,24 @@ function MainLayoutInner() {
   return (
     <div className="flex h-screen bg-[#f7f8fa] overflow-hidden">
       <aside
-        className={`${sidebarOpen ? 'w-56' : 'w-16'} bg-white border-r border-slate-200 flex flex-col transition-all duration-300 flex-shrink-0`}
+        className={`${sidebarOpen ? 'w-56' : 'w-16'} bg-white border-r border-slate-200 flex flex-col transition-all duration-300 flex-shrink-0 relative overflow-hidden`}
+        style={{ backgroundImage: `linear-gradient(rgba(255, 255, 255, 0.65), rgba(255, 255, 255, 0.65)), url(${sidebarBg})`, backgroundSize: 'cover', backgroundPosition: 'center', backgroundRepeat: 'no-repeat' }}
       >
-        <div className="flex items-center justify-between px-4 py-4 border-b border-slate-100">
+        <div className="flex flex-col px-4 py-4 border-b border-slate-100">
+          <div className="flex items-center justify-between mb-1">
+            {sidebarOpen && (
+              <img src={logo} alt="Climeto" className="h-7 w-auto max-w-[8rem] object-contain" />
+            )}
+            <button
+              onClick={() => setSidebarOpen(!sidebarOpen)}
+              className="p-1 rounded-md hover:bg-slate-100 text-slate-500 transition-colors ml-auto"
+            >
+              {sidebarOpen ? <X size={16} /> : <Menu size={16} />}
+            </button>
+          </div>
           {sidebarOpen && (
-            <img src={logo} alt="Climeto" className="h-8 w-auto max-w-[8rem] object-contain" />
+            <p className="text-[12px] font-bold text-slate-600 tracking-tight">Compliance. Simpler. Together.</p>
           )}
-          <button
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-500 transition-colors ml-auto"
-          >
-            {sidebarOpen ? <X size={18} /> : <Menu size={18} />}
-          </button>
         </div>
 
         <nav className="flex-1 py-3 overflow-y-auto px-2">
@@ -297,65 +305,80 @@ function MainLayoutInner() {
           ))}
         </nav>
 
-        <div className="border-t border-slate-100 p-3">
+        <div className="border-t border-slate-100 p-3 flex flex-col gap-3">
           {sidebarOpen && (
-            <div className="mb-2 px-2">
-              <p className="text-xs text-slate-400">Logged in as</p>
-              <p className="text-sm font-medium text-slate-700 truncate">{user?.email || 'User'}</p>
+            <div className="bg-[#ebf5f0]/80 rounded-2xl p-4 border border-emerald-100/50 text-center shadow-sm backdrop-blur-sm">
+              <div className="mx-auto bg-emerald-800 text-white w-8 h-8 rounded-full flex items-center justify-center mb-3 shadow-md">
+                <span className="font-bold text-[15px]">?</span>
+              </div>
+              <h5 className="text-[16px] font-bold text-emerald-950 tracking-tight">Need Help?</h5>
+              <p className="text-[12px] text-emerald-800/80 mt-1 mb-4 leading-relaxed font-medium">Check our guide or contact support</p>
+              <button className="w-full bg-white text-emerald-700 border border-emerald-200/80 text-[13px] font-bold py-2 rounded-xl shadow-sm hover:bg-emerald-50 transition-colors flex items-center justify-center gap-1.5">
+                View Help Center &rarr;
+              </button>
             </div>
           )}
-          <button
-            onClick={handleLogout}
-            className="flex items-center gap-3 w-full px-2 py-2 rounded-lg text-slate-500 hover:bg-red-50 hover:text-red-600 transition-colors text-sm"
-          >
-            <LogOut size={18} className="flex-shrink-0" />
-            {sidebarOpen && <span>Logout</span>}
-          </button>
+          <div className="flex items-center justify-between px-1">
+            {sidebarOpen && (
+              <div className="flex items-center gap-2 overflow-hidden">
+                <div className="w-7 h-7 bg-emerald-800 text-white rounded-full flex flex-shrink-0 items-center justify-center text-[11px] font-bold shadow-sm">U</div>
+                <div className="min-w-0">
+                  <p className="text-[11px] text-slate-500 font-medium leading-tight">Logged in as</p>
+                  <p className="text-[13px] font-bold text-slate-700 truncate leading-tight">{user?.email || 'user2@test.com'}</p>
+                </div>
+              </div>
+            )}
+            <button
+              onClick={handleLogout}
+              className="p-1.5 rounded-lg text-slate-400 hover:bg-red-50 hover:text-red-600 transition-colors flex-shrink-0 flex items-center justify-center gap-2"
+              title="Logout"
+            >
+              <LogOut size={16} />
+              {!sidebarOpen && <span className="sr-only">Logout</span>}
+            </button>
+          </div>
         </div>
       </aside>
 
       <main className="flex-1 flex flex-col overflow-hidden">
-        <header className="relative z-30 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 flex-shrink-0 overflow-visible">
-          <div className="flex items-start gap-3 min-w-0">
+        <header className="relative z-30 bg-white border-b border-slate-200 px-6 py-4 flex items-center justify-between gap-4 flex-shrink-0 overflow-visible shadow-sm">
+          <div className="flex items-center gap-3 min-w-0">
             {pageHeader?.onBack && (
               <button
                 type="button"
                 onClick={pageHeader.onBack}
-                className="mt-0.5 p-2 rounded-lg border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 flex-shrink-0"
+                className="w-8 h-8 rounded-full border border-slate-200 bg-white hover:bg-slate-50 text-slate-600 flex flex-shrink-0 items-center justify-center shadow-sm"
                 title="Back"
               >
-                <ArrowLeft size={18} />
+                <ChevronLeft size={18} strokeWidth={2.5} className="ml-[-1px]" />
               </button>
             )}
             {isDocSection && (
-              <div className="mt-0.5 flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-green-600 flex-shrink-0">
+              <div className="flex h-10 w-10 items-center justify-center rounded-xl bg-green-50 text-green-600 flex-shrink-0">
                 <LayoutGrid size={20} />
               </div>
             )}
-            <div className="min-w-0">
-              <div className="flex items-center gap-3">
-                <h1 className="text-xl font-bold text-slate-900 tracking-tight truncate">
+            <div className="min-w-0 flex items-center gap-4">
+              <div>
+                <h1 className="text-[22px] font-bold text-slate-900 tracking-tight leading-tight truncate">
                   {headerTitle}
                 </h1>
-                {myCompany && (
-                  <div className="hidden sm:inline-flex items-center gap-2 bg-indigo-50 border border-indigo-100 px-3 py-1 rounded-md">
-                    <Building2 size={14} className="text-indigo-600" />
-                    <span className="text-xs font-medium text-indigo-900">{myCompany.name}</span>
-                    <span className="text-[10px] text-indigo-600 bg-indigo-100 px-2 py-0.5 rounded-full font-mono border border-indigo-200">GST: {myCompany.gstin}</span>
-                  </div>
+                {headerSubtitle && (
+                  <p className="text-[13px] font-medium text-slate-500 mt-0.5 truncate leading-tight">{headerSubtitle}</p>
                 )}
               </div>
-              {headerSubtitle && (
-                <p className="text-sm text-slate-500 mt-0.5 truncate">{headerSubtitle}</p>
+              {myCompany && (
+                <div className="hidden sm:inline-flex items-center gap-2 bg-emerald-50 border border-emerald-100/60 px-3 py-1.5 rounded-md ml-2 shadow-sm">
+                  <Building2 size={14} className="text-emerald-600" />
+                  <span className="text-xs font-bold text-emerald-900 tracking-tight uppercase">{myCompany.name}</span>
+                  <span className="text-[10px] text-emerald-600 bg-emerald-100 px-2 py-0.5 rounded-full font-mono border border-emerald-200/50 font-semibold tracking-wider">GST : {myCompany.gstin}</span>
+                </div>
               )}
             </div>
           </div>
 
-          <div className="flex items-center gap-2 flex-wrap justify-end flex-shrink-0">
+          <div className="flex items-center gap-4 flex-shrink-0">
             {pageHeader?.actions}
-
-            {/* Centralized CPCB Login / Status Button (removed for now) */}
-
             {showRegistrationBtn && (
               <>
                 <button
@@ -365,16 +388,8 @@ function MainLayoutInner() {
                 >
                   CPCB Registration
                 </button>
-                {/* <button
-                  type="button"
-                  onClick={() => navigate('/new-application')}
-                  className="inline-flex items-center gap-2 rounded-lg border border-blue-200 bg-white hover:bg-blue-50 text-blue-700 text-sm font-medium px-4 py-2.5 shadow-sm transition-colors flex-shrink-0"
-                >
-                  New Application
-                </button> */}
               </>
             )}
-
             {baseHeader.showUpload && (
               <button
                 type="button"
@@ -385,6 +400,21 @@ function MainLayoutInner() {
                 Upload
               </button>
             )}
+
+            <div className="flex items-center gap-4 pl-4 border-l border-slate-200">
+              <button className="text-slate-400 hover:text-slate-600 transition-colors">
+                <Moon size={20} />
+              </button>
+              <button className="text-slate-400 hover:text-slate-600 transition-colors relative">
+                <Bell size={20} />
+                <span className="absolute -top-1 -right-1 w-3.5 h-3.5 bg-red-500 rounded-full border-2 border-white text-[9px] font-bold text-white flex items-center justify-center flex-shrink-0">
+                  <span className="sr-only">Notifications</span>
+                </span>
+              </button>
+              <div className="w-8 h-8 rounded-full bg-emerald-100 text-emerald-800 border border-emerald-200 flex items-center justify-center text-sm font-bold shadow-sm">
+                U
+              </div>
+            </div>
 
             {baseHeader.showEprRefresh && (
               <button
@@ -412,19 +442,19 @@ function MainLayoutInner() {
         </header>
 
         <div className="flex-1 overflow-auto bg-slate-50/50 p-6 relative">
-          <ReadinessGuidelinesModal 
-            isOpen={showCpcbGuidelines} 
+          <ReadinessGuidelinesModal
+            isOpen={showCpcbGuidelines}
             onClose={() => {
               setShowCpcbGuidelines(false);
               navigate('/cpcb-registration');
-            }} 
+            }}
           />
           <CpcbLoginModal
             isOpen={showCpcbLoginModal}
             onClose={() => setShowCpcbLoginModal(false)}
             onLoginSuccess={() => setCpcbLoggedIn(true)}
           />
-          <div className="max-w-7xl mx-auto space-y-6">
+          <div className="w-full space-y-6">
             <Toast toast={toast} onClose={hideToast} />
             <Outlet />
           </div>

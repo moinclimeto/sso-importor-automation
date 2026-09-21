@@ -82,7 +82,7 @@ export function evaluateCompaniesApiResponse(body, httpStatus) {
   const status = Number(httpStatus ?? body?.statusCode ?? 0);
   const message = String(body?.message || body?.errorMsg || '').trim();
 
-  if (status === 409 || /conflict/i.test(String(body?.error || ''))) {
+  if (status === 409 || /conflict/i.test(String(body?.error || '')) || /already exists/i.test(message)) {
     return {
       isRegistrationAllowed: false,
       message: message || 'Authorised Person PAN, EMAIL and MOBILE is already exists',

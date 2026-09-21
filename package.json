@@ -11,6 +11,8 @@
     "build": "vite build",
     "electron:dev": "npm run setup:playwright && concurrently \"cross-env BROWSER=none npm run dev\" \"wait-on http://127.0.0.1:5180 && cross-env NODE_ENV=development PWP_FORCE_GPU=1 electron .\"",
     "electron:build": "npm run build && electron-builder",
+    "publish:release": "node scripts/publish-release.mjs",
+    "electron:release": "npm run electron:build && npm run publish:release",
     "setup:ghostscript": "node scripts/setup-ghostscript.mjs",
     "setup:playwright": "node scripts/setup-playwright.mjs",
     "setup:vcredist": "node scripts/setup-vcredist.mjs",
@@ -19,8 +21,10 @@
     "db:sync": "node sync_to_sqlite.js",
     "qr:docker:build": "docker build -t pwp-qr-scanner:latest ./scripts/qr_scanner",
     "qr:scan": "node scripts/test-qr-scan.mjs",
+    "test": "node --test shared/**/*.test.js",
     "test:importer-3a": "node --test shared/importerSection3a.test.js",
-    "test:packaging-master": "node --test shared/packagingMasterSync.test.js"
+    "test:packaging-master": "node --test shared/packagingMasterSync.test.js",
+    "test:ci": "npm run test"
   },
   "dependencies": {
     "@google/generative-ai": "^0.24.1",
@@ -33,6 +37,7 @@
     "bullmq": "^6.0.2",
     "docx": "^9.7.1",
     "dotenv": "^17.4.2",
+    "electron-updater": "^6.8.9",
     "exceljs": "^4.4.0",
     "formik": "^2.4.9",
     "ioredis": "^5.11.1",
@@ -148,6 +153,12 @@
     "linux": {
       "target": "AppImage",
       "icon": "assets/icon.png"
-    }
+    },
+    "publish": [
+      {
+        "provider": "generic",
+        "url": "https://api.climeto.in/desktop/stable"
+      }
+    ]
   }
 }

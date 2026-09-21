@@ -448,7 +448,8 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog, op
 
     if (fileInput) {
       await fileInput.setInputFiles(finalUploadPath);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
+      await waitForPortalBusy(page).catch(() => {});
       if (onLog) onLog(`${labelText} uploaded successfully (direct file input).`);
     } else if (button) {
       const [fileChooser] = await Promise.all([
@@ -456,7 +457,8 @@ export async function uploadDocumentByLabel(page, labelText, filePath, onLog, op
         button.click(),
       ]);
       await fileChooser.setFiles(finalUploadPath);
-      await page.waitForTimeout(2000);
+      await page.waitForTimeout(1000);
+      await waitForPortalBusy(page).catch(() => {});
       if (onLog) onLog(`${labelText} uploaded successfully (clicked button).`);
     } else {
       controlMissing = true;
@@ -523,9 +525,7 @@ async function findEmptyGeneralInfoFields(page, data) {
     ['Type of Company', 'select', 'typeOfCompany', data.typeOfCompany],
     ['Registered Address Line 1', 'input', 'registeredAddressLine1', addressLine1],
     ['District', 'select', 'district', data.district],
-    ['Designation', 'input', 'designation', data.authDesignation],
-    ['Password', 'input', 'password', data.password],
-    ['Confirm Password', 'input', 'confirmPassword', data.password],
+    ['Designation', 'input', 'designation', data.authDesignation]
   ];
 
   const empty = [];
@@ -652,14 +652,21 @@ async function fillGeneralInformation(page, data, onLog) {
     }
     
     await complianceSelect.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-    const count = await complianceSelect.count().catch(() => 0);
-    if (count > 0) {
-      await complianceSelect.scrollIntoViewIfNeeded();
-      await complianceSelect.selectOption({ label: data.complianceStatus });
-      await complianceSelect.dispatchEvent('change');
-      await page.waitForTimeout(300);
+    if (await complianceSelect.isVisible().catch(() => false)) {
+      if (!(await complianceSelect.isEnabled().catch(() => false))) {
+        if (onLog) onLog('Compliance status dropdown is disabled — skipping');
+      } else {
+        try {
+          await complianceSelect.scrollIntoViewIfNeeded();
+          await complianceSelect.selectOption({ label: data.complianceStatus });
+          await complianceSelect.dispatchEvent('change');
+          await page.waitForTimeout(300);
+        } catch (err) {
+          if (onLog) onLog(`Warning: Failed to set compliance status: ${err.message}`);
+        }
+      }
     } else {
-      if (onLog) onLog('Warning: Could not find compliance status dropdown');
+      if (onLog) onLog('Warning: Could not find visible compliance status dropdown');
     }
   }
 
@@ -678,18 +685,25 @@ async function fillGeneralInformation(page, data, onLog) {
     }
 
     await thicknessInput.waitFor({ state: 'visible', timeout: 5000 }).catch(() => {});
-    const count = await thicknessInput.count().catch(() => 0);
-    if (count > 0) {
-      await thicknessInput.scrollIntoViewIfNeeded();
-      await thicknessInput.click();
-      await thicknessInput.fill('');
-      await thicknessInput.pressSequentially(data.thicknessOfPlastic, { delay: 10 });
-      await thicknessInput.dispatchEvent('input');
-      await thicknessInput.dispatchEvent('change');
-      await thicknessInput.blur();
-      await page.waitForTimeout(300);
+    if (await thicknessInput.isVisible().catch(() => false)) {
+      if (!(await thicknessInput.isEditable().catch(() => false))) {
+        if (onLog) onLog('Thickness input field is read-only — skipping');
+      } else {
+        try {
+          await thicknessInput.scrollIntoViewIfNeeded();
+          await thicknessInput.click();
+          await thicknessInput.fill('');
+          await thicknessInput.pressSequentially(data.thicknessOfPlastic, { delay: 10 });
+          await thicknessInput.dispatchEvent('input');
+          await thicknessInput.dispatchEvent('change');
+          await thicknessInput.blur();
+          await page.waitForTimeout(300);
+        } catch (err) {
+          if (onLog) onLog(`Warning: Failed to set thickness of plastic: ${err.message}`);
+        }
+      }
     } else {
-      if (onLog) onLog('Warning: Could not find thickness input field');
+      if (onLog) onLog('Warning: Could not find visible thickness input field');
     }
   }
 

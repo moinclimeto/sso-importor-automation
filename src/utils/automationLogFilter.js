@@ -120,7 +120,7 @@ export function classifyAutomationLog(message, type = 'info') {
   const isError = type === 'error'
     || /^error:/i.test(text)
     || /failed to verify otp|incorrect otp|invalid captcha/i.test(text)
-    || /locator\.(click|fill)|timeout.*exceeded|element is not enabled/i.test(text);
+    || (type !== 'warning' && /locator\.(click|fill)|timeout.*exceeded|element is not enabled/i.test(text));
 
   if (isError) {
     const clean = cleanErrorMessage(text);

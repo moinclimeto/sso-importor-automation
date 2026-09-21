@@ -501,6 +501,10 @@ export async function persistLocalUpload(file) {
       /* ignore */
     }
   }
+  // Browser fallback: use blob URL when no Electron APIs are available
+  if (!src && file instanceof File) {
+    return URL.createObjectURL(file);
+  }
   return src || '';
 }
 
