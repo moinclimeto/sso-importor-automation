@@ -108,9 +108,11 @@ export default function RegistrationPreviewModal({
                 Review Again
               </button>
               <button
+                type="button"
                 onClick={() => {
                   setShowConfirmModal(false);
-                  onConfirm();
+                  onClose?.();
+                  Promise.resolve(onConfirm?.()).catch(() => {});
                 }}
                 className="px-4 py-2 text-sm font-bold text-white bg-emerald-600 hover:bg-emerald-700 rounded-lg transition-colors"
               >

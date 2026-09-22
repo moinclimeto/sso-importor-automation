@@ -2232,8 +2232,8 @@ export default function CpcbRegistrationPage() {
                     </p>
                   </div>
                 </div>
-              </div>
-            )}
+      </div>
+      )}
           </div>
 
           {generalInfo.yearOfCommencement && requiresHistoricalEprData(generalInfo.yearOfCommencement) && (
@@ -2245,7 +2245,7 @@ export default function CpcbRegistrationPage() {
                     <div className="flex items-center gap-2">
                       <div className="bg-emerald-50 p-2 rounded-lg text-emerald-600"><FileSpreadsheet size={18} /></div>
                       <h5 className="font-bold text-slate-800 tracking-tight">Procurement Data</h5>
-                    </div>
+        </div>
                     <button type="button" onClick={() => downloadExcelTemplate('procurement')} className="text-xs font-bold text-blue-600 hover:text-blue-800 flex items-center gap-1.5 transition-colors">
                       <Download size={14} /> Template
                     </button>
@@ -2341,7 +2341,7 @@ export default function CpcbRegistrationPage() {
                 </div>
               </div>
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">GSTIN *</label>
                   <div className="relative flex items-center">
                     <Lock size={16} className="absolute left-3.5 text-slate-400" />
@@ -2352,8 +2352,8 @@ export default function CpcbRegistrationPage() {
                       </div>
                     )}
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Company PAN *</label>
                   <div className="relative flex items-center">
                     <IdCard size={16} className="absolute left-3.5 text-slate-400" />
@@ -2364,15 +2364,15 @@ export default function CpcbRegistrationPage() {
                       </div>
                     )}
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Company Name</label>
                   <div className="relative flex items-center">
                     <Building2 size={16} className="absolute left-3.5 text-slate-400" />
                     <input name="companyName" value={autoData.companyName || ''} onChange={(e) => setAutoData(prev => ({ ...prev, companyName: e.target.value }))} className={modernLockedInputClass} placeholder="Enter Company Name" />
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person Name *</label>
                   <div className="relative flex items-center">
                     <User size={16} className="absolute left-3.5 text-slate-400" />
@@ -2383,8 +2383,8 @@ export default function CpcbRegistrationPage() {
                       </div>
                     )}
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person PAN *</label>
                   <div className="relative flex items-center">
                     <IdCard size={16} className="absolute left-3.5 text-slate-400" />
@@ -2395,8 +2395,8 @@ export default function CpcbRegistrationPage() {
                       </div>
                     )}
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Auth Person DOB *</label>
                   <div className="relative flex items-center">
                     <Lock size={16} className="absolute left-3.5 text-slate-400" />
@@ -2408,8 +2408,8 @@ export default function CpcbRegistrationPage() {
                       </div>
                     )}
                   </div>
-                </div>
-                <div>
+              </div>
+              <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">CIN (If Applicable)</label>
                   <div className="relative flex items-center">
                     <Lock size={16} className="absolute left-3.5 text-slate-400" />
@@ -2417,7 +2417,7 @@ export default function CpcbRegistrationPage() {
                     {autoData.cinDocumentPath && (
                       <div className="absolute right-2 flex items-center">
                         <LocalFilePreview filePath={autoData.cinDocumentPath} fileName="CIN Document" originalFileName={autoData.cinOriginalName} hideText onChangeDocument={() => handleChangeDocument('cin')} />
-                      </div>
+              </div>
                     )}
                   </div>
                 </div>
@@ -2429,11 +2429,11 @@ export default function CpcbRegistrationPage() {
                     {autoData.iecDocumentPath && (
                       <div className="absolute right-2 flex items-center">
                         <LocalFilePreview filePath={autoData.iecDocumentPath} fileName="IEC" originalFileName={autoData.iecOriginalName} hideText onChangeDocument={() => handleChangeDocument('iec')} />
-                      </div>
-                    )}
-                  </div>
                 </div>
-                <div>
+              )}
+            </div>
+          </div>
+            <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Details of Products</label>
                   <div className="relative flex items-center">
                     <FileText size={16} className="absolute left-3.5 text-slate-400" />
@@ -2448,8 +2448,8 @@ export default function CpcbRegistrationPage() {
                       </button>
                     )}
                   </div>
-                </div>
-                <div>
+            </div>
+            <div>
                   <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plastic Packaging Picture</label>
                   <div className="relative flex items-center">
                     <ImageIcon size={16} className="absolute left-3.5 text-slate-400" />
@@ -2577,9 +2577,9 @@ export default function CpcbRegistrationPage() {
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Type of Business *</label>
                 <div className="relative flex items-center">
                   <select name="typeOfBusiness" value={generalInfo.typeOfBusiness} onChange={handleGeneralChange} className={modernLockedSelectClass} required>
-                    <option value="">Select</option>
+                <option value="">Select</option>
                     {TYPE_OF_BUSINESS_OPTIONS.map((o) => <option key={o} value={o}>{o}</option>)}
-                  </select>
+              </select>
                 </div>
               </div>
               <div>
@@ -2588,9 +2588,9 @@ export default function CpcbRegistrationPage() {
                   <User size={16} className="absolute left-3.5 text-slate-400" />
                   <input name="authDesignation" value={generalInfo.authDesignation} onChange={handleGeneralChange} type="text" placeholder="e.g. Director, Manager" className={modernLockedInputClass} required />
                 </div>
-              </div>
-
-              <div className="md:col-span-2">
+            </div>
+            
+            <div className="md:col-span-2">
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Registered Address Line 1 *</label>
                 <div className="relative flex items-center">
                   <MapPin size={16} className="absolute left-3.5 text-slate-400" />
@@ -2601,32 +2601,32 @@ export default function CpcbRegistrationPage() {
                     </div>
                   )}
                 </div>
-              </div>
-              <div className="md:col-span-2">
+            </div>
+            <div className="md:col-span-2">
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Registered Address Line 2</label>
                 <div className="relative flex items-center">
                   <MapPin size={16} className="absolute left-3.5 text-slate-400" />
                   <input name="registeredAddressLine2" value={generalInfo.registeredAddressLine2} onChange={handleGeneralChange} type="text" placeholder="Enter (optional)" className={modernLockedInputClass} />
-                </div>
+            </div>
               </div>
 
               <div className="md:col-span-2 mt-1">
                 <label className="flex items-center gap-2.5 cursor-pointer p-3 bg-slate-50/50 border border-slate-200/60 rounded-xl hover:bg-slate-50 transition-colors">
                   <input type="checkbox" checked={generalInfo.isSameAsRegisteredAddress} onChange={(e) => setGeneralInfo(prev => ({ ...prev, isSameAsRegisteredAddress: e.target.checked }))} className="w-4 h-4 text-emerald-600 rounded border-slate-300 focus:ring-emerald-500" />
                   <span className="text-sm font-semibold text-slate-700">Plant/Unit Address is same as Registered Address</span>
-                </label>
-              </div>
-
-              {!generalInfo.isSameAsRegisteredAddress && (
-                <>
-                  <div className="md:col-span-2">
+              </label>
+            </div>
+            
+            {!generalInfo.isSameAsRegisteredAddress && (
+              <>
+                <div className="md:col-span-2">
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">Plant/Unit Address *</label>
                     <div className="relative flex items-center">
                       <MapPin size={16} className="absolute left-3.5 text-slate-400" />
                       <input name="plantAddress" value={generalInfo.plantAddress} onChange={handleGeneralChange} type="text" placeholder="Enter Plant/Unit Address" className={`${modernInputClass} pr-8`} required />
                     </div>
-                  </div>
-                  <div>
+                </div>
+                <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">Unit GST Number *</label>
                     <div className="relative flex items-center">
                       <Lock size={16} className="absolute left-3.5 text-slate-400" />
@@ -2634,41 +2634,41 @@ export default function CpcbRegistrationPage() {
                       {autoData.unitGstDoc && (
                         <div className="absolute right-2 flex items-center">
                           <LocalFilePreview filePath={autoData.unitGstDoc} fileName="Unit GST Document" originalFileName={autoData.unitGstOriginalName} hideText onChangeDocument={() => handleChangeDocument('unit_gst')} />
-                        </div>
+                </div>
                       )}
                     </div>
                   </div>
-                  {!autoData.unitGstDoc && (
-                    <div>
+                {!autoData.unitGstDoc && (
+                  <div>
                       <label className="block text-sm font-semibold text-slate-700 mb-1.5">Upload Unit GST Certificate *</label>
                       <input type="file" accept=".pdf,.png,.jpg,.jpeg" onChange={async (e) => { const file = e.target.files[0]; if (file) await persistPartCFile(file, 'unitGstDoc'); }} className="w-full px-4 py-2 border border-slate-200 rounded-xl" required />
-                    </div>
-                  )}
-                </>
-              )}
+                  </div>
+                )}
+              </>
+            )}
 
               <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">State/UT *</label>
                 <div className="relative flex items-center">
                   <select name="stateUt" value={generalInfo.stateUt} onChange={handleGeneralChange} className={modernLockedSelectClass} required>
-                    <option value="">Select</option>
+                <option value="">Select</option>
                     {INDIAN_STATES.map((s) => <option key={s} value={s}>{s}</option>)}
-                  </select>
+              </select>
                 </div>
-              </div>
-              <div>
+            </div>
+            <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">District *</label>
                 <div className="relative flex items-center">
                   <MapPin size={16} className="absolute left-3.5 text-slate-400" />
                   <input name="district" value={generalInfo.district || ''} onChange={handleGeneralChange} type="text" placeholder="Enter district" className={modernLockedInputClass} required />
-                </div>
+            </div>
               </div>
 
 
               <div className="md:col-span-2 mt-4 pt-4 border-t border-slate-100">
                 <p className="text-xs text-slate-500 font-medium mb-4">Authorised Person Details & Set Password</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
-                  <div>
+            <div>
                     <label className="block text-sm font-semibold text-slate-700 mb-1.5">Password *</label>
                     <div className="relative flex items-center">
                       <Lock size={16} className="absolute left-3.5 text-slate-400" />
@@ -2687,11 +2687,11 @@ export default function CpcbRegistrationPage() {
                         {showConfirmPassword ? <EyeOff size={18} /> : <Eye size={18} />}
                       </button>
                     </div>
-                  </div>
-                </div>
-              </div>
             </div>
-          )}
+            </div>
+          </div>
+        </div>
+        )}
         </div>
 
         <div className="bg-white border border-slate-200/60 rounded-2xl shadow-[0_2px_12px_rgba(0,0,0,0.02)] p-6 mb-6">
@@ -2717,7 +2717,7 @@ export default function CpcbRegistrationPage() {
           </div>
           {isDirectorsDetailsExpanded && (
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5 animate-in fade-in slide-in-from-top-2">
-              <div>
+            <div>
                 <label className="block text-sm font-semibold text-slate-700 mb-1.5">Email Address *</label>
                 <div className="relative flex items-center">
                   <Mail size={16} className="absolute left-3.5 text-slate-400" />
@@ -2749,38 +2749,38 @@ export default function CpcbRegistrationPage() {
             </div>
             {isOperationsDetailsExpanded && (
               <div className="bg-white border rounded-xl shadow-sm p-6 space-y-6 animate-in fade-in slide-in-from-top-2">
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
 
-                  <div className="md:col-span-2">
-                    <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
-                    <OperatingStatesMultiSelect
-                      value={generalInfo.operatingStates || []}
-                      onChange={(newState) => {
-                        setGeneralInfo((prev) => {
-                          const newStateObj = { ...prev, operatingStates: newState };
+                    <div className="md:col-span-2">
+                      <label className="block text-sm font-medium text-slate-700 mb-2">Operating States *</label>
+                      <OperatingStatesMultiSelect
+                        value={generalInfo.operatingStates || []}
+                        onChange={(newState) => {
+                          setGeneralInfo((prev) => {
+                            const newStateObj = { ...prev, operatingStates: newState };
 
-                          if (window.pwp?.registration?.save) {
-                            const updatedFormData = {
-                              ...(savedRegistration?.formData || {}),
-                              email,
-                              mobile,
-                              autoData,
-                              generalInfo: newStateObj,
-                            };
-                            window.pwp.registration.save({
-                              ...(savedRegistration || {}),
-                              email,
-                              mobile,
-                              form_data_json: JSON.stringify(updatedFormData),
-                            }).catch(console.error);
-                          }
+                            if (window.pwp?.registration?.save) {
+                              const updatedFormData = {
+                                ...(savedRegistration?.formData || {}),
+                                email,
+                                mobile,
+                                autoData,
+                                generalInfo: newStateObj,
+                              };
+                              window.pwp.registration.save({
+                                ...(savedRegistration || {}),
+                                email,
+                                mobile,
+                                form_data_json: JSON.stringify(updatedFormData),
+                              }).catch(console.error);
+                            }
 
-                          return newStateObj;
-                        });
-                      }}
-                    />
-                  </div>
-                  <div>
+                            return newStateObj;
+                          });
+                        }}
+                      />
+                    </div>
+                    <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Does the Importer have a Production Facility *</label>
                     <select
                       name="hasProductionFacility"
@@ -2788,25 +2788,25 @@ export default function CpcbRegistrationPage() {
                       onChange={async (e) => {
                         handleGeneralChange(e);
                         // Auto-save logic
-                        if (window.pwp?.registration?.save) {
+                          if (window.pwp?.registration?.save) {
                           const newStateObj = { ...generalInfo, hasProductionFacility: e.target.value };
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
                             email, mobile, autoData, generalInfo: newStateObj
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      className={inputClass}
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                        }}
+                        className={inputClass}
                     >
                       <option value="Not Applicable">Not Applicable</option>
                     </select>
-                  </div>
-                  <div>
+                    </div>
+                    <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">Total Capital Invested in the Project (Rs in Crores) *</label>
                     <input
                       name="capitalInvested"
@@ -2814,56 +2814,56 @@ export default function CpcbRegistrationPage() {
                       onChange={handleGeneralChange}
                       onBlur={async () => {
                         // Auto-save on blur
-                        if (window.pwp?.registration?.save) {
-                          const updatedFormData = {
-                            ...(savedRegistration?.formData || {}),
+                          if (window.pwp?.registration?.save) {
+                            const updatedFormData = {
+                              ...(savedRegistration?.formData || {}),
                             email, mobile, autoData, generalInfo
-                          };
-                          window.pwp.registration.save({
-                            ...(savedRegistration || {}),
-                            email, mobile,
-                            form_data_json: JSON.stringify(updatedFormData)
-                          }).catch(console.error);
-                        }
-                      }}
-                      type="text"
+                            };
+                            window.pwp.registration.save({
+                              ...(savedRegistration || {}),
+                              email, mobile,
+                              form_data_json: JSON.stringify(updatedFormData)
+                            }).catch(console.error);
+                          }
+                        }}
+                        type="text"
                       placeholder="Enter Total Capital Invested"
                       className={inputClass}
-                    />
-                  </div>
+                      />
+                    </div>
+                    
+                      <div>
+                        <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
+                        <select
+                          name="complianceStatus"
+                          value={generalInfo.complianceStatus || ''}
+                          onChange={handleGeneralChange}
+                          className={inputClass}
+                        >
+                          <option value="">Select</option>
+                          <option value="Yes">Yes</option>
+                          <option value="No">No</option>
+                        </select>
+                        {generalInfo.complianceStatus === 'No' && (
+                          <p className="text-xs text-red-600 mt-1 font-medium">
+                            ⚠️ Alert: Selecting "No" can lead to rejection of your application.
+                          </p>
+                        )}
+                      </div>
 
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">3d) Status of compliance with PWM Rules *</label>
-                    <select
-                      name="complianceStatus"
-                      value={generalInfo.complianceStatus || ''}
-                      onChange={handleGeneralChange}
-                      className={inputClass}
-                    >
-                      <option value="">Select</option>
-                      <option value="Yes">Yes</option>
-                      <option value="No">No</option>
-                    </select>
-                    {generalInfo.complianceStatus === 'No' && (
-                      <p className="text-xs text-red-600 mt-1 font-medium">
-                        ⚠️ Alert: Selecting "No" can lead to rejection of your application.
-                      </p>
-                    )}
-                  </div>
-
-                  <div>
+                      <div>
                     <label className="block text-sm font-medium text-slate-700 mb-1">
                       3e) Thickness of Plastic Packaging (In Microns) *
-                    </label>
-                    <input
-                      type="text"
-                      name="thicknessOfPlastic"
-                      value={generalInfo.thicknessOfPlastic || ''}
-                      onChange={handleGeneralChange}
-                      placeholder="Enter thickness"
-                      className={inputClass}
-                      required
-                    />
+                        </label>
+                        <input
+                          type="text"
+                          name="thicknessOfPlastic"
+                          value={generalInfo.thicknessOfPlastic || ''}
+                          onChange={handleGeneralChange}
+                          placeholder="Enter thickness"
+                          className={inputClass}
+                          required
+                        />
                     <div className="mt-2 text-xs text-slate-500 bg-slate-50 p-2 rounded border border-slate-200">
                       <strong>Approved Minimum Thickness:</strong>
                       <ul className="list-disc pl-4 mt-1 space-y-0.5">
@@ -2872,8 +2872,8 @@ export default function CpcbRegistrationPage() {
                         <li><strong>Cat IV (Compostable plastic bags):</strong> No Minimum Limit (subject to IS 17088 and CPCB certificate)</li>
                       </ul>
                     </div>
-                  </div>
-                </div>
+                      </div>
+                    </div>
               </div>
             )}
           </div>
@@ -3031,7 +3031,7 @@ export default function CpcbRegistrationPage() {
                 showToast={showToast}
                 inputClass={inputClass}
               />
-            </div>
+              </div>
           ) : (
             <>
           <div className="pointer-events-auto">
@@ -3050,37 +3050,37 @@ export default function CpcbRegistrationPage() {
                 onPlasticConsumedChange={handlePlasticConsumedChange}
                 plasticConsumedSource={plasticConsumedSource}
               />
-          </div>
+            </div>
 
           <div className="pointer-events-auto">
             <RegistrationPartB generalInfo={generalInfo} setGeneralInfo={setGeneralInfo} gstin={autoData.gstin} isPreview={true} />
-          </div>
-            </>
-          )}
+        </div>
+        </>
+        )}
         </RegistrationPreviewModal>
 
         {!isPreviewMode && (
           <div className="pt-4 border-t border-slate-100 flex justify-between gap-3 pointer-events-auto mt-6">
-            {registrationComplete && wizardStep !== 'partA' ? (
-              <button
-                type="button"
-                onClick={() => setWizardStep(wizardStep === 'partC' ? 'partB' : 'partA')}
-                disabled={loading}
-                className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-              >
-                <ChevronLeft size={16} />
-                Back
-              </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => navigate(-1)}
-                disabled={loading}
-                className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
-              >
-                Cancel
-              </button>
-            )}
+          {registrationComplete && wizardStep !== 'partA' ? (
+            <button
+              type="button"
+              onClick={() => setWizardStep(wizardStep === 'partC' ? 'partB' : 'partA')}
+              disabled={loading}
+              className="inline-flex items-center gap-1 px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              <ChevronLeft size={16} />
+              Back
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={() => navigate(-1)}
+              disabled={loading}
+              className="px-4 py-2 text-sm font-medium text-slate-700 bg-white border border-slate-300 rounded-lg hover:bg-slate-50 disabled:opacity-50"
+            >
+              Cancel
+            </button>
+          )}
 
             <div className="flex items-center gap-2 flex-wrap justify-end">
               <button
@@ -3092,67 +3092,67 @@ export default function CpcbRegistrationPage() {
                 {registrationComplete ? 'Preview Application' : 'Preview Registration'}
               </button>
 
-              {!registrationComplete ? (
+          {!registrationComplete ? (
+            <button
+              type="button"
+              onClick={handleStartRegistration}
+              disabled={
+                startRegistrationBlockers.length > 0
+                || (showAutomationModal && automationPhase !== 'error')
+              }
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+            >
+              {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
+              Start Registration
+            </button>
+          ) : wizardStep !== 'partC' ? (
+            <button
+              type="button"
+              onClick={handleSaveAndNext}
+              disabled={loading}
+              className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
+            >
+              Save & Next
+              <ChevronRight size={16} />
+            </button>
+          ) : (
+                <>
+              {SHOW_RESUME_DRAFT_DEV_BUTTON ? (
                 <button
                   type="button"
-                  onClick={handleStartRegistration}
+                  onClick={handleResumeDraftPartB}
                   disabled={
-                    startRegistrationBlockers.length > 0
+                    loading
+                    || loginCaptchaSubmitting
+                    || loginOtpSubmitting
                     || (showAutomationModal && automationPhase !== 'error')
                   }
-                  className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
                 >
-                  {loading ? <Loader2 size={16} className="animate-spin" /> : <Phone size={16} />}
-                  Start Registration
+                  Resume Draft → Part B (Dev)
                 </button>
-              ) : wizardStep !== 'partC' ? (
-                <button
-                  type="button"
-                  onClick={handleSaveAndNext}
-                  disabled={loading}
-                  className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 shadow-sm disabled:opacity-50"
-                >
-                  Save & Next
-                  <ChevronRight size={16} />
-                </button>
-              ) : (
-                <>
-                  {SHOW_RESUME_DRAFT_DEV_BUTTON ? (
-                    <button
-                      type="button"
-                      onClick={handleResumeDraftPartB}
-                      disabled={
-                        loading
-                        || loginCaptchaSubmitting
-                        || loginOtpSubmitting
-                        || (showAutomationModal && automationPhase !== 'error')
-                      }
-                      className="inline-flex items-center gap-2 px-5 py-2 text-sm font-medium text-white bg-amber-600 rounded-lg hover:bg-amber-700 shadow-sm disabled:opacity-50"
-                    >
-                      Resume Draft → Part B (Dev)
-                    </button>
-                  ) : null}
-                  <button
-                    type="button"
-                    onClick={handleNewApplication}
-                    disabled={
-                      loading
-                      || loginCaptchaSubmitting
-                      || loginOtpSubmitting
-                      || (showAutomationModal && automationPhase !== 'error')
-                    }
-                    className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
-                  >
-                    {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                      <Loader2 size={16} className="animate-spin" />
-                    ) : (
-                      <FilePlus size={16} />
-                    )}
-                    Register
-                  </button>
+              ) : null}
+              <button
+                type="button"
+                onClick={handleNewApplication}
+                disabled={
+                  loading
+                  || loginCaptchaSubmitting
+                  || loginOtpSubmitting
+                  || (showAutomationModal && automationPhase !== 'error')
+                }
+                className="inline-flex items-center gap-2 px-6 py-2 text-sm font-medium text-white bg-blue-600 rounded-lg hover:bg-blue-700 shadow-sm disabled:opacity-50"
+              >
+                {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
+                  <Loader2 size={16} className="animate-spin" />
+                ) : (
+                  <FilePlus size={16} />
+                )}
+                Register
+              </button>
                 </>
-              )}
-            </div>
+          )}
+        </div>
           </div>
         )}
       </form>
@@ -3500,9 +3500,9 @@ export default function CpcbRegistrationPage() {
             <div className="px-6 py-4 bg-slate-50 border-t flex justify-between items-center">
               <div className="text-sm text-slate-500 flex items-center gap-2">
                 {(loading || loginCaptchaSubmitting || loginOtpSubmitting) ? (
-                  <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
+                   <><Loader2 size={14} className="animate-spin text-blue-600" /> Automation in progress...</>
                 ) : (
-                  <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
+                   <><CheckCircle2 size={14} className="text-green-600" /> Process finished or awaiting input.</>
                 )}
               </div>
               <button
